@@ -1,0 +1,121 @@
+@import "tailwindcss";
+
+@theme {
+  --color-glass-light: rgba(255, 255, 255, 0.08);
+  --color-glass-dark: rgba(15, 23, 42, 0.6);
+  --color-glass-border: rgba(255, 255, 255, 0.1);
+  
+  /* Progressive, Professional Teal-Cyan Palette */
+  --color-primary-50: #ecfeff;
+  --color-primary-100: #cffafe;
+  --color-primary-200: #a5f3fc;
+  --color-primary-300: #67e8f9;
+  --color-primary-400: #22d3ee;
+  --color-primary-500: #06b6d4;
+  --color-primary-600: #0891b2;
+  --color-primary-700: #0e7490;
+  --color-primary-800: #155e75;
+  --color-primary-900: #164e63;
+  
+  --animate-pulse-slow: pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+body {
+  background-color: #030712;
+  @apply text-slate-100 min-h-screen font-sans antialiased selection:bg-primary-500/30 selection:text-primary-200 transition-colors duration-300;
+}
+
+/* Glassmorphism Utilities */
+.glass-panel {
+  background: rgba(9, 17, 34, 0.45);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.glass-panel-hover {
+  @apply transition-all duration-300 hover:border-primary-500/40 hover:bg-slate-900/60 hover:shadow-lg hover:shadow-primary-500/10;
+}
+
+.glass-input {
+  background: rgba(9, 17, 34, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  @apply text-slate-100 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500 transition-all duration-200;
+}
+
+/* Specificity fixes: Prevent input boxes text from mashing up with left absolute icons */
+.relative svg + .glass-input,
+.relative svg ~ .glass-input {
+  padding-left: 2.75rem !important;
+}
+
+/* Prevent inputs overlapping with right button controls (e.g. password visibility toggle) */
+.relative .glass-input:has(~ button),
+.relative .glass-input:has(~ .absolute.right-3.5) {
+  padding-right: 2.75rem !important;
+}
+
+.text-gradient {
+  @apply bg-clip-text text-transparent bg-gradient-to-r from-cyan-400 via-teal-400 to-emerald-400;
+}
+
+/* Floating Radial Glows */
+.glow-spot {
+  position: absolute;
+  width: 40vw;
+  height: 40vw;
+  border-radius: 50%;
+  filter: blur(120px);
+  opacity: 0.12;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.8);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(6, 182, 212, 0.5);
+}
+
+/* Code Editor Custom Theme */
+.code-editor {
+  font-family: 'Fira Code', 'Courier New', Courier, monospace;
+}
+
+/* Voice Wave Animation */
+.wave-bar {
+  display: inline-block;
+  width: 4px;
+  height: 20px;
+  margin: 0 2px;
+  background-color: #06b6d4;
+  border-radius: 2px;
+  animation: wave 1.2s ease-in-out infinite;
+}
+
+.wave-bar:nth-child(2) { animation-delay: 0.15s; }
+.wave-bar:nth-child(3) { animation-delay: 0.3s; }
+.wave-bar:nth-child(4) { animation-delay: 0.45s; }
+.wave-bar:nth-child(5) { animation-delay: 0.6s; }
+
+@keyframes wave {
+  0%, 100% {
+    transform: scaleY(0.3);
+  }
+  50% {
+    transform: scaleY(1.8);
+  }
+}

@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: ai_interviewer_db
+    restart: always
+    environment:
+      POSTGRES_USER: interviewer
+      POSTGRES_PASSWORD: interviewer_password
+      POSTGRES_DB: ai_interviewer
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: ai_interviewer_backend
+    restart: always
+    environment:
+      - DATABASE_URL=postgresql://interviewer:interviewer_password@db:5432/ai_interviewer
+      - JWT_SECRET_KEY=super-secret-jwt-key-change-in-prod
+      - MIXTRAL_API_KEY=your_mixtral_api_key
+      - WHISPER_API_KEY=your_whisper_api_key
+      - FLASK_ENV=production
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./backend/uploads:/app/uploads
+      - ./backend/reports:/app/reports
+    depends_on:
+      - db
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: ai_interviewer_frontend
+    restart: always
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
