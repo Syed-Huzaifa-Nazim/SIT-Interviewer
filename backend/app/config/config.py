@@ -43,5 +43,10 @@ class Config:
     WHISPER_API_URL = os.environ.get('WHISPER_API_URL', 'https://api.groq.com/openai/v1/audio/transcriptions')
 
     # Media settings
-    ALLOWED_EXTENSIONS = {'pdf', 'txt', 'mp3', 'wav', 'ogg', 'webm', 'm4a'}
+    ALLOWED_EXTENSIONS = {'pdf', 'txt', 'mp3', 'wav', 'ogg', 'webm', 'm4a', 'png', 'jpg', 'jpeg', 'gif', 'webp'}
     MAX_CONTENT_LENGTH = 32 * 1024 * 1024  # 32MB Max Upload
+
+    # Supabase Storage Configuration
+    SUPABASE_URL = os.environ.get('SUPABASE_URL', '')
+    SUPABASE_KEY = os.environ.get('SUPABASE_SECRET_KEY', os.environ.get('SUPABASE_KEY', ''))
+    SUPABASE_BUCKET = os.environ.get('SUPABASE_BUCKET', 'profile-pictures')

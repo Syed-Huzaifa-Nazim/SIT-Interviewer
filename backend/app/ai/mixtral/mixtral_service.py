@@ -39,7 +39,10 @@ class MixtralService:
     @classmethod
     def generate_questions(cls, interview_type, job_role, experience_level, difficulty, num_questions, custom_jd=None, custom_skills=None):
         system_prompt = (
-            "You are an expert AI recruiter. Generate interview questions based on the candidate details. "
+            "You are an expert AI recruiter. Generate highly specific, technical, and domain-focused interview questions. "
+            "CRITICAL DIRECTIVE: The questions must be deeply relevant to the candidate's selected job role and target skills. "
+            "Do not ask generic or vague software engineering questions. Ask about core syntax, performance bottlenecks, "
+            "architecture patterns, database designs, or libraries specific to the role. "
             "You must return the response as a JSON object with a single key 'questions' containing a list of objects. "
             "Each object must have: 'question_text' and 'question_type' ('conceptual', 'scenario', 'coding', 'behavioral', 'hr'). "
             "Return EXACTLY the requested number of questions."
@@ -70,7 +73,12 @@ class MixtralService:
     @classmethod
     def evaluate_response(cls, question_text, response_text):
         system_prompt = (
-            "You are a technical interviewer evaluating a candidate's answer. "
+            "You are a rigid technical interviewer evaluating a candidate's answer. "
+            "Evaluate the response strictly for technical correctness and depth. "
+            "CRITICAL CRITERIA: "
+            "1. If the candidate explicitly says they do not know (e.g. 'I do not know', 'I know nothing', 'dont know', 'no idea', 'skip', 'idk'), "
+            "or if the response is completely blank, vague, gibberish, or unrelated to the question, you MUST set 'score' = 0 and 'technical_score' = 0. "
+            "2. Do not offer a baseline passing score for effort or politeness. Only award points for accurate facts, definitions, or code syntax matching the question. "
             "You must return a JSON object with these keys: "
             "'score' (0-100 overall score), 'technical_score' (0-100), 'communication_score' (0-100), "
             "'confidence_score' (0-100), and 'feedback' (detailed string explanation)."
@@ -317,38 +325,75 @@ class MixtralService:
 
     @classmethod
     def _generate_mock_evaluation(cls, question_text, response_text):
-        if not response_text or len(response_text.strip()) < 10:
+        resp_lower = (response_text or "").lower().strip()
+        
+        # Check for explicit ignorant responses, skipping, or empty fields
+        negative_phrases = [
+            "don't know", "dont know", "do not know", "know nothing", "no idea", 
+            "idk", "skip", "pass", "no clue", "not sure", "forget", "forgot",
+            "nothing", "sorry", "have no clue"
+        ]
+        
+        if not resp_lower or len(resp_lower) < 15 or any(phrase in resp_lower for phrase in negative_phrases):
             return {
-                "score": 10.0,
-                "technical_score": 5.0,
-                "communication_score": 20.0,
+                "score": 0.0,
+                "technical_score": 0.0,
+                "communication_score": 10.0,
                 "confidence_score": 10.0,
-                "feedback": "The response was too short or non-existent. To score better, please provide a complete, detailed answer answering all aspects of the question."
+                "feedback": "The candidate provided no substantive technical response or explicitly stated that they do not know the answer."
             }
 
-        # Analyze keywords in the response to determine scores
-        score_modifier = 0
-        technical_terms = ["hook", "virtual dom", "state", "index", "normalization", "gil", "event loop", "asynchronous", "star", "situation", "optimize", "cache", "scale"]
+        # Define a list of technical keywords
+        tech_keywords = [
+            "hook", "virtual dom", "state", "index", "normalization", "gil", "event loop", 
+            "asynchronous", "star", "situation", "optimize", "cache", "scale", "performance", 
+            "react", "python", "node", "database", "query", "memory", "thread", "process", 
+            "garbage", "decorator", "closure", "indexing", "acid", "rag", "transformer", 
+            "attention", "pytorch", "model", "quantization", "embedding", "vector", "api", 
+            "express", "middleware", "stream", "cluster", "lock", "reconciliation"
+        ]
         
-        found_terms = [term for term in technical_terms if term in response_text.lower()]
-        score_modifier += len(found_terms) * 10
+        # Find which technical terms are used in candidate response
+        found_terms = [term for term in tech_keywords if term in resp_lower]
         
-        # Base scores
-        base_tech = min(60 + score_modifier, 95)
-        base_comm = min(65 + (len(response_text.split()) // 5), 92)
-        base_conf = min(70 + random.randint(-5, 15), 95)
-        
-        # Calculate overall score
-        overall = round((base_tech * 0.5) + (base_comm * 0.3) + (base_conf * 0.2), 1)
-
-        # Generate feedback string
-        feedback = "Good attempt! "
-        if base_tech > 80:
-            feedback += "Your response demonstrated a solid grasp of core technical concepts. You successfully utilized terms like " + ", ".join(found_terms) + "."
-        elif base_tech > 60:
-            feedback += "You understand the basics, but could improve by explaining the deep internal mechanisms and practical optimization trade-offs."
+        # Technical score starts low and builds based on verified keywords
+        if len(found_terms) == 0:
+            base_tech = 10.0
+        elif len(found_terms) == 1:
+            base_tech = 35.0
+        elif len(found_terms) == 2:
+            base_tech = 65.0
         else:
-            feedback += "The answer lacked depth. Try to use more technical terms, explain structural details, or provide an active example of how you've resolved this in production."
+            base_tech = min(75.0 + (len(found_terms) - 2) * 8, 98.0)
+            
+        # Give limited credit for long structured text if no technical keywords are present
+        word_count = len(resp_lower.split())
+        if word_count > 30 and base_tech <= 10.0:
+            base_tech = 20.0
+            
+        # Communication Score based on word count
+        base_comm = min(20.0 + (word_count * 0.8), 90.0)
+        
+        # Confidence Score
+        base_conf = min(30.0 + (word_count * 0.5) + random.randint(-5, 10), 92.0)
+        
+        # If technical substance is very low, cap communication/confidence to reflect fail states
+        if base_tech <= 20.0:
+            base_comm = min(base_comm, 30.0)
+            base_conf = min(base_conf, 30.0)
+            
+        # Overall Score calculation
+        overall = round((base_tech * 0.6) + (base_comm * 0.25) + (base_conf * 0.15), 1)
+        
+        # Generate feedback string
+        if base_tech >= 80.0:
+            feedback = f"Excellent! Your response demonstrated a strong technical understanding. You correctly referenced key terms: {', '.join(found_terms)}."
+        elif base_tech >= 60.0:
+            feedback = f"Good attempt. You highlighted relevant details and used terms like {', '.join(found_terms)}, but you could explain the internal mechanics and tradeoffs more deeply."
+        elif base_tech >= 35.0:
+            feedback = f"Fair attempt. You mentioned some relevant concepts ({', '.join(found_terms)}), but the answer lacked technical depth, execution details, or structural accuracy."
+        else:
+            feedback = "The response lacks technical substance. Please explain the concepts using correct framework terminology, syntax logic, or architectural diagrams."
 
         return {
             "score": overall,

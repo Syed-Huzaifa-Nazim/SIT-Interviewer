@@ -1,39 +1,32 @@
-from flask import Blueprint, request, jsonify
+from fastapi import APIRouter, Request, HTTPException, status, Depends, UploadFile, File
 from app.database.db import db
 from app.models import User, Token, Interview, ResumeAnalysis
-from flask_jwt_extended import jwt_required, get_jwt_identity
+from app.utils.security import get_current_user_id
+from app.utils.supabase_service import SupabaseService
 
-user_bp = Blueprint('users', __name__)
+user_bp = APIRouter()
 
-@user_bp.route('/profile', methods=['GET'])
-@jwt_required()
-def get_profile():
-    user_id = get_jwt_identity()
+@user_bp.get('/profile')
+async def get_profile(user_id: int = Depends(get_current_user_id)):
     user = User.query.get(user_id)
-    
     if not user:
-        return jsonify({'message': 'User not found'}), 404
+        raise HTTPException(status_code=404, detail="User not found")
 
-    # Fetch token stats
     token_account = Token.query.filter_by(user_id=user_id).first()
     token_data = token_account.to_dict() if token_account else {}
 
-    return jsonify({
+    return {
         'user': user.to_dict(),
         'tokens': token_data
-    }), 200
+    }
 
-
-@user_bp.route('/profile', methods=['PUT'])
-@jwt_required()
-def update_profile():
-    user_id = get_jwt_identity()
+@user_bp.put('/profile')
+async def update_profile(request: Request, user_id: int = Depends(get_current_user_id)):
     user = User.query.get(user_id)
-
     if not user:
-        return jsonify({'message': 'User not found'}), 404
+        raise HTTPException(status_code=404, detail="User not found")
 
-    data = request.get_json() or {}
+    data = await request.json() or {}
     
     name = data.get('name')
     country = data.get('country')
@@ -51,87 +44,69 @@ def update_profile():
 
     try:
         db.session.commit()
-        return jsonify({
+        return {
             'message': 'Profile updated successfully',
             'user': user.to_dict()
-        }), 200
+        }
     except Exception as e:
         db.session.rollback()
-        return jsonify({'message': f'Failed to update profile: {str(e)}'}), 500
+        raise HTTPException(status_code=500, detail=f"Failed to update profile: {str(e)}")
 
-
-@user_bp.route('/achievements', methods=['GET'])
-@jwt_required()
-def get_achievements():
-    user_id = get_jwt_identity()
-
-    # Calculate statistics to award badges
+@user_bp.get('/achievements')
+async def get_achievements(user_id: int = Depends(get_current_user_id)):
     interviews_taken = Interview.query.filter_by(user_id=user_id, status='completed').count()
     resumes_uploaded = ResumeAnalysis.query.filter_by(user_id=user_id).count()
     
-    # Check for scores > 80%
     high_scores = Interview.query.filter(
         Interview.user_id == user_id, 
         Interview.status == 'completed', 
         Interview.overall_score >= 80.0
     ).count()
 
-    badges = []
+    badges = [
+        {
+            'id': 'welcome',
+            'title': 'Quick Starter',
+            'description': 'Created your account and set up your interview profile.',
+            'icon': 'Sparkles',
+            'unlocked': True
+        },
+        {
+            'id': 'first_interview',
+            'title': 'Ice Breaker',
+            'description': 'Completed your first mock interview.',
+            'icon': 'Award',
+            'unlocked': interviews_taken >= 1
+        },
+        {
+            'id': 'five_interviews',
+            'title': 'Interview Veteran',
+            'description': 'Completed 5 mock interviews.',
+            'icon': 'ShieldCheck',
+            'unlocked': interviews_taken >= 5
+        },
+        {
+            'id': 'resume_analyzed',
+            'title': 'ATS Optimiser',
+            'description': 'Analyzed your resume using AI Analyzer.',
+            'icon': 'FileText',
+            'unlocked': resumes_uploaded >= 1
+        },
+        {
+            'id': 'high_performer',
+            'title': 'Elite Candidate',
+            'description': 'Scored 80% or above in any mock interview.',
+            'icon': 'Zap',
+            'unlocked': high_scores >= 1
+        }
+    ]
 
-    # 1. Welcome badge
-    badges.append({
-        'id': 'welcome',
-        'title': 'Quick Starter',
-        'description': 'Created your account and set up your interview profile.',
-        'icon': 'Sparkles',
-        'unlocked': True
-    })
-
-    # 2. First interview badge
-    badges.append({
-        'id': 'first_interview',
-        'title': 'Ice Breaker',
-        'description': 'Completed your first mock interview.',
-        'icon': 'Award',
-        'unlocked': interviews_taken >= 1
-    })
-
-    # 3. Multiple interviews badge
-    badges.append({
-        'id': 'five_interviews',
-        'title': 'Interview Veteran',
-        'description': 'Completed 5 mock interviews.',
-        'icon': 'ShieldCheck',
-        'unlocked': interviews_taken >= 5
-    })
-
-    # 4. Resume check
-    badges.append({
-        'id': 'resume_analyzed',
-        'title': 'ATS Optimiser',
-        'description': 'Analyzed your resume using AI Analyzer.',
-        'icon': 'FileText',
-        'unlocked': resumes_uploaded >= 1
-    })
-
-    # 5. Elite performance badge
-    badges.append({
-        'id': 'high_performer',
-        'title': 'Elite Candidate',
-        'description': 'Scored 80% or above in any mock interview.',
-        'icon': 'Zap',
-        'unlocked': high_scores >= 1
-    })
-
-    # Leaderboard statistics
-    # Standard mock rankings
     leaderboard = [
         {"rank": 1, "name": "Alexander Pierce", "score": 94.5, "interviews": 12, "is_current_user": False},
         {"rank": 2, "name": "Jane Cooper", "score": 92.0, "interviews": 8, "is_current_user": False},
         {"rank": 3, "name": "Wade Warren", "score": 89.5, "interviews": 15, "is_current_user": False},
     ]
     
-    # Append current user
     user = User.query.get(user_id)
     best_interview = Interview.query.filter_by(user_id=user_id, status='completed').order_by(Interview.overall_score.desc()).first()
     user_best_score = best_interview.overall_score if best_interview else 0.0
@@ -158,11 +133,40 @@ def get_achievements():
             "is_current_user": True
         })
 
-    # Update ranks
     for rank_idx, entry in enumerate(leaderboard):
         entry["rank"] = rank_idx + 1
 
-    return jsonify({
+    return {
         'badges': badges,
         'leaderboard': leaderboard
-    }), 200
+    }
+
+@user_bp.post('/profile/picture')
+async def upload_profile_pic(file: UploadFile = File(...), user_id: int = Depends(get_current_user_id)):
+    user = User.query.get(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    filename = file.filename or "avatar.png"
+    content_type = file.content_type or "image/png"
+    
+    # Check extension
+    ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
+    if ext not in {'png', 'jpg', 'jpeg', 'gif', 'webp'}:
+        raise HTTPException(status_code=400, detail="Only PNG, JPG, JPEG, GIF, and WEBP formats are supported.")
+        
+    try:
+        contents = await file.read()
+        public_url = SupabaseService.upload_profile_picture(user_id, contents, filename, content_type)
+        
+        user.profile_pic_url = public_url
+        db.session.commit()
+        
+        return {
+            'message': 'Profile picture uploaded successfully',
+            'profile_pic_url': public_url,
+            'user': user.to_dict()
+        }
+    except Exception as e:
+        db.session.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to upload profile picture: {str(e)}")

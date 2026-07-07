@@ -1,11 +1,10 @@
 import os
-from flask import Flask, jsonify
-from flask_cors import CORS
-from flask_jwt_extended import JWTManager
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from app.config.config import Config
-from app.database.db import db
+from app.database.db import db, Base, engine
 
-# Import Blueprints
+# Import routers
 from app.routes.auth_routes import auth_bp
 from app.routes.user_routes import user_bp
 from app.routes.token_routes import token_bp
@@ -16,87 +15,77 @@ from app.routes.feedback_routes import feedback_bp
 from app.routes.admin_routes import admin_bp
 
 def create_app(config_class=Config):
-    app = Flask(__name__)
-    app.config.from_object(config_class)
+    app = FastAPI(
+        title="Interviewer.AI API",
+        description="High-performance asynchronous API powered by FastAPI",
+        version="1.0.0"
+    )
 
-    # Enable CORS for React frontend (localhost:5173 or all origins in development)
-    CORS(app, resources={r"/api/*": {"origins": "*"}})
+    # Configure CORS
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
-    # Initialize Database
-    db.init_app(app)
-
-    # Initialize JWT Manager
-    jwt = JWTManager(app)
-
-    @jwt.expired_token_loader
-    def expired_token_callback(jwt_header, jwt_payload):
-        return jsonify({
-            'message': 'The token has expired. Please refresh your session.',
-            'error': 'token_expired'
-        }), 401
-
-    @jwt.invalid_token_loader
-    def invalid_token_callback(error):
-        return jsonify({
-            'message': 'Signature verification failed. Token is invalid.',
-            'error': 'token_invalid'
-        }), 401
-
-    @jwt.unauthorized_loader
-    def missing_token_callback(error):
-        return jsonify({
-            'message': 'Request does not contain an access token.',
-            'error': 'authorization_required'
-        }), 401
-
-    # Register Blueprints
-    app.register_blueprint(auth_bp, url_prefix='/api/auth')
-    app.register_blueprint(user_bp, url_prefix='/api/users')
-    app.register_blueprint(token_bp, url_prefix='/api/tokens')
-    app.register_blueprint(interview_bp, url_prefix='/api/interviews')
-    app.register_blueprint(resume_jd_bp, url_prefix='/api/resume-jd')
-    app.register_blueprint(notification_bp, url_prefix='/api/notifications')
-    app.register_blueprint(feedback_bp, url_prefix='/api/feedback')
-    app.register_blueprint(admin_bp, url_prefix='/api/admin')
-
-    # Create storage folders if they do not exist
-    os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
-    os.makedirs(app.config['REPORTS_FOLDER'], exist_ok=True)
-
-    # Create tables on startup
-    with app.app_context():
-        db.create_all()
-        # Seed Dedicated Admin if not exists
+    # Scoped database session cleanup middleware
+    @app.middleware("http")
+    async def db_session_middleware(request: Request, call_next):
         try:
-            from app.models import User, Token
-            admin_email = "admin@interviewer.com"
-            admin = User.query.filter_by(email=admin_email).first()
-            if not admin:
-                print("Seeding dedicated admin account...")
-                admin = User(
-                    name="Administrator",
-                    email=admin_email,
-                    role="admin",
-                    country="United States",
-                    experience_level="Senior",
-                    job_role="Platform Manager"
-                )
-                admin.set_password("admin123")
-                db.session.add(admin)
-                db.session.flush()
-                
-                # Give admin tokens
-                token_account = Token(user_id=admin.id, tokens_available=999)
-                db.session.add(token_account)
-                
-                db.session.commit()
-                print("Dedicated admin seeded successfully!")
-        except Exception as e:
-            db.session.rollback()
-            print(f"Failed to seed admin on startup: {str(e)}")
+            response = await call_next(request)
+            return response
+        finally:
+            db.session.remove()
 
-    @app.route('/health', methods=['GET'])
+    # Register Routers
+    app.include_router(auth_bp, prefix="/api/auth", tags=["Auth"])
+    app.include_router(user_bp, prefix="/api/users", tags=["Users"])
+    app.include_router(token_bp, prefix="/api/tokens", tags=["Tokens"])
+    app.include_router(interview_bp, prefix="/api/interviews", tags=["Interviews"])
+    app.include_router(resume_jd_bp, prefix="/api/resume-jd", tags=["Resume & JD"])
+    app.include_router(notification_bp, prefix="/api/notifications", tags=["Notifications"])
+    app.include_router(feedback_bp, prefix="/api/feedback", tags=["Feedback"])
+    app.include_router(admin_bp, prefix="/api/admin", tags=["Admin"])
+
+    # Create storage folders
+    os.makedirs(config_class.UPLOAD_FOLDER, exist_ok=True)
+    os.makedirs(config_class.REPORTS_FOLDER, exist_ok=True)
+
+    # Initialize tables
+    Base.metadata.create_all(bind=engine)
+
+    # Seed Admin User
+    try:
+        from app.models import User, Token
+        admin_email = "admin@interviewer.com"
+        admin = User.query.filter_by(email=admin_email).first()
+        if not admin:
+            print("Seeding dedicated admin account...")
+            admin = User(
+                name="Administrator",
+                email=admin_email,
+                role="admin",
+                country="United States",
+                experience_level="Senior",
+                job_role="Platform Manager"
+            )
+            admin.set_password("admin123")
+            db.session.add(admin)
+            db.session.flush()
+            
+            token_account = Token(user_id=admin.id, tokens_available=999)
+            db.session.add(token_account)
+            
+            db.session.commit()
+            print("Dedicated admin seeded successfully!")
+    except Exception as e:
+        db.session.rollback()
+        print(f"Failed to seed admin on startup: {str(e)}")
+
+    @app.get("/health")
     def health():
-        return jsonify({'status': 'healthy', 'mode': app.config['AI_MODE']}), 200
+        return {'status': 'healthy', 'mode': config_class.AI_MODE}
 
     return app

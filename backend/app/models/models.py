@@ -17,6 +17,7 @@ class User(db.Model):
     banned_until = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    profile_pic_url = db.Column(db.Text, nullable=True)
 
     # Relationships
     tokens = db.relationship('Token', backref='user', uselist=False, cascade="all, delete-orphan")
@@ -43,6 +44,7 @@ class User(db.Model):
             'job_role': self.job_role,
             'role': self.role,
             'status': self.status,
+            'profile_pic_url': self.profile_pic_url,
             'banned_until': self.banned_until.isoformat() if self.banned_until else None,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None

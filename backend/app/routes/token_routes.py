@@ -1,36 +1,30 @@
-from flask import Blueprint, request, jsonify
+from fastapi import APIRouter, Request, HTTPException, status, Depends
 from app.database.db import db
 from app.models import Token, Transaction, Notification
-from flask_jwt_extended import jwt_required, get_jwt_identity
+from app.utils.security import get_current_user_id
 
-token_bp = Blueprint('tokens', __name__)
+token_bp = APIRouter()
 
-@token_bp.route('/balance', methods=['GET'])
-@jwt_required()
-def get_balance():
-    user_id = get_jwt_identity()
+@token_bp.get('/balance')
+async def get_balance(user_id: int = Depends(get_current_user_id)):
     token_account = Token.query.filter_by(user_id=user_id).first()
     
     if not token_account:
-        # Auto-create one if missing
         token_account = Token(user_id=user_id, tokens_available=5)
         db.session.add(token_account)
         db.session.commit()
 
-    return jsonify(token_account.to_dict()), 200
+    return token_account.to_dict()
 
-
-@token_bp.route('/purchase', methods=['POST'])
-@jwt_required()
-def purchase_tokens():
-    user_id = get_jwt_identity()
-    data = request.get_json() or {}
+@token_bp.post('/purchase')
+async def purchase_tokens(request: Request, user_id: int = Depends(get_current_user_id)):
+    data = await request.json() or {}
     
     tokens_to_buy = data.get('tokens', 5)
-    amount = data.get('amount', 9.99)  # mock billing amount
+    amount = data.get('amount', 9.99)
     
     if tokens_to_buy <= 0:
-        return jsonify({'message': 'Invalid token amount'}), 400
+        raise HTTPException(status_code=400, detail="Invalid token amount")
 
     token_account = Token.query.filter_by(user_id=user_id).first()
     if not token_account:
@@ -38,11 +32,9 @@ def purchase_tokens():
         db.session.add(token_account)
 
     try:
-        # Update token balances
         token_account.tokens_available += tokens_to_buy
         token_account.tokens_purchased += tokens_to_buy
 
-        # Create transaction record
         transaction = Transaction(
             user_id=user_id,
             amount=amount,
@@ -51,7 +43,6 @@ def purchase_tokens():
         )
         db.session.add(transaction)
 
-        # Notify user
         notification = Notification(
             user_id=user_id,
             title='Tokens Purchased Successfully!',
@@ -62,19 +53,16 @@ def purchase_tokens():
 
         db.session.commit()
 
-        return jsonify({
+        return {
             'message': f'Successfully purchased {tokens_to_buy} tokens',
             'tokens': token_account.to_dict()
-        }), 200
+        }
 
     except Exception as e:
         db.session.rollback()
-        return jsonify({'message': f'Purchase transaction failed: {str(e)}'}), 500
+        raise HTTPException(status_code=500, detail=f"Purchase transaction failed: {str(e)}")
 
-
-@token_bp.route('/transactions', methods=['GET'])
-@jwt_required()
-def get_transactions():
-    user_id = get_jwt_identity()
+@token_bp.get('/transactions')
+async def get_transactions(user_id: int = Depends(get_current_user_id)):
     transactions = Transaction.query.filter_by(user_id=user_id).order_by(Transaction.created_at.desc()).all()
-    return jsonify([t.to_dict() for t in transactions]), 200
+    return [t.to_dict() for t in transactions]

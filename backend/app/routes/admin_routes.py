@@ -1,52 +1,33 @@
-from flask import Blueprint, request, jsonify
+import datetime
+from fastapi import APIRouter, Request, HTTPException, status, Depends
 from app.database.db import db
 from app.models import User, Token, Transaction, Interview, Feedback, AdminLog
-from flask_jwt_extended import jwt_required, get_jwt_identity
-import datetime
+from app.utils.security import admin_required, get_current_user_id
 
-admin_bp = Blueprint('admin', __name__)
+admin_bp = APIRouter()
 
-def admin_required(fn):
-    # Custom decorator to check admin roles
-    def wrapper(*args, **kwargs):
-        user_id = get_jwt_identity()
-        user = User.query.get(user_id)
-        if not user or user.role != 'admin':
-            return jsonify({'message': 'Administrative privileges required'}), 403
-        return fn(*args, **kwargs)
-    wrapper.__name__ = fn.__name__
-    return wrapper
-
-@admin_bp.route('/stats', methods=['GET'])
-@jwt_required()
-@admin_required
-def get_stats():
-    # 1. User stats
+@admin_bp.get('/stats')
+async def get_stats(user: User = Depends(admin_required)):
     total_users = User.query.filter_by(role='candidate').count()
     active_users = User.query.filter_by(role='candidate', status='active').count()
     banned_users = User.query.filter_by(status='banned').count()
 
-    # 2. Interview stats
     total_interviews = Interview.query.filter_by(status='completed').count()
     active_interviews = Interview.query.filter_by(status='active').count()
     
-    # Daily interviews (last 24 hours)
     yesterday = datetime.datetime.utcnow() - datetime.timedelta(days=1)
     daily_interviews = Interview.query.filter(
         Interview.created_at >= yesterday,
         Interview.status == 'completed'
     ).count()
 
-    # 3. Revenue stats
     purchases = Transaction.query.filter_by(transaction_type='purchase').all()
     total_revenue = sum(p.amount for p in purchases)
 
-    # 4. Token metrics
     tokens_query = Token.query.all()
     total_available_tokens = sum(t.tokens_available for t in tokens_query)
     total_consumed_tokens = sum(t.tokens_consumed for t in tokens_query)
 
-    # 5. Recent Feedbacks
     recent_feedbacks = Feedback.query.order_by(Feedback.created_at.desc()).limit(5).all()
     feedbacks_data = []
     for f in recent_feedbacks:
@@ -60,10 +41,9 @@ def get_stats():
             'created_at': f.created_at.isoformat()
         })
 
-    # 6. Admin Logs
     logs = AdminLog.query.order_by(AdminLog.created_at.desc()).limit(10).all()
 
-    return jsonify({
+    return {
         'users': {
             'total': total_users,
             'active': active_users,
@@ -84,13 +64,10 @@ def get_stats():
         },
         'feedbacks': feedbacks_data,
         'logs': [l.to_dict() for l in logs]
-    }), 200
+    }
 
-
-@admin_bp.route('/users', methods=['GET'])
-@jwt_required()
-@admin_required
-def list_users():
+@admin_bp.get('/users')
+async def list_users(user: User = Depends(admin_required)):
     users = User.query.filter(User.role != 'admin').order_by(User.created_at.desc()).all()
     users_list = []
     
@@ -101,61 +78,53 @@ def list_users():
         u_dict['tokens_available'] = t_val
         users_list.append(u_dict)
 
-    return jsonify(users_list), 200
+    return users_list
 
+@admin_bp.post('/users/{target_user_id}/ban')
+async def toggle_ban(target_user_id: int, user: User = Depends(admin_required)):
+    admin_id = user.id
+    target_user = User.query.get(target_user_id)
 
-@admin_bp.route('/users/<int:target_user_id>/ban', methods=['POST'])
-@jwt_required()
-@admin_required
-def toggle_ban(target_user_id):
-    admin_id = get_jwt_identity()
-    user = User.query.get(target_user_id)
+    if not target_user:
+        raise HTTPException(status_code=404, detail="User not found")
 
-    if not user:
-        return jsonify({'message': 'User not found'}), 404
+    if target_user.role == 'admin':
+        raise HTTPException(status_code=400, detail="Cannot restrict administrative accounts")
 
-    if user.role == 'admin':
-        return jsonify({'message': 'Cannot restrict administrative accounts'}), 400
-
-    # Toggle status
-    new_status = 'banned' if user.status == 'active' else 'active'
-    user.status = new_status
+    new_status = 'banned' if target_user.status == 'active' else 'active'
+    target_user.status = new_status
     if new_status == 'active':
-        user.banned_until = None
+        target_user.banned_until = None
     
-    # Log action
     log = AdminLog(
         admin_id=admin_id,
         action='TOGGLE_BAN',
-        details=f"Changed status of User ID {target_user_id} ({user.email}) to {new_status}"
+        details=f"Changed status of User ID {target_user_id} ({target_user.email}) to {new_status}"
     )
     db.session.add(log)
     
     try:
         db.session.commit()
-        return jsonify({
+        return {
             'message': f"User status changed successfully to {new_status}",
-            'user': user.to_dict()
-        }), 200
+            'user': target_user.to_dict()
+        }
     except Exception as e:
         db.session.rollback()
-        return jsonify({'message': f'Failed to update user status: {str(e)}'}), 500
+        raise HTTPException(status_code=500, detail=f"Failed to update user status: {str(e)}")
 
-
-@admin_bp.route('/users/<int:target_user_id>/tokens', methods=['POST'])
-@jwt_required()
-@admin_required
-def override_tokens(target_user_id):
-    admin_id = get_jwt_identity()
-    data = request.get_json() or {}
+@admin_bp.post('/users/{target_user_id}/tokens')
+async def override_tokens(target_user_id: int, request: Request, user: User = Depends(admin_required)):
+    admin_id = user.id
+    data = await request.json() or {}
     new_balance = data.get('tokens_available')
 
     if new_balance is None or int(new_balance) < 0:
-        return jsonify({'message': 'Valid token balance is required'}), 400
+        raise HTTPException(status_code=400, detail="Valid token balance is required")
 
-    user = User.query.get(target_user_id)
-    if not user:
-        return jsonify({'message': 'User not found'}), 404
+    target_user = User.query.get(target_user_id)
+    if not target_user:
+        raise HTTPException(status_code=404, detail="User not found")
 
     token_account = Token.query.filter_by(user_id=target_user_id).first()
     if not token_account:
@@ -165,29 +134,25 @@ def override_tokens(target_user_id):
     old_balance = token_account.tokens_available
     token_account.tokens_available = int(new_balance)
 
-    # Log action
     log = AdminLog(
         admin_id=admin_id,
         action='OVERRIDE_TOKENS',
-        details=f"Overwrote tokens of User ID {target_user_id} ({user.email}) from {old_balance} to {new_balance}"
+        details=f"Overwrote tokens of User ID {target_user_id} ({target_user.email}) from {old_balance} to {new_balance}"
     )
     db.session.add(log)
 
     try:
         db.session.commit()
-        return jsonify({
+        return {
             'message': f"User tokens balance updated successfully to {new_balance}",
             'tokens': token_account.to_dict()
-        }), 200
+        }
     except Exception as e:
         db.session.rollback()
-        return jsonify({'message': f'Failed to override user tokens: {str(e)}'}), 500
+        raise HTTPException(status_code=500, detail=f"Failed to override user tokens: {str(e)}")
 
-
-@admin_bp.route('/interviews', methods=['GET'])
-@jwt_required()
-@admin_required
-def list_interviews():
+@admin_bp.get('/interviews')
+async def list_interviews(user: User = Depends(admin_required)):
     interviews = Interview.query.order_by(Interview.created_at.desc()).all()
     interviews_list = []
     for i in interviews:
@@ -196,13 +161,10 @@ def list_interviews():
         d['user_name'] = u.name if u else 'Unknown'
         d['user_email'] = u.email if u else ''
         interviews_list.append(d)
-    return jsonify(interviews_list), 200
+    return interviews_list
 
-
-@admin_bp.route('/transactions', methods=['GET'])
-@jwt_required()
-@admin_required
-def list_transactions():
+@admin_bp.get('/transactions')
+async def list_transactions(user: User = Depends(admin_required)):
     transactions = Transaction.query.order_by(Transaction.created_at.desc()).all()
     tx_list = []
     for t in transactions:
@@ -211,13 +173,10 @@ def list_transactions():
         d['user_name'] = u.name if u else 'Unknown'
         d['user_email'] = u.email if u else ''
         tx_list.append(d)
-    return jsonify(tx_list), 200
+    return tx_list
 
-
-@admin_bp.route('/feedback', methods=['GET'])
-@jwt_required()
-@admin_required
-def list_feedbacks():
+@admin_bp.get('/feedback')
+async def list_feedbacks(user: User = Depends(admin_required)):
     feedbacks = Feedback.query.order_by(Feedback.created_at.desc()).all()
     feedbacks_list = []
     for f in feedbacks:
@@ -233,13 +192,10 @@ def list_feedbacks():
             'job_role': i.job_role if i else 'N/A',
             'created_at': f.created_at.isoformat()
         })
-    return jsonify(feedbacks_list), 200
+    return feedbacks_list
 
-
-@admin_bp.route('/logs', methods=['GET'])
-@jwt_required()
-@admin_required
-def list_logs():
+@admin_bp.get('/logs')
+async def list_logs(user: User = Depends(admin_required)):
     logs = AdminLog.query.order_by(AdminLog.created_at.desc()).all()
     logs_list = []
     for l in logs:
@@ -248,4 +204,4 @@ def list_logs():
         d['admin_name'] = u.name if u else 'System'
         d['admin_email'] = u.email if u else ''
         logs_list.append(d)
-    return jsonify(logs_list), 200
+    return logs_list

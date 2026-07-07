@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
 import DashboardLayout from './layouts/DashboardLayout';
+import Spinner from './components/ui/Spinner';
 
 // Import Pages
 import LandingPage from './pages/LandingPage';
@@ -32,8 +33,8 @@ const ProtectedRoute = ({ children }) => {
   
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center">
-        <div className="animate-spin w-8 h-8 border-4 border-primary-500 border-t-transparent rounded-full"></div>
+      <div className="min-h-screen bg-slate-100 dark:bg-slate-950 flex items-center justify-center">
+        <Spinner size="md" label="Loading..." />
       </div>
     );
   }
@@ -51,8 +52,8 @@ const AdminRoute = ({ children }) => {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center">
-        <div className="animate-spin w-8 h-8 border-4 border-primary-500 border-t-transparent rounded-full"></div>
+      <div className="min-h-screen bg-slate-100 dark:bg-slate-950 flex items-center justify-center">
+        <Spinner size="md" label="Loading..." />
       </div>
     );
   }

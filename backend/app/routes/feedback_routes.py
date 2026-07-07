@@ -1,15 +1,13 @@
-from flask import Blueprint, request, jsonify
+from fastapi import APIRouter, Request, HTTPException, status, Depends
 from app.database.db import db
 from app.models import Feedback
-from flask_jwt_extended import jwt_required, get_jwt_identity
+from app.utils.security import get_current_user_id
 
-feedback_bp = Blueprint('feedback', __name__)
+feedback_bp = APIRouter()
 
-@feedback_bp.route('', methods=['POST'])
-@jwt_required()
-def submit_feedback():
-    user_id = get_jwt_identity()
-    data = request.get_json() or {}
+@feedback_bp.post('')
+async def submit_feedback(request: Request, user_id: int = Depends(get_current_user_id)):
+    data = await request.json() or {}
 
     rating = data.get('rating')
     feedback_text = data.get('feedback_text')
@@ -17,7 +15,7 @@ def submit_feedback():
     interview_id = data.get('interview_id')
 
     if not rating:
-        return jsonify({'message': 'Rating is required'}), 400
+        raise HTTPException(status_code=400, detail="Rating is required")
 
     try:
         feedback = Feedback(
@@ -30,11 +28,11 @@ def submit_feedback():
         db.session.add(feedback)
         db.session.commit()
 
-        return jsonify({
+        return {
             'message': 'Feedback submitted successfully',
             'feedback': feedback.to_dict()
-        }), 201
+        }
 
     except Exception as e:
         db.session.rollback()
-        return jsonify({'message': f'Failed to submit feedback: {str(e)}'}), 500
+        raise HTTPException(status_code=500, detail=f"Failed to submit feedback: {str(e)}")
