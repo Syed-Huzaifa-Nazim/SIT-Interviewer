@@ -1,7 +1,13 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../services/api';
-import { Sparkles, Mail, Lock, ShieldCheck, AlertCircle, CheckCircle } from 'lucide-react';
+import GlowBackground from '../components/layout/GlowBackground';
+import BrandLogo from '../components/layout/BrandLogo';
+import Card from '../components/ui/Card';
+import Input from '../components/ui/Input';
+import Button from '../components/ui/Button';
+import Alert from '../components/ui/Alert';
+import { Mail, Lock, ShieldCheck } from 'lucide-react';
 
 const ForgotPasswordPage = () => {
   const navigate = useNavigate();
@@ -62,127 +68,86 @@ const ForgotPasswordPage = () => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 flex flex-col justify-center items-center px-4 relative overflow-hidden">
-      {/* Glow Spots */}
-      <div className="glow-spot bg-primary-600 top-[-20%] left-[-10%]"></div>
-      <div className="glow-spot bg-indigo-700 bottom-[-20%] right-[-10%]"></div>
+    <div className="min-h-screen bg-slate-100 dark:bg-slate-950 flex flex-col justify-center items-center px-4 relative overflow-hidden">
+      <GlowBackground variant="auth" />
 
-      {/* Brand Logo */}
-      <Link to="/" className="flex items-center gap-2 font-extrabold text-2xl tracking-tight text-white mb-8 relative z-10">
-        <div className="p-1.5 bg-gradient-to-tr from-primary-500 to-indigo-500 rounded-lg">
-          <Sparkles size={22} className="text-white" />
+      <BrandLogo size="lg" className="mb-8 relative z-10" />
+
+      <Card className="w-full max-w-md relative z-10 shadow-2xl animate-slide-up">
+        <div className="text-center mb-8">
+          <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-2">Reset Password</h2>
+          <p className="text-slate-500 dark:text-slate-400 text-sm">
+            {step === 1 ? 'Enter your email to receive a reset code' : 'Verify reset code and configure new password'}
+          </p>
         </div>
-        <span>Interviewer<span className="text-primary-500">.AI</span></span>
-      </Link>
 
-      {/* Card */}
-      <div className="w-full max-w-md glass-panel p-8 rounded-2xl relative z-10 shadow-2xl">
-        <h2 className="text-2xl font-bold text-white mb-2 text-center">Reset Password</h2>
-        <p className="text-slate-400 text-sm text-center mb-8">
-          {step === 1 ? 'Enter your email to receive a reset code' : 'Verify reset code and configure new password'}
-        </p>
+        {error && <Alert variant="error" className="mb-6 text-xs">{error}</Alert>}
 
-        {error && (
-          <div className="mb-6 p-4 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400 text-xs flex items-start gap-2.5">
-            <AlertCircle size={16} className="shrink-0 mt-0.5" />
-            <span>{error}</span>
-          </div>
-        )}
-
-        {success && (
-          <div className="mb-6 p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-emerald-400 text-xs flex items-start gap-2.5">
-            <CheckCircle size={16} className="shrink-0 mt-0.5" />
-            <span>{success}</span>
-          </div>
-        )}
+        {success && <Alert variant="success" className="mb-6 text-xs">{success}</Alert>}
 
         {step === 1 ? (
           /* Step 1: Request Form */
           <form onSubmit={handleRequestOtp} className="space-y-5">
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-slate-300">Email Address</label>
-              <div className="relative">
-                <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
-                <input
-                  type="email"
-                  className="w-full glass-input pl-11"
-                  placeholder="you@example.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                />
-              </div>
-            </div>
+            <Input
+              label="Email Address"
+              type="email"
+              icon={Mail}
+              placeholder="you@example.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+            />
 
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full py-3 bg-gradient-to-r from-primary-500 to-indigo-500 hover:from-primary-600 hover:to-indigo-600 text-sm font-bold rounded-xl shadow-lg shadow-primary-600/30 transition disabled:opacity-50"
-            >
+            <Button type="submit" loading={loading} fullWidth size="lg">
               {loading ? 'Sending Code...' : 'Request Reset Code'}
-            </button>
+            </Button>
           </form>
         ) : (
           /* Step 2: Reset Form */
           <form onSubmit={handleResetPassword} className="space-y-4">
             {/* Show Debug Box */}
             {debugOtp && (
-              <div className="p-3 bg-slate-900 border border-primary-500/30 rounded-xl text-center mb-4">
+              <div className="p-3 bg-slate-100 dark:bg-slate-900 border border-primary-500/30 rounded-xl text-center mb-4">
                 <span className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">Developer Debug Reset Code</span>
-                <span className="text-lg font-mono font-bold tracking-widest text-primary-400">{debugOtp}</span>
+                <span className="text-lg font-mono font-bold tracking-widest text-primary-500 dark:text-primary-400">{debugOtp}</span>
               </div>
             )}
 
-            {/* OTP */}
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-slate-300">Verification Code</label>
-              <div className="relative">
-                <ShieldCheck className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
-                <input
-                  type="text"
-                  maxLength="6"
-                  className="w-full glass-input pl-11 text-center font-mono tracking-widest"
-                  placeholder="000000"
-                  value={otp}
-                  onChange={(e) => setOtp(e.target.value)}
-                  required
-                />
-              </div>
-            </div>
+            <Input
+              label="Verification Code"
+              type="text"
+              icon={ShieldCheck}
+              maxLength="6"
+              placeholder="000000"
+              value={otp}
+              onChange={(e) => setOtp(e.target.value)}
+              inputClassName="text-center font-mono tracking-widest"
+              required
+            />
 
-            {/* New Password */}
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-slate-300">New Password</label>
-              <div className="relative">
-                <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
-                <input
-                  type="password"
-                  className="w-full glass-input pl-11"
-                  placeholder="••••••••"
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  required
-                />
-              </div>
-            </div>
+            <Input
+              label="New Password"
+              type="password"
+              icon={Lock}
+              placeholder="••••••••"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              required
+            />
 
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full py-3 bg-gradient-to-r from-primary-500 to-indigo-500 hover:from-primary-600 hover:to-indigo-600 text-sm font-bold rounded-xl shadow-lg shadow-primary-600/30 transition disabled:opacity-50"
-            >
+            <Button type="submit" loading={loading} fullWidth size="lg">
               {loading ? 'Resetting Password...' : 'Verify & Set Password'}
-            </button>
+            </Button>
           </form>
         )}
 
         <p className="mt-8 text-center text-xs text-slate-500">
           Back to{' '}
-          <Link to="/login" className="text-primary-400 hover:text-primary-300 hover:underline font-semibold font-sans">
+          <Link to="/login" className="text-primary-500 hover:text-primary-400 hover:underline font-semibold">
             Sign In
           </Link>
         </p>
-      </div>
+      </Card>
     </div>
   );
 };

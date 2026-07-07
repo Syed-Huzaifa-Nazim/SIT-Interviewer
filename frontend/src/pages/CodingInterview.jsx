@@ -1,6 +1,10 @@
 import React, { useState } from 'react';
 import api from '../services/api';
-import { Play, Sparkles, AlertCircle, CheckCircle, Code, ShieldCheck, Terminal, Award } from 'lucide-react';
+import PageHeader from '../components/ui/PageHeader';
+import Card, { CardHeader, CardTitle } from '../components/ui/Card';
+import Alert from '../components/ui/Alert';
+import Button from '../components/ui/Button';
+import { Play, Sparkles, Code, ShieldCheck, Terminal } from 'lucide-react';
 
 const CodingInterview = () => {
   const [language, setLanguage] = useState('python');
@@ -81,25 +85,13 @@ const CodingInterview = () => {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-extrabold text-white flex items-center gap-2.5">
-            <Code className="text-primary-500" />
-            Coding Assessment Workspace
-          </h1>
-          <p className="text-slate-400 text-sm mt-1">
-            Solve problems, compile scripts, and run AI code reviews to analyze time & space complexities.
-          </p>
-        </div>
-      </div>
+      <PageHeader
+        icon={Code}
+        title="Coding Assessment Workspace"
+        subtitle="Solve problems, compile scripts, and run AI code reviews to analyze time & space complexities."
+      />
 
-      {error && (
-        <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400 text-sm flex items-start gap-2.5">
-          <AlertCircle className="shrink-0 mt-0.5" />
-          <span>{error}</span>
-        </div>
-      )}
+      {error && <Alert variant="error">{error}</Alert>}
 
       {/* Main Workspace Split Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
@@ -107,40 +99,42 @@ const CodingInterview = () => {
         {/* Left Side: Challenge Picker & Instructions */}
         <div className="lg:col-span-5 space-y-6">
           {/* Picker */}
-          <div className="glass-panel p-5 rounded-2xl space-y-4">
-            <label className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Select Problem</label>
+          <Card className="space-y-4">
+            <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider block">Select Problem</label>
             <div className="space-y-2">
               {Object.keys(challengesList).map((key) => (
                 <button
                   key={key}
                   onClick={() => handleChallengeChange(key)}
-                  className={`w-full text-left p-3.5 rounded-xl border transition ${challenge === key ? 'bg-primary-600/10 border-primary-500 text-white' : 'bg-slate-900/40 border-slate-800 text-slate-400 hover:border-slate-700'}`}
+                  className={`w-full text-left p-3.5 rounded-xl border transition cursor-pointer ${challenge === key ? 'bg-primary-600/10 border-primary-500 text-slate-900 dark:text-white' : 'bg-slate-50 dark:bg-slate-900/40 border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 hover:border-slate-300 dark:hover:border-slate-700'}`}
                 >
                   <span className="text-sm font-bold block">{challengesList[key].title}</span>
                 </button>
               ))}
             </div>
-          </div>
+          </Card>
 
           {/* Description */}
-          <div className="glass-panel p-6 rounded-2xl space-y-4">
-            <h3 className="font-bold text-lg text-white border-b border-slate-800 pb-3">{activeChallenge.title}</h3>
-            <p className="text-sm text-slate-350 leading-relaxed font-sans">{activeChallenge.desc}</p>
+          <Card className="space-y-4">
+            <CardHeader>
+              <CardTitle>{activeChallenge.title}</CardTitle>
+            </CardHeader>
+            <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">{activeChallenge.desc}</p>
             
-            <div className="p-4 bg-slate-900/40 border border-slate-800 rounded-xl space-y-2">
+            <div className="p-4 bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-800 rounded-xl space-y-2">
               <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider block">Example Context</span>
-              <pre className="text-xs text-primary-300 font-mono whitespace-pre-wrap">{activeChallenge.example}</pre>
+              <pre className="text-xs text-primary-600 dark:text-primary-300 font-mono whitespace-pre-wrap">{activeChallenge.example}</pre>
             </div>
-          </div>
+          </Card>
         </div>
 
         {/* Right Side: Code Editor Workspace */}
         <div className="lg:col-span-7 space-y-6">
-          <div className="glass-panel rounded-2xl overflow-hidden flex flex-col min-h-[500px]">
+          <Card padding={false} className="overflow-hidden flex flex-col min-h-[500px]">
             {/* Toolbar */}
-            <div className="px-5 py-3.5 bg-slate-900/60 border-b border-slate-800/80 flex items-center justify-between gap-4">
+            <div className="px-5 py-3.5 bg-slate-100 dark:bg-slate-900/60 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-4">
               <select
-                className="glass-input py-1 px-3 text-xs bg-slate-900 cursor-pointer text-slate-200"
+                className="glass-input py-1 px-3 text-xs bg-white dark:bg-slate-900 cursor-pointer text-slate-800 dark:text-slate-200"
                 value={language}
                 onChange={(e) => handleLanguageChange(e.target.value)}
               >
@@ -150,14 +144,15 @@ const CodingInterview = () => {
                 <option value="cpp">C++ 20</option>
               </select>
 
-              <button
+              <Button
                 onClick={handleRunCode}
                 disabled={running}
-                className="px-4 py-2 bg-primary-650 hover:bg-primary-750 text-white text-xs font-bold rounded-lg flex items-center gap-1.5 shadow transition disabled:opacity-50"
+                loading={running}
+                size="sm"
+                icon={Play}
               >
-                <Play size={12} fill="white" />
-                <span>{running ? 'Running...' : 'Run & Review'}</span>
-              </button>
+                {running ? 'Running...' : 'Run & Review'}
+              </Button>
             </div>
 
             {/* Code Field */}
@@ -169,58 +164,57 @@ const CodingInterview = () => {
             />
 
             {/* Bottom Console Terminal Panel */}
-            <div className="bg-slate-900 border-t border-slate-800">
-              <div className="px-4 py-2 border-b border-slate-800/80 bg-slate-950/40 flex items-center gap-2 text-slate-500 text-xs font-semibold">
+            <div className="bg-slate-100 dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800">
+              <div className="px-4 py-2 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/40 flex items-center gap-2 text-slate-500 text-xs font-semibold">
                 <Terminal size={14} />
                 <span>Console Terminal Output</span>
               </div>
-              <pre className="p-4 text-xs font-mono text-emerald-400 bg-slate-950/20 max-h-36 overflow-y-auto whitespace-pre-wrap leading-normal">
+              <pre className="p-4 text-xs font-mono text-emerald-600 dark:text-emerald-400 bg-slate-50 dark:bg-slate-950/20 max-h-36 overflow-y-auto whitespace-pre-wrap leading-normal">
                 {output || 'Click "Run & Review" to execute output logs...'}
               </pre>
             </div>
-          </div>
+          </Card>
 
           {/* AI Code Review Drawer */}
           {review && (
-            <div className="glass-panel p-6 rounded-2xl space-y-6 border border-primary-500/35 shadow-xl shadow-primary-500/5">
+            <Card variant="highlighted" className="space-y-6">
               <div className="flex items-center gap-2 mb-2">
-                <Sparkles className="text-primary-400" />
-                <h3 className="font-extrabold text-lg text-white">AI Code Review Report</h3>
+                <Sparkles className="text-primary-500 dark:text-primary-400" />
+                <CardTitle className="mb-0">AI Code Review Report</CardTitle>
               </div>
 
               {/* Stats Row */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div className="p-4 bg-slate-900/60 border border-slate-800 rounded-xl text-center space-y-1">
+                <div className="p-4 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl text-center space-y-1">
                   <span className="text-[10px] text-slate-500 uppercase font-semibold">Time Complexity</span>
-                  <span className="text-base font-mono font-bold text-primary-300 block">{review.complexity_time}</span>
+                  <span className="text-base font-mono font-bold text-primary-600 dark:text-primary-300 block">{review.complexity_time}</span>
                 </div>
                 
-                <div className="p-4 bg-slate-900/60 border border-slate-800 rounded-xl text-center space-y-1">
+                <div className="p-4 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl text-center space-y-1">
                   <span className="text-[10px] text-slate-500 uppercase font-semibold">Space Complexity</span>
-                  <span className="text-base font-mono font-bold text-indigo-300 block">{review.complexity_space}</span>
+                  <span className="text-base font-mono font-bold text-indigo-600 dark:text-indigo-300 block">{review.complexity_space}</span>
                 </div>
 
-                <div className="p-4 bg-slate-900/60 border border-slate-800 rounded-xl text-center space-y-1">
+                <div className="p-4 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl text-center space-y-1">
                   <span className="text-[10px] text-slate-500 uppercase font-semibold">AI Quality Rating</span>
-                  <span className="text-base font-bold text-emerald-400 block">{review.rating} / 10</span>
+                  <span className="text-base font-bold text-emerald-500 dark:text-emerald-400 block">{review.rating} / 10</span>
                 </div>
               </div>
 
               {/* Bugs & Errors */}
               <div className="space-y-2">
-                <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Logic Defects / Security Checks</span>
+                <span className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider block">Logic Defects / Security Checks</span>
                 {review.bugs.length === 0 ? (
-                  <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-semibold rounded-xl flex items-center gap-2">
-                    <ShieldCheck size={16} />
-                    <span>No structural bugs or compiler errors detected. Good execution flow!</span>
-                  </div>
+                  <Alert variant="success">
+                    <span className="flex items-center gap-2">
+                      <ShieldCheck size={16} />
+                      No structural bugs or compiler errors detected. Good execution flow!
+                    </span>
+                  </Alert>
                 ) : (
                   <div className="space-y-2">
                     {review.bugs.map((bug, idx) => (
-                      <div key={idx} className="p-3.5 bg-red-500/10 border border-red-500/20 text-red-400 text-xs rounded-xl flex items-start gap-2.5">
-                        <AlertCircle size={16} className="shrink-0 mt-0.5" />
-                        <span>{bug}</span>
-                      </div>
+                      <Alert key={idx} variant="error">{bug}</Alert>
                     ))}
                   </div>
                 )}
@@ -228,11 +222,11 @@ const CodingInterview = () => {
 
               {/* Suggestions */}
               <div className="space-y-3">
-                <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">AI Code Improvement Suggestions</span>
+                <span className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider block">AI Code Improvement Suggestions</span>
                 <ul className="space-y-2">
                   {review.suggestions.map((sug, idx) => (
-                    <li key={idx} className="text-xs text-slate-350 leading-relaxed flex items-start gap-2">
-                      <div className="p-0.5 bg-primary-500/20 border border-primary-500/40 text-primary-400 rounded mt-0.5 font-bold text-[10px] w-5 h-5 flex items-center justify-center shrink-0">
+                    <li key={idx} className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed flex items-start gap-2">
+                      <div className="p-0.5 bg-primary-500/20 border border-primary-500/40 text-primary-500 dark:text-primary-400 rounded mt-0.5 font-bold text-[10px] w-5 h-5 flex items-center justify-center shrink-0">
                         {idx + 1}
                       </div>
                       <span>{sug}</span>
@@ -240,7 +234,7 @@ const CodingInterview = () => {
                   ))}
                 </ul>
               </div>
-            </div>
+            </Card>
           )}
         </div>
 

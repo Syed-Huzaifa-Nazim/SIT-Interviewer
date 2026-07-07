@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import api from '../services/api';
-import { 
-  Activity, 
-  Search, 
-  AlertCircle,
-  Calendar,
-  ShieldCheck
-} from 'lucide-react';
+import PageHeader from '../components/ui/PageHeader';
+import Card from '../components/ui/Card';
+import Alert from '../components/ui/Alert';
+import Badge from '../components/ui/Badge';
+import SearchBar from '../components/ui/SearchBar';
+import Spinner from '../components/ui/Spinner';
+import { Activity } from 'lucide-react';
 
 const AdminLogsPage = () => {
   const [logs, setLogs] = useState([]);
@@ -39,84 +39,65 @@ const AdminLogsPage = () => {
 
   if (loading) {
     return (
-      <div className="glass-panel p-8 rounded-2xl text-center max-w-md mx-auto my-12">
-        <div className="animate-spin w-8 h-8 border-4 border-primary-500 border-t-transparent rounded-full mx-auto mb-4"></div>
-        <p className="text-slate-400">Loading audit trail...</p>
-      </div>
+      <Card className="text-center max-w-md mx-auto my-12">
+        <Spinner label="Loading audit trail..." />
+      </Card>
     );
   }
 
   return (
     <div className="space-y-6">
-      {/* Title */}
-      <div>
-        <h1 className="text-2xl md:text-3xl font-black text-white tracking-tight">System Audit Logs</h1>
-        <p className="text-sm text-slate-400">Chronological trail of platform administrative actions and security events.</p>
-      </div>
+      <PageHeader
+        icon={Activity}
+        title="System Audit Logs"
+        subtitle="Chronological trail of platform administrative actions and security events."
+      />
 
-      {error && (
-        <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400 text-sm flex items-start gap-2.5">
-          <AlertCircle className="shrink-0 mt-0.5" />
-          <span>{error}</span>
-        </div>
-      )}
+      {error && <Alert variant="error">{error}</Alert>}
 
-      {/* Toolbar */}
-      <div className="glass-panel p-4 rounded-xl flex items-center">
-        <div className="relative w-full">
-          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" size={16} />
-          <input
-            type="text"
-            className="w-full glass-input pl-10 py-2.5 text-xs"
-            placeholder="Search by action type, administrator name, or keywords..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
-        </div>
-      </div>
+      <Card padding={false} className="p-4">
+        <SearchBar
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          placeholder="Search by action type, administrator name, or keywords..."
+        />
+      </Card>
 
-      {/* Audit Logs list Table */}
-      <div className="glass-panel p-6 rounded-2xl">
+      <Card>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs border-collapse">
             <thead>
-              <tr className="text-slate-500 border-b border-slate-900 pb-3">
+              <tr className="text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800">
                 <th className="py-3 font-bold">Timestamp</th>
                 <th className="py-3 font-bold">Action Type</th>
                 <th className="py-3 font-bold">Administrator</th>
                 <th className="py-3 font-bold">Event Details</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-900 font-mono text-[10px]">
+            <tbody className="divide-y divide-slate-200 dark:divide-slate-800 font-mono text-[10px]">
               {filteredLogs.length === 0 ? (
                 <tr>
-                  <td colSpan="4" className="py-8 text-center text-slate-500 text-xs font-sans">
+                  <td colSpan="4" className="py-8 text-center text-slate-500 dark:text-slate-400 text-xs font-sans">
                     No administrative audit logs recorded.
                   </td>
                 </tr>
               ) : (
                 filteredLogs.map((item) => (
-                  <tr key={item.id} className="text-slate-350 hover:bg-slate-900/10 transition-colors">
-                    {/* Timestamp */}
-                    <td className="py-4 text-slate-500">
+                  <tr key={item.id} className="text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-900/40 transition-colors">
+                    <td className="py-4 text-slate-500 dark:text-slate-400">
                       {new Date(item.created_at).toLocaleString()}
                     </td>
 
-                    {/* Action Type */}
                     <td className="py-4">
-                      <span className="px-2 py-0.5 bg-primary-500/10 border border-primary-500/20 text-primary-400 font-bold rounded">
-                        {item.action}
-                      </span>
+                      <Badge variant="primary">{item.action}</Badge>
                     </td>
 
-                    {/* Admin User */}
-                    <td className="py-4 font-sans font-bold text-slate-200">
+                    <td className="py-4 font-sans font-bold text-slate-900 dark:text-slate-200">
                       {item.admin_name}
-                      <span className="text-[10px] text-slate-500 font-normal block">{item.admin_email || 'System Action'}</span>
+                      <span className="text-[10px] text-slate-500 dark:text-slate-400 font-normal block">{item.admin_email || 'System Action'}</span>
                     </td>
 
-                    {/* Details */}
-                    <td className="py-4 text-slate-300 font-sans max-w-sm whitespace-pre-wrap leading-relaxed">
+                    <td className="py-4 text-slate-700 dark:text-slate-300 font-sans max-w-sm whitespace-pre-wrap leading-relaxed">
                       {item.details}
                     </td>
                   </tr>
@@ -125,7 +106,7 @@ const AdminLogsPage = () => {
             </tbody>
           </table>
         </div>
-      </div>
+      </Card>
     </div>
   );
 };

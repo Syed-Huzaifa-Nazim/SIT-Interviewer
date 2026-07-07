@@ -1,10 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../services/api';
-import { 
-  Video, 
-  Search, 
-  AlertCircle, 
+import PageHeader from '../components/ui/PageHeader';
+import Card from '../components/ui/Card';
+import Alert from '../components/ui/Alert';
+import Badge from '../components/ui/Badge';
+import SearchBar from '../components/ui/SearchBar';
+import Spinner from '../components/ui/Spinner';
+import {
+  Video,
   ArrowRight,
   ShieldAlert,
   Calendar
@@ -41,48 +45,35 @@ const AdminInterviewsPage = () => {
 
   if (loading) {
     return (
-      <div className="glass-panel p-8 rounded-2xl text-center max-w-md mx-auto my-12">
-        <div className="animate-spin w-8 h-8 border-4 border-primary-500 border-t-transparent rounded-full mx-auto mb-4"></div>
-        <p className="text-slate-400">Loading mock session logs...</p>
-      </div>
+      <Card className="text-center max-w-md mx-auto my-12">
+        <Spinner label="Loading mock session logs..." />
+      </Card>
     );
   }
 
   return (
     <div className="space-y-6">
-      {/* Title */}
-      <div>
-        <h1 className="text-2xl md:text-3xl font-black text-white tracking-tight">Mock Sessions Auditor</h1>
-        <p className="text-sm text-slate-400">Audit candidate performances, scores, and proctoring logs.</p>
-      </div>
+      <PageHeader
+        icon={Video}
+        title="Mock Sessions Auditor"
+        subtitle="Audit candidate performances, scores, and proctoring logs."
+      />
 
-      {error && (
-        <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400 text-sm flex items-start gap-2.5">
-          <AlertCircle className="shrink-0 mt-0.5" />
-          <span>{error}</span>
-        </div>
-      )}
+      {error && <Alert variant="error">{error}</Alert>}
 
-      {/* Toolbar */}
-      <div className="glass-panel p-4 rounded-xl flex items-center">
-        <div className="relative w-full">
-          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" size={16} />
-          <input
-            type="text"
-            className="w-full glass-input pl-10 py-2.5 text-xs"
-            placeholder="Search by candidate name, role, or prep type..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
-        </div>
-      </div>
+      <Card padding={false} className="p-4">
+        <SearchBar
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          placeholder="Search by candidate name, role, or prep type..."
+        />
+      </Card>
 
-      {/* Interviews Audit Table */}
-      <div className="glass-panel p-6 rounded-2xl">
+      <Card>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs border-collapse">
             <thead>
-              <tr className="text-slate-500 border-b border-slate-900 pb-3">
+              <tr className="text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800">
                 <th className="py-3 font-bold">Candidate Details</th>
                 <th className="py-3 font-bold">Job Role & Focus</th>
                 <th className="py-3 font-bold">Status & Score</th>
@@ -90,77 +81,72 @@ const AdminInterviewsPage = () => {
                 <th className="py-3 font-bold text-right">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-900">
+            <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
               {filteredInterviews.length === 0 ? (
                 <tr>
-                  <td colSpan="5" className="py-8 text-center text-slate-500 text-xs">
+                  <td colSpan="5" className="py-8 text-center text-slate-500 dark:text-slate-400 text-xs">
                     No mock session records found.
                   </td>
                 </tr>
               ) : (
                 filteredInterviews.map((item) => (
-                  <tr key={item.id} className="text-slate-350 hover:bg-slate-900/10 transition-colors">
-                    {/* Candidate Details */}
+                  <tr key={item.id} className="text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-900/40 transition-colors">
                     <td className="py-4">
-                      <div className="font-bold text-slate-200">{item.user_name}</div>
-                      <div className="text-[10px] text-slate-500">{item.user_email}</div>
+                      <div className="font-bold text-slate-900 dark:text-slate-200">{item.user_name}</div>
+                      <div className="text-[10px] text-slate-500 dark:text-slate-400">{item.user_email}</div>
                     </td>
 
-                    {/* Job / Focus Type */}
                     <td className="py-4">
-                      <div className="font-bold text-slate-300 capitalize">{item.job_role}</div>
-                      <div className="flex items-center gap-1.5 text-[10px] text-slate-500">
+                      <div className="font-bold text-slate-800 dark:text-slate-300 capitalize">{item.job_role}</div>
+                      <div className="flex items-center gap-1.5 text-[10px] text-slate-500 dark:text-slate-400">
                         <span className="capitalize">{item.type} Prep</span>
                         <span>&bull;</span>
                         <span>{item.difficulty}</span>
                       </div>
                     </td>
 
-                    {/* Status & Score */}
                     <td className="py-4">
                       <div className="flex items-center gap-2">
-                        <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase ${item.status === 'completed' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-yellow-500/10 text-yellow-400'}`}>
+                        <Badge variant={item.status === 'completed' ? 'success' : 'warning'}>
                           {item.status}
-                        </span>
+                        </Badge>
                         {item.status === 'completed' && (
-                          <span className={`font-mono font-bold ${item.overall_score >= 80 ? 'text-emerald-400' : item.overall_score >= 60 ? 'text-primary-400' : 'text-amber-400'}`}>
+                          <span className={`font-mono font-bold ${item.overall_score >= 80 ? 'text-emerald-500 dark:text-emerald-400' : item.overall_score >= 60 ? 'text-primary-500 dark:text-primary-400' : 'text-amber-500 dark:text-amber-400'}`}>
                             {item.overall_score}%
                           </span>
                         )}
                       </div>
-                      <div className="flex items-center gap-1 text-[10px] text-slate-550 pt-0.5">
+                      <div className="flex items-center gap-1 text-[10px] text-slate-500 dark:text-slate-400 pt-0.5">
                         <Calendar size={10} />
                         <span>{new Date(item.created_at).toLocaleDateString()}</span>
                       </div>
                     </td>
 
-                    {/* Proctor violations count */}
                     <td className="py-4 text-center">
                       {item.is_proctor_failed ? (
-                        <span className="px-2 py-0.5 bg-red-500/10 border border-red-500/20 text-red-400 text-[9px] font-extrabold rounded-full uppercase flex items-center justify-center gap-1 max-w-[100px] mx-auto">
+                        <Badge variant="error" className="mx-auto max-w-[100px] justify-center">
                           <ShieldAlert size={10} /> Terminated
-                        </span>
+                        </Badge>
                       ) : item.proctor_violations_count > 0 ? (
-                        <span className="font-bold text-amber-500 text-xs">
+                        <span className="font-bold text-amber-500 dark:text-amber-400 text-xs">
                           {item.proctor_violations_count} warning(s)
                         </span>
                       ) : (
-                        <span className="text-slate-500 font-semibold">Clean</span>
+                        <span className="text-slate-500 dark:text-slate-400 font-semibold">Clean</span>
                       )}
                     </td>
 
-                    {/* Actions */}
                     <td className="py-4 text-right">
                       {item.status === 'completed' ? (
                         <Link
                           to={`/interview/report/${item.id}`}
-                          className="p-2 bg-slate-900 border border-slate-800 hover:border-slate-700 hover:text-white rounded-lg transition inline-flex items-center"
+                          className="p-2 bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 hover:text-slate-900 dark:hover:text-white text-slate-500 dark:text-slate-400 rounded-lg transition inline-flex items-center"
                           title="Inspect Report Card"
                         >
                           <ArrowRight size={14} />
                         </Link>
                       ) : (
-                        <span className="text-[10px] text-slate-500 italic pr-2">Awaiting Completion</span>
+                        <span className="text-[10px] text-slate-500 dark:text-slate-400 italic pr-2">Awaiting Completion</span>
                       )}
                     </td>
                   </tr>
@@ -169,7 +155,7 @@ const AdminInterviewsPage = () => {
             </tbody>
           </table>
         </div>
-      </div>
+      </Card>
     </div>
   );
 };

@@ -1,12 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import api from '../services/api';
-import { 
-  Users, 
-  Ban, 
-  UserCheck, 
-  Key, 
-  Search, 
-  AlertCircle,
+import PageHeader from '../components/ui/PageHeader';
+import Card from '../components/ui/Card';
+import Alert from '../components/ui/Alert';
+import Badge from '../components/ui/Badge';
+import Button from '../components/ui/Button';
+import SearchBar from '../components/ui/SearchBar';
+import Spinner from '../components/ui/Spinner';
+import {
+  Users,
+  Ban,
+  UserCheck,
+  Key,
   Coins
 } from 'lucide-react';
 
@@ -16,7 +21,6 @@ const AdminUsersPage = () => {
   const [error, setError] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
 
-  // Overriding tokens modal state
   const [overrideUserId, setOverrideUserId] = useState(null);
   const [overrideVal, setOverrideVal] = useState(0);
   const [actionLoading, setActionLoading] = useState(false);
@@ -37,7 +41,6 @@ const AdminUsersPage = () => {
     fetchUsers();
   }, []);
 
-  // Handle Ban/Unban user toggling
   const handleToggleBan = async (userId) => {
     setActionLoading(true);
     setError('');
@@ -51,7 +54,6 @@ const AdminUsersPage = () => {
     }
   };
 
-  // Handle Override User Tokens submission
   const handleOverrideTokensSubmit = async (e) => {
     e.preventDefault();
     setActionLoading(true);
@@ -69,7 +71,6 @@ const AdminUsersPage = () => {
     }
   };
 
-  // Filtering users by search term
   const filteredUsers = users.filter((u) => {
     return (
       u.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -80,48 +81,35 @@ const AdminUsersPage = () => {
 
   if (loading) {
     return (
-      <div className="glass-panel p-8 rounded-2xl text-center max-w-md mx-auto my-12">
-        <div className="animate-spin w-8 h-8 border-4 border-primary-500 border-t-transparent rounded-full mx-auto mb-4"></div>
-        <p className="text-slate-400">Loading user accounts...</p>
-      </div>
+      <Card className="text-center max-w-md mx-auto my-12">
+        <Spinner label="Loading user accounts..." />
+      </Card>
     );
   }
 
   return (
     <div className="space-y-6">
-      {/* Title */}
-      <div>
-        <h1 className="text-2xl md:text-3xl font-black text-white tracking-tight">User Accounts Manager</h1>
-        <p className="text-sm text-slate-400">Control permissions, ban candidate accounts, and assign custom tokens.</p>
-      </div>
+      <PageHeader
+        icon={Users}
+        title="User Accounts Manager"
+        subtitle="Control permissions, ban candidate accounts, and assign custom tokens."
+      />
 
-      {error && (
-        <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400 text-sm flex items-start gap-2.5">
-          <AlertCircle className="shrink-0 mt-0.5" />
-          <span>{error}</span>
-        </div>
-      )}
+      {error && <Alert variant="error">{error}</Alert>}
 
-      {/* Toolbar */}
-      <div className="glass-panel p-4 rounded-xl flex items-center">
-        <div className="relative w-full">
-          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" size={16} />
-          <input
-            type="text"
-            className="w-full glass-input pl-10 py-2.5 text-xs"
-            placeholder="Search by name, email, or role..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
-        </div>
-      </div>
+      <Card padding={false} className="p-4">
+        <SearchBar
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          placeholder="Search by name, email, or role..."
+        />
+      </Card>
 
-      {/* Users Accounts Table */}
-      <div className="glass-panel p-6 rounded-2xl">
+      <Card>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs border-collapse">
             <thead>
-              <tr className="text-slate-500 border-b border-slate-900 pb-3">
+              <tr className="text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800">
                 <th className="py-3 font-bold">User Details</th>
                 <th className="py-3 font-bold">Profile Info</th>
                 <th className="py-3 font-bold">Access Status</th>
@@ -129,72 +117,66 @@ const AdminUsersPage = () => {
                 <th className="py-3 font-bold text-right">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-900">
+            <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
               {filteredUsers.length === 0 ? (
                 <tr>
-                  <td colSpan="5" className="py-8 text-center text-slate-500 text-xs">
+                  <td colSpan="5" className="py-8 text-center text-slate-500 dark:text-slate-400 text-xs">
                     No matching user accounts found.
                   </td>
                 </tr>
               ) : (
                 filteredUsers.map((item) => (
-                  <tr key={item.id} className="text-slate-350 hover:bg-slate-900/10 transition-colors">
-                    {/* User Details */}
+                  <tr key={item.id} className="text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-900/40 transition-colors">
                     <td className="py-4">
-                      <div className="font-bold text-slate-200">{item.name}</div>
-                      <div className="text-[10px] text-slate-500">{item.email}</div>
-                    </td>
-                    
-                    {/* Job Role / Exp */}
-                    <td className="py-4">
-                      <div>{item.job_role || 'Not Configured'}</div>
-                      <div className="text-[10px] text-slate-550 capitalize">{item.experience_level || 'Entry'} Level</div>
+                      <div className="font-bold text-slate-900 dark:text-slate-200">{item.name}</div>
+                      <div className="text-[10px] text-slate-500 dark:text-slate-400">{item.email}</div>
                     </td>
 
-                    {/* Ban Status */}
+                    <td className="py-4">
+                      <div>{item.job_role || 'Not Configured'}</div>
+                      <div className="text-[10px] text-slate-500 dark:text-slate-400 capitalize">{item.experience_level || 'Entry'} Level</div>
+                    </td>
+
                     <td className="py-4">
                       <div className="space-y-0.5 flex flex-col items-start">
-                        <span className={`px-2.5 py-0.5 rounded-full font-bold text-[9px] ${item.status === 'active' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>
+                        <Badge variant={item.status === 'active' ? 'success' : 'error'}>
                           {item.status}
-                        </span>
+                        </Badge>
                         {item.status === 'banned' && item.banned_until && (
-                          <span className="text-[9px] text-slate-500 font-medium">
+                          <span className="text-[9px] text-slate-500 dark:text-slate-400 font-medium">
                             Until {new Date(item.banned_until).toLocaleTimeString()}
                           </span>
                         )}
                       </div>
                     </td>
 
-                    {/* Token Balance */}
-                    <td className="py-4 text-center font-mono font-bold text-slate-200">
+                    <td className="py-4 text-center font-mono font-bold text-slate-900 dark:text-slate-200">
                       {item.tokens_available}
                     </td>
 
-                    {/* Direct Actions */}
                     <td className="py-4 text-right">
                       <div className="flex justify-end gap-2.5">
-                        {/* Assign Custom Tokens button */}
-                        <button
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          icon={Key}
                           onClick={() => {
                             setOverrideUserId(item.id);
                             setOverrideVal(item.tokens_available);
                           }}
                           disabled={actionLoading}
-                          className="p-2 bg-slate-900 border border-slate-800 hover:border-primary-500/40 text-slate-400 hover:text-white rounded-lg transition"
+                          className="!p-2 !rounded-lg"
                           title="Assign Custom Tokens"
-                        >
-                          <Key size={14} />
-                        </button>
-
-                        {/* Ban / Unban Toggle Button */}
-                        <button
+                        />
+                        <Button
+                          variant={item.status === 'active' ? 'danger' : 'success'}
+                          size="sm"
+                          icon={item.status === 'active' ? Ban : UserCheck}
                           onClick={() => handleToggleBan(item.id)}
                           disabled={actionLoading}
-                          className={`p-2 border rounded-lg transition ${item.status === 'active' ? 'bg-red-500/5 border-red-550/20 text-red-400 hover:bg-red-650 hover:text-white' : 'bg-emerald-500/5 border-emerald-550/20 text-emerald-400 hover:bg-emerald-650 hover:text-white'}`}
+                          className="!p-2 !rounded-lg"
                           title={item.status === 'active' ? 'Ban Account' : 'Unban Account'}
-                        >
-                          {item.status === 'active' ? <Ban size={14} /> : <UserCheck size={14} />}
-                        </button>
+                        />
                       </div>
                     </td>
                   </tr>
@@ -203,25 +185,24 @@ const AdminUsersPage = () => {
             </tbody>
           </table>
         </div>
-      </div>
+      </Card>
 
-      {/* Modal: Token Override Form */}
       {overrideUserId !== null && (
-        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <form 
+        <div className="fixed inset-0 z-50 bg-slate-950/60 dark:bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <form
             onSubmit={handleOverrideTokensSubmit}
             className="w-full max-w-sm glass-panel p-6 rounded-2xl border border-primary-500/30 space-y-5 shadow-2xl relative"
           >
-            <h3 className="font-extrabold text-base text-white flex items-center gap-2">
+            <h3 className="font-extrabold text-base text-slate-900 dark:text-white flex items-center gap-2">
               <Coins className="text-primary-400" size={18} />
               <span>Assign Custom Tokens</span>
             </h3>
-            <p className="text-xs text-slate-400 leading-normal">
+            <p className="text-xs text-slate-500 dark:text-slate-400 leading-normal">
               Enter the new token balance for this candidate. This will immediately override their previous balance.
             </p>
-            
+
             <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-slate-350">New Token Balance</label>
+              <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">New Token Balance</label>
               <input
                 type="number"
                 min="0"
@@ -233,20 +214,22 @@ const AdminUsersPage = () => {
             </div>
 
             <div className="flex items-center justify-end gap-3 pt-3">
-              <button
+              <Button
                 type="button"
+                variant="secondary"
+                size="sm"
                 onClick={() => setOverrideUserId(null)}
-                className="px-4 py-2 border border-slate-800 hover:bg-slate-900 text-xs font-bold text-slate-400 hover:text-white rounded-lg transition"
               >
                 Cancel
-              </button>
-              <button
+              </Button>
+              <Button
                 type="submit"
+                size="sm"
+                loading={actionLoading}
                 disabled={actionLoading}
-                className="px-4 py-2 bg-primary-600 hover:bg-primary-700 disabled:opacity-50 text-white text-xs font-bold rounded-lg transition"
               >
                 {actionLoading ? 'Updating...' : 'Set Balance'}
-              </button>
+              </Button>
             </div>
           </form>
         </div>
