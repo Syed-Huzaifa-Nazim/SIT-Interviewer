@@ -153,8 +153,10 @@ const InterviewSession = () => {
         snapshot_image: snapshot
       });
       const count = res.data.violations_count;
-      setViolationsCount(count);
-      violationsCountRef.current = count;
+      if (typeof count === 'number') {
+        setViolationsCount(count);
+        violationsCountRef.current = count;
+      }
       
       if (res.data.auto_terminate) {
         stopCamera();
@@ -279,12 +281,40 @@ const InterviewSession = () => {
             handleProctoringResults(results);
           });
 
+          // Optional Hands model: detects hands raised in front of the screen.
+          // Loaded in its own try/catch so any failure here never disrupts the
+          // face-based proctoring above.
+          let handsModel = null;
+          try {
+            await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js');
+            if (active && window.Hands) {
+              handsModel = new window.Hands({
+                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+              });
+              handsModel.setOptions({
+                maxNumHands: 2,
+                modelComplexity: 0,
+                minDetectionConfidence: 0.6,
+                minTrackingConfidence: 0.6
+              });
+              handsModel.onResults((results) => {
+                if (!active) return;
+                handleHandResults(results);
+              });
+            }
+          } catch (e) {
+            console.warn('MediaPipe Hands unavailable; face proctoring continues.', e);
+          }
+
           // Custom frame loop using requestAnimationFrame at ~16 FPS to optimize CPU
           const processFrame = async () => {
             if (!active) return;
             if (cameraOn && videoRef.current && videoRef.current.readyState >= 2) {
               try {
                 await faceMesh.send({ image: videoRef.current });
+                if (handsModel) {
+                  await handsModel.send({ image: videoRef.current });
+                }
               } catch (e) {
                 // Ignore transient frame send failures
               }
@@ -370,6 +400,30 @@ const InterviewSession = () => {
     }
   };
 
+  // 7b. Process MediaPipe Hand Landmarks (hands raised in front of the screen/camera)
+  const handleHandResults = (results) => {
+    const hands = results.multiHandLandmarks || [];
+    if (hands.length === 0) return;
+
+    // Only flag a hand that is prominently in front of the camera (i.e. held up
+    // close to the screen). A large bounding box means the hand is near the lens.
+    // Small/distant hand movement (natural typing, resting) is ignored so the
+    // proctor does not fire false violations.
+    for (const landmarks of hands) {
+      let minX = 1, maxX = 0, minY = 1, maxY = 0;
+      for (const p of landmarks) {
+        if (p.x < minX) minX = p.x;
+        if (p.x > maxX) maxX = p.x;
+        if (p.y < minY) minY = p.y;
+        if (p.y > maxY) maxY = p.y;
+      }
+      if ((maxX - minX) > 0.28 || (maxY - minY) > 0.28) {
+        logProctorViolation('HAND_DETECTED', 'Hand raised in front of the screen. Keep your hands down.');
+        return;
+      }
+    }
+  };
+
   // 8. Recording Duration timer
   useEffect(() => {
     if (isRecording) {
@@ -444,17 +498,26 @@ const InterviewSession = () => {
       setIsReviewingTranscript(true);
     } catch (err) {
       console.error('Failed to transcribe audio:', err);
-      setError('Speech transcription failed. You can type your answer in the text box below.');
+      const detail = err.response?.data?.message;
+      setError(
+        detail
+          ? `${detail} You can type your answer in the text box below.`
+          : 'Speech transcription is unavailable right now. Please type your answer in the text box below.'
+      );
       setInputMode('text');
     } finally {
       setIsTranscribing(false);
     }
   };
 
-  const handleConfirmSubmit = () => {
-    submitAnswer(recordedAudioBlobRef.current);
-    setIsReviewingTranscript(false);
-    recordedAudioBlobRef.current = null;
+  const handleConfirmSubmit = async () => {
+    // Only clear the reviewed transcript/audio once the submission actually succeeds,
+    // so a mid-session network drop doesn't discard the candidate's answer (§12).
+    const ok = await submitAnswer(recordedAudioBlobRef.current);
+    if (ok) {
+      setIsReviewingTranscript(false);
+      recordedAudioBlobRef.current = null;
+    }
   };
 
   const handleDiscardRecord = () => {
@@ -463,17 +526,18 @@ const InterviewSession = () => {
     recordedAudioBlobRef.current = null;
   };
 
-  // 10. Submit Answer payload
+  // 10. Submit Answer payload. Returns true on success, false on failure so callers
+  // can preserve the candidate's answer for retry (§12).
   const submitAnswer = async (audioBlob = null) => {
+    const activeQuestion = questions[currentIdx];
+    if (!activeQuestion) return false;
+
     setLoading(true);
     setError('');
 
-    const activeQuestion = questions[currentIdx];
-    if (!activeQuestion) return;
-
     const formData = new FormData();
     formData.append('question_id', activeQuestion.id);
-    
+
     if (audioBlob) {
       formData.append('audio', audioBlob, 'response.webm');
       formData.append('duration', recordDuration);
@@ -497,8 +561,10 @@ const InterviewSession = () => {
       } else {
         setCurrentIdx(prev => prev + 1);
       }
+      return true;
     } catch (err) {
-      setError(err.response?.data?.message || 'Failed to submit response. Please try again.');
+      setError(err.response?.data?.message || 'Failed to submit response. Your answer was kept — please try again.');
+      return false;
     } finally {
       setLoading(false);
     }
@@ -592,6 +658,20 @@ const InterviewSession = () => {
             <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400 text-sm font-semibold">
               <Clock size={16} />
               <span>{formatTime(sessionTime)}</span>
+            </div>
+          </div>
+
+          {/* Interview progress indicator (§12) */}
+          <div className="mt-4 space-y-1.5">
+            <div className="flex items-center justify-between text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+              <span>Progress</span>
+              <span>{currentIdx} / {questions.length} completed</span>
+            </div>
+            <div className="w-full h-1.5 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-gradient-to-r from-primary-500 to-accent-500 rounded-full transition-all duration-500"
+                style={{ width: `${questions.length ? (currentIdx / questions.length) * 100 : 0}%` }}
+              />
             </div>
           </div>
         </div>

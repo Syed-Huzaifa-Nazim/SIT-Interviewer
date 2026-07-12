@@ -24,13 +24,26 @@ api.interceptors.request.use(
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
-    const originalRequest = error.config;
+    // Normalize FastAPI's default { detail } error shape to { message } so
+    // every err.response?.data?.message read across the app gets the real
+    // backend message instead of silently falling back to generic text.
+    if (error.response?.data && error.response.data.message === undefined && error.response.data.detail !== undefined) {
+      error.response.data.message = typeof error.response.data.detail === 'string'
+        ? error.response.data.detail
+        : JSON.stringify(error.response.data.detail);
+    }
 
-    // Check if error is 401 and not already retried
+    const originalRequest = error.config;
+    const isAuthEndpoint = /\/auth\/(login|register|refresh)$/.test(originalRequest?.url || '');
+
+    // Check if error is 401 and not already retried.
+    // The backend returns FastAPI's default { detail } shape (never a
+    // { error: 'token_expired' } field), so any 401 on a non-auth request
+    // is treated as a candidate for silent refresh.
     if (
       error.response &&
       error.response.status === 401 &&
-      error.response.data.error === 'token_expired' &&
+      !isAuthEndpoint &&
       !originalRequest._retry
     ) {
       originalRequest._retry = true;

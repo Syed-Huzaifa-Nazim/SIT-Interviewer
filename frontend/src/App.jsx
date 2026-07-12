@@ -7,6 +7,11 @@ import Spinner from './components/ui/Spinner';
 
 // Import Pages
 import LandingPage from './pages/LandingPage';
+import FeaturesPage from './pages/public/FeaturesPage';
+import TechnologyPage from './pages/public/TechnologyPage';
+import PricingPage from './pages/public/PricingPage';
+import ContactPage from './pages/public/ContactPage';
+import DemoPage from './pages/public/DemoPage';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import ForgotPasswordPage from './pages/ForgotPasswordPage';
@@ -23,6 +28,7 @@ import InterviewSetup from './pages/InterviewSetup';
 import AdminLayout from './layouts/AdminLayout';
 import AdminUsersPage from './pages/AdminUsersPage';
 import AdminInterviewsPage from './pages/AdminInterviewsPage';
+import AdminScoringPage from './pages/AdminScoringPage';
 import AdminTransactionsPage from './pages/AdminTransactionsPage';
 import AdminFeedbackPage from './pages/AdminFeedbackPage';
 import AdminLogsPage from './pages/AdminLogsPage';
@@ -77,6 +83,11 @@ function App() {
           <Routes>
             {/* Public Pages */}
             <Route path="/" element={<LandingPage />} />
+            <Route path="/features" element={<FeaturesPage />} />
+            <Route path="/technology" element={<TechnologyPage />} />
+            <Route path="/pricing" element={<PricingPage />} />
+            <Route path="/contact" element={<ContactPage />} />
+            <Route path="/demo" element={<DemoPage />} />
             <Route path="/login" element={<LoginPage />} />
             <Route path="/register" element={<RegisterPage />} />
             <Route path="/forgot-password" element={<ForgotPasswordPage />} />
@@ -180,13 +191,21 @@ function App() {
                 </AdminRoute>
               } 
             />
-            <Route 
-              path="/admin/transactions" 
+            <Route
+              path="/admin/scoring"
+              element={
+                <AdminRoute>
+                  <AdminScoringPage />
+                </AdminRoute>
+              }
+            />
+            <Route
+              path="/admin/transactions"
               element={
                 <AdminRoute>
                   <AdminTransactionsPage />
                 </AdminRoute>
-              } 
+              }
             />
             <Route 
               path="/admin/feedback" 

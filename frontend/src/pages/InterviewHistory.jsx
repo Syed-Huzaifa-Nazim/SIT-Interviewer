@@ -70,10 +70,10 @@ const InterviewHistory = () => {
       {error && <Alert variant="error">{error}</Alert>}
 
       {/* Toolbar - Search, Filter, Sort */}
-      <Card padding className="p-4">
+      <Card padding={false} className="p-4">
         <div className="flex flex-col md:flex-row items-center gap-4">
           <SearchBar
-            className="md:flex-1"
+            className="md:flex-row"
             placeholder="Search by job role..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
@@ -97,7 +97,7 @@ const InterviewHistory = () => {
 
           {/* Sort */}
           <select
-            className="glass-input py-2 px-3 text-xs w-full md:w-40 cursor-pointer bg-white dark:bg-slate-900"
+            className="glass-input py-1 px-1 text-xs w-full md:w-40 cursor-pointer bg-white dark:bg-slate-900"
             value={sortBy}
             onChange={(e) => setSortBy(e.target.value)}
           >

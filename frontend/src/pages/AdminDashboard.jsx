@@ -18,7 +18,8 @@ import {
   ShieldAlert,
   CheckCircle,
   Unlock,
-  Sparkles
+  Sparkles,
+  RefreshCw
 } from 'lucide-react';
 
 const AdminDashboard = () => {
@@ -26,6 +27,7 @@ const AdminDashboard = () => {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
@@ -48,6 +50,12 @@ const AdminDashboard = () => {
   useEffect(() => {
     loadDashboardData();
   }, []);
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    await loadDashboardData();
+    setRefreshing(false);
+  };
 
   const handleQuickUnban = async (userId) => {
     setActionLoading(true);
@@ -82,8 +90,13 @@ const AdminDashboard = () => {
         title="Interviewer.AI Admin Hub"
         subtitle="Real-time statistics, token pools, and student integrity proctor monitoring."
         action={
-          <div className="text-[10px] text-slate-500 dark:text-slate-400 font-sans border border-slate-200 dark:border-slate-800 px-3 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-950">
-            Global System: <span className="text-emerald-500 dark:text-emerald-400 font-bold">Online</span>
+          <div className="flex items-center gap-3">
+            <div className="text-[10px] text-slate-500 dark:text-slate-400 font-sans border border-slate-200 dark:border-slate-800 px-3 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-950">
+              Global System: <span className="text-emerald-500 dark:text-emerald-400 font-bold">Online</span>
+            </div>
+            <Button variant="secondary" size="sm" icon={RefreshCw} loading={refreshing} onClick={handleRefresh}>
+              Refresh
+            </Button>
           </div>
         }
       />
@@ -93,46 +106,55 @@ const AdminDashboard = () => {
 
       {stats && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-          <StatCard
-            label="Registered Students"
-            value={stats.users.total}
-            subtext={`${stats.users.active} Active • ${stats.users.banned} Flagged`}
-            icon={Users}
-            iconColor="text-blue-400"
-            iconBg="bg-blue-500/10 border border-blue-500/20"
-          />
-          <StatCard
-            label="Intake Completed"
-            value={stats.interviews.completed}
-            subtext={`${stats.interviews.daily} taken in last 24h`}
-            icon={Video}
-            iconColor="text-violet-400"
-            iconBg="bg-violet-500/10 border border-violet-500/20"
-          />
-          <StatCard
-            label="Platform Revenue"
-            value={`$${stats.revenue.total}`}
-            subtext="Stripe gross sales"
-            icon={DollarSign}
-            iconColor="text-emerald-400"
-            iconBg="bg-emerald-500/10 border border-emerald-500/20"
-          />
-          <StatCard
-            label="Tokens Consumed"
-            value={stats.tokens.total_consumed}
-            subtext={`${stats.tokens.total_available} available in pool`}
-            icon={Coins}
-            iconColor="text-yellow-400"
-            iconBg="bg-yellow-500/10 border border-yellow-500/20"
-          />
+          <RouterLink to="/admin/users" className="block">
+            <StatCard
+              title="Registered Students"
+              value={stats.users.total}
+              subtext={`${stats.users.active} Active • ${stats.users.banned} Flagged`}
+              icon={Users}
+              color="primary"
+            />
+          </RouterLink>
+          <RouterLink to="/admin/interviews" className="block">
+            <StatCard
+              title="Intake Completed"
+              value={stats.interviews.completed}
+              subtext={`${stats.interviews.daily} taken in last 24h`}
+              icon={Video}
+              color="violet"
+            />
+          </RouterLink>
+          <RouterLink to="/admin/transactions" className="block">
+            <StatCard
+              title="Platform Revenue"
+              value={`$${stats.revenue.total}`}
+              subtext="Stripe gross sales"
+              icon={DollarSign}
+              color="success"
+            />
+          </RouterLink>
+          <RouterLink to="/admin/transactions" className="block">
+            <StatCard
+              title="Tokens Consumed"
+              value={stats.tokens.total_consumed}
+              subtext={`${stats.tokens.total_available} available in pool`}
+              icon={Coins}
+              color="warning"
+            />
+          </RouterLink>
         </div>
       )}
 
       <Card className="relative overflow-hidden space-y-4">
         <div className="absolute top-0 right-0 w-32 h-32 bg-red-500/5 rounded-full blur-2xl pointer-events-none" />
-        <CardHeader className="flex items-center gap-2 pb-3 mb-0 border-slate-200 dark:border-slate-800">
-          <ShieldAlert className="text-red-400 shrink-0" size={20} />
-          <CardTitle className="text-base mb-0">Proctor Security & Ban Audit Alerts</CardTitle>
+        <CardHeader className="flex items-center justify-between gap-2 pb-3 mb-0 border-slate-200 dark:border-slate-800">
+          <div className="flex items-center gap-2">
+            <ShieldAlert className="text-red-400 shrink-0" size={20} />
+            <CardTitle className="text-base mb-0">Proctor Security & Ban Audit Alerts</CardTitle>
+          </div>
+          <RouterLink to="/admin/users" className="text-xs text-primary-500 dark:text-primary-400 hover:underline shrink-0">
+            Manage Users
+          </RouterLink>
         </CardHeader>
 
         {flaggedUsers.length === 0 ? (
@@ -160,7 +182,7 @@ const AdminDashboard = () => {
                     </td>
                     <td className="py-3.5 capitalize text-slate-600 dark:text-slate-300">{student.job_role}</td>
                     <td className="py-3.5">
-                      <Badge variant="error">Banned (3x Warnings Exceeded)</Badge>
+                      <Badge variant="danger">Banned (3x Warnings Exceeded)</Badge>
                     </td>
                     <td className="py-3.5 text-right">
                       <Button

@@ -3,11 +3,12 @@ import { Link, useNavigate } from 'react-router-dom';
 import api from '../services/api';
 import GlowBackground from '../components/layout/GlowBackground';
 import BrandLogo from '../components/layout/BrandLogo';
+import ThemeToggle from '../components/layout/ThemeToggle';
 import Card from '../components/ui/Card';
 import Input from '../components/ui/Input';
 import Button from '../components/ui/Button';
 import Alert from '../components/ui/Alert';
-import { Mail, Lock, ShieldCheck } from 'lucide-react';
+import { Mail, Lock, ShieldCheck, ChevronLeft } from 'lucide-react';
 
 const ForgotPasswordPage = () => {
   const navigate = useNavigate();
@@ -70,6 +71,13 @@ const ForgotPasswordPage = () => {
   return (
     <div className="min-h-screen bg-slate-100 dark:bg-slate-950 flex flex-col justify-center items-center px-4 relative overflow-hidden">
       <GlowBackground variant="auth" />
+
+      <div className="absolute top-5 left-5 right-5 z-20 flex items-center justify-between">
+        <Link to="/" className="inline-flex items-center gap-1.5 text-sm font-semibold text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 transition">
+          <ChevronLeft size={16} /> Back to Home
+        </Link>
+        <ThemeToggle />
+      </div>
 
       <BrandLogo size="lg" className="mb-8 relative z-10" />
 

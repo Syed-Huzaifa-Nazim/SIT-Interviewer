@@ -58,7 +58,7 @@ const DashboardLayout = ({ children }) => {
   };
 
   return (
-    <div className="min-h-screen flex bg-slate-100 dark:bg-slate-950 text-slate-800 dark:text-slate-100">
+    <div className="min-h-screen flex bg-slate-100 dark:bg-slate-950 text-slate-800 dark:text-slate-100 relative overflow-hidden">
       <GlowBackground />
 
       {sidebarOpen && (
@@ -95,23 +95,38 @@ const DashboardLayout = ({ children }) => {
           </div>
         </div>
 
-        <nav className="flex-1 px-3 py-5 space-y-1 overflow-y-auto">
+        <nav className="flex-1 px-3 py-5 space-y-1 overflow-y-auto font-sans">
           {menuItems.map((item) => {
             const Icon = item.icon;
             const isActive = location.pathname === item.path || location.pathname.startsWith(item.path + '/');
+            const isSandbox = item.path === '/coding';
+            const isUser = user?.role !== 'admin';
+            const isDisabled = isSandbox && isUser;
+
+            const handleClick = (e) => {
+              if (isDisabled) {
+                e.preventDefault();
+                alert("The Coding Sandbox feature is currently under development and not yet ready for regular candidates. Please check back later!");
+              } else {
+                setSidebarOpen(false);
+              }
+            };
+
             return (
               <Link
                 key={item.name}
-                to={item.path}
-                className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 ${
-                  isActive
-                    ? 'bg-primary-600 text-white shadow-md shadow-primary-600/20'
-                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-200/80 dark:hover:bg-slate-900/60'
+                to={isDisabled ? '#' : item.path}
+                onClick={handleClick}
+                className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all duration-200 select-none ${
+                  isDisabled
+                    ? 'opacity-40 cursor-not-allowed text-slate-400 dark:text-slate-500'
+                    : isActive
+                      ? 'bg-primary-600 text-white shadow-md shadow-primary-600/20'
+                      : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-200/80 dark:hover:bg-slate-900/60'
                 }`}
-                onClick={() => setSidebarOpen(false)}
               >
-                <Icon size={18} />
-                <span>{item.name}</span>
+                <Icon size={18} className="shrink-0" />
+                <span className="flex-1 min-w-0 truncate whitespace-nowrap">{item.name}</span>
               </Link>
             );
           })}
@@ -129,13 +144,21 @@ const DashboardLayout = ({ children }) => {
       </aside>
 
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden relative z-10">
-        <header className="sticky top-0 z-30 flex items-center justify-between lg:justify-end px-5 py-3.5 glass-panel border-b border-slate-200 dark:border-slate-800">
+        <header className="sticky top-0 z-30 flex items-center justify-between px-5 py-3.5 glass-panel border-b border-slate-200 dark:border-slate-800">
           <button
             className="lg:hidden text-slate-500 hover:text-slate-800 dark:hover:text-white p-2 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-900"
             onClick={() => setSidebarOpen(true)}
           >
             <Menu size={22} />
           </button>
+
+          <div className="hidden sm:flex items-center gap-2">
+            <span className="text-xs font-extrabold uppercase tracking-widest text-slate-400 dark:text-slate-500 font-sans">
+              SMIT Assessment Portal
+            </span>
+            <span className="w-1.5 h-1.5 rounded-full bg-accent-500" />
+            <span className="text-xs text-slate-500 dark:text-slate-400 font-semibold font-sans">Candidate Center</span>
+          </div>
 
           <div className="flex items-center gap-3">
             <Link
@@ -207,8 +230,8 @@ const DashboardLayout = ({ children }) => {
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto p-5 md:p-8 animate-fade-in">
-          <div className="max-w-7xl mx-auto">{children}</div>
+        <main className="flex-1 overflow-y-auto p-5 md:p-8">
+          <div key={location.pathname} className="max-w-7xl mx-auto animate-fade-in">{children}</div>
         </main>
       </div>
     </div>

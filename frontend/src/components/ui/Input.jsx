@@ -30,7 +30,7 @@ const Input = ({
         )}
         <input
           type={inputType}
-          className={`w-full glass-input ${Icon ? 'pl-11' : ''} ${showToggle ? 'pr-11' : ''} ${inputClassName}`}
+          className={`w-full glass-input ${Icon ? '!pl-11' : ''} ${showToggle ? '!pr-11' : ''} ${inputClassName}`}
           {...props}
         />
         {showToggle && (

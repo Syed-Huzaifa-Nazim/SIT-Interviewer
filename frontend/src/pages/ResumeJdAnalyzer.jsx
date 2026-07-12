@@ -57,7 +57,7 @@ const ResumeJdAnalyzer = () => {
       setResumeText(parsedText);
       setSuccess('Resume analyzed successfully! You can now paste a job description to check compatibility.');
     } catch (err) {
-      setError(err.response?.data?.message || 'Failed to parse resume file. Ensure it is a standard PDF or TXT.');
+      setError(err.response?.data?.detail || err.response?.data?.message || 'Failed to parse resume file. Ensure it is a standard PDF or TXT.');
       setResumeFile(null);
     } finally {
       setAnalyzingResume(false);

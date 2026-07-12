@@ -8,6 +8,9 @@ export const AuthProvider = ({ children }) => {
   const [tokens, setTokens] = useState(null);
   const [notifications, setNotifications] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const clearError = () => setError('');
 
   // Fetch Profile & Tokens
   const fetchProfile = async () => {
@@ -46,14 +49,22 @@ export const AuthProvider = ({ children }) => {
 
   // Login
   const login = async (email, password) => {
+    let finalEmail = email;
+    let finalPassword = password;
+    if (email && typeof email === 'object') {
+      finalEmail = email.email;
+      finalPassword = email.password;
+    }
+
     setLoading(true);
+    setError('');
     try {
-      const res = await api.post('/auth/login', { email, password });
+      const res = await api.post('/auth/login', { email: finalEmail, password: finalPassword });
       const { user: userData, tokens: tokenData, access_token, refresh_token } = res.data;
-      
+
       localStorage.setItem('access_token', access_token);
       localStorage.setItem('refresh_token', refresh_token);
-      
+
       setUser(userData);
       setTokens(tokenData);
       fetchNotifications();
@@ -61,27 +72,45 @@ export const AuthProvider = ({ children }) => {
       return userData;
     } catch (err) {
       setLoading(false);
+      setError(err.response?.data?.message || 'Unable to log in. Please check your credentials and try again.');
       throw err;
     }
   };
 
   // Register
   const register = async (name, email, password, country, experience_level, job_role) => {
+    let finalName = name;
+    let finalEmail = email;
+    let finalPassword = password;
+    let finalCountry = country;
+    let finalExp = experience_level;
+    let finalJob = job_role;
+
+    if (name && typeof name === 'object') {
+      finalName = name.name;
+      finalEmail = name.email;
+      finalPassword = name.password;
+      finalCountry = name.country;
+      finalExp = name.experience_level;
+      finalJob = name.job_role;
+    }
+
     setLoading(true);
+    setError('');
     try {
       const res = await api.post('/auth/register', {
-        name,
-        email,
-        password,
-        country,
-        experience_level,
-        job_role,
+        name: finalName,
+        email: finalEmail,
+        password: finalPassword,
+        country: finalCountry,
+        experience_level: finalExp,
+        job_role: finalJob,
       });
       const { user: userData, tokens: tokenData, access_token, refresh_token } = res.data;
-      
+
       localStorage.setItem('access_token', access_token);
       localStorage.setItem('refresh_token', refresh_token);
-      
+
       setUser(userData);
       setTokens(tokenData);
       fetchNotifications();
@@ -89,6 +118,7 @@ export const AuthProvider = ({ children }) => {
       return userData;
     } catch (err) {
       setLoading(false);
+      setError(err.response?.data?.message || 'Unable to register right now. Please try again.');
       throw err;
     }
   };
@@ -124,6 +154,8 @@ export const AuthProvider = ({ children }) => {
         tokens,
         notifications,
         loading,
+        error,
+        clearError,
         login,
         register,
         logout,

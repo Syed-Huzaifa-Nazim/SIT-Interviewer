@@ -40,6 +40,7 @@ const InterviewConfig = () => {
   const [uploadingJd, setUploadingJd] = useState(false);
   const [jdFileName, setJdFileName] = useState('');
   const [error, setError] = useState('');
+  const [domainNotice, setDomainNotice] = useState('');
 
   const handleJdFileUpload = async (e) => {
     const file = e.target.files[0];
@@ -72,6 +73,7 @@ const InterviewConfig = () => {
   const handleStart = async (e) => {
     e.preventDefault();
     setError('');
+    setDomainNotice('');
 
     if (tokens?.tokens_available < 1) {
       setError('You do not have enough tokens. Please go to your Profile and purchase tokens to start.');
@@ -101,7 +103,13 @@ const InterviewConfig = () => {
       const interviewId = res.data.interview.id;
       navigate(`/interview/setup/${interviewId}`);
     } catch (err) {
-      setError(err.response?.data?.message || 'Failed to start interview. Please check your credentials and connection.');
+      // 422 = domain not supported (non-technical). Show it as a soft, friendly notice
+      // rather than a hard error — no token is consumed in this case.
+      if (err.response?.status === 422) {
+        setDomainNotice(err.response?.data?.message || 'Interviews are not yet available for this domain.');
+      } else {
+        setError(err.response?.data?.message || 'Failed to start interview. Please check your credentials and connection.');
+      }
     } finally {
       setLoading(false);
     }
@@ -123,6 +131,7 @@ const InterviewConfig = () => {
       />
 
       {error && <Alert variant="error">{error}</Alert>}
+      {domainNotice && <Alert variant="warning">{domainNotice}</Alert>}
 
       <Card className="space-y-8 md:p-8">
         <form onSubmit={handleStart} className="space-y-8">

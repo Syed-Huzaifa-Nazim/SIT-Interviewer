@@ -143,6 +143,7 @@ const InterviewSetup = () => {
     { title: 'Fullscreen Required', text: 'Exiting fullscreen mode during the session triggers an immediate integrity warning.' },
     { title: 'Tab Locking', text: 'Switching browser tabs or minimizing the window logs a focus infraction.' },
     { title: 'Face & Eye Gaze Monitoring', text: 'The AI tracker continuously checks if you are present and looking at the screen. Looking away or turning your head records a violation.' },
+    { title: 'Hand Presence Check', text: 'If more than two hands appear in the camera frame, an integrity violation is recorded.' },
     { title: 'Zero Copy-Paste', text: 'Standard key combinations and copy-paste activities are blocked.' },
   ];
 
