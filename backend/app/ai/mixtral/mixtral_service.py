@@ -1,97 +1,357 @@
 import json
+import re
+import time
 import requests
 import random
 from app.config.config import Config
 
 class MixtralService:
     @staticmethod
-    def _call_llm(system_prompt, user_prompt):
+    def is_configured():
+        """True when a real LLM API is wired up and enabled."""
+        return Config.AI_MODE == 'api' and bool(Config.MIXTRAL_API_KEY)
+
+    @staticmethod
+    def _parse_json_content(content):
+        """Tolerantly parse a model's text into a JSON object.
+
+        Handles clean JSON, ```json fenced blocks, and prose with an embedded
+        object, so we don't drop good completions just because a model ignored
+        the response_format hint.
+        """
+        if not content:
+            return None
+        content = content.strip()
+        if content.startswith('```'):
+            content = re.sub(r'^```[a-zA-Z]*\n?', '', content)
+            content = re.sub(r'\n?```$', '', content).strip()
+        try:
+            return json.loads(content)
+        except Exception:
+            match = re.search(r'\{.*\}', content, re.DOTALL)
+            if match:
+                try:
+                    return json.loads(match.group(0))
+                except Exception:
+                    return None
+        return None
+
+    @staticmethod
+    def _call_llm(system_prompt, user_prompt, temperature=0.3, model=None, max_retries=None):
+        """Call the configured chat-completions endpoint with retries.
+
+        Returns a parsed JSON object on success, or None on failure so callers
+        can apply their own safe fallback. Never raises.
+        """
         if Config.AI_MODE == 'mock' or not Config.MIXTRAL_API_KEY:
             return None
-        
+
         headers = {
             "Authorization": f"Bearer {Config.MIXTRAL_API_KEY}",
             "Content-Type": "application/json"
         }
-        
-        # Prepare parameters for OpenAI/Groq compatible chat completions
+
         payload = {
-            "model": "mixtral-8x7b-32768" if "groq" in Config.MIXTRAL_API_URL.lower() else "mistralai/Mixtral-8x7B-Instruct-v0.1",
+            "model": model or Config.LLM_MODEL,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            "temperature": 0.3,
+            "temperature": temperature,
             "response_format": {"type": "json_object"}
         }
 
-        try:
-            response = requests.post(Config.MIXTRAL_API_URL, headers=headers, json=payload, timeout=15)
-            if response.status_code == 200:
-                result = response.json()
-                content = result['choices'][0]['message']['content']
-                return json.loads(content)
-        except Exception as e:
-            print(f"Error calling LLM API: {str(e)}. Falling back to mock generator.")
-        
+        attempts = (Config.LLM_MAX_RETRIES if max_retries is None else max_retries) + 1
+        last_err = None
+        for attempt in range(attempts):
+            try:
+                response = requests.post(
+                    Config.MIXTRAL_API_URL, headers=headers, json=payload, timeout=Config.LLM_TIMEOUT
+                )
+                if response.status_code == 200:
+                    content = response.json()['choices'][0]['message']['content']
+                    parsed = MixtralService._parse_json_content(content)
+                    if parsed is not None:
+                        return parsed
+                    last_err = "Response was not valid JSON"
+                elif response.status_code == 400 and 'response_format' in payload:
+                    # Some models/providers reject response_format; retry without it.
+                    payload.pop('response_format', None)
+                    last_err = f"HTTP 400 (retrying without response_format): {response.text[:150]}"
+                    continue
+                else:
+                    last_err = f"HTTP {response.status_code}: {response.text[:150]}"
+            except Exception as e:
+                last_err = str(e)
+
+            if attempt < attempts - 1:
+                time.sleep(1.0 * (attempt + 1))
+
+        print(f"[MixtralService] LLM call failed after {attempts} attempt(s): {last_err}. Using fallback.")
         return None
+
+    # Roles that are unambiguously technical/CS and never need a classification call.
+    KNOWN_TECHNICAL_ROLES = [
+        'react developer', 'python developer', 'node.js developer', 'node developer',
+        'database administrator', 'ai engineer', 'machine learning engineer',
+        'full stack developer', 'system architect', 'software engineer', 'frontend developer',
+        'backend developer', 'devops engineer', 'data scientist', 'data engineer',
+        'qa engineer', 'cybersecurity analyst', 'cloud engineer', 'mobile developer'
+    ]
+
+    # Safety-net keyword lists used when the LLM classification call is unavailable.
+    NON_TECHNICAL_DOMAIN_KEYWORDS = [
+        'chemical engineering', 'biomedical', 'biotechnology', 'mbbs', 'medicine', 'medical',
+        'dentistry', 'dental', 'architecture', 'b.arch', 'pharmacy', 'pharmaceutical',
+        'civil engineering', 'mechanical engineering', 'electrical engineering', 'law', 'legal',
+        'lawyer', 'nursing', 'psychology', 'literature', 'history', 'fashion', 'culinary',
+        'agriculture', 'veterinary', 'geology', 'mining', 'accounting', 'audit',
+        'human resources management', 'marketing manager', 'sales executive'
+    ]
+    TECHNICAL_DOMAIN_KEYWORDS = [
+        'software', 'developer', 'engineer', 'data science', 'data scientist', 'machine learning',
+        'ml', 'ai', 'artificial intelligence', 'devops', 'cloud', 'cyber', 'security', 'qa',
+        'testing', 'frontend', 'front-end', 'backend', 'back-end', 'full stack', 'fullstack',
+        'web', 'mobile', 'android', 'ios', 'python', 'java', 'javascript', 'react', 'node',
+        'database', 'dba', 'sql', 'network', 'programmer', 'coding', 'blockchain', 'game dev',
+        'embedded', 'firmware', 'sre', 'platform', 'api', 'microservice', 'it '
+    ]
+
+    @classmethod
+    def classify_domain(cls, domain_text):
+        """Classify a freeform domain/role as technical (supported) or not.
+
+        Returns a dict: {is_technical, confidence (0-100), normalized_domain, reason, source}.
+        Uses the LLM when available and falls back to keyword heuristics so a failed
+        API call never blocks a legitimate technical candidate.
+        """
+        domain = (domain_text or '').strip()
+        if not domain:
+            return {'is_technical': False, 'confidence': 100, 'normalized_domain': domain,
+                    'reason': 'No domain was provided.', 'source': 'fallback'}
+
+        # Known preset technical roles short-circuit the LLM call.
+        if domain.lower() in cls.KNOWN_TECHNICAL_ROLES:
+            return {'is_technical': True, 'confidence': 100, 'normalized_domain': domain,
+                    'reason': 'Recognised technical role.', 'source': 'preset'}
+
+        system_prompt = (
+            "You are a domain classifier for a technical (Computer Science / software / IT) "
+            "interview platform. Decide whether the given job role or domain is one this platform "
+            "can interview for. TECHNICAL (supported) examples: software engineering, web/mobile "
+            "development, data science, ML/AI, DevOps, cloud, cybersecurity, QA/testing, databases, "
+            "networking, embedded/firmware. NON-TECHNICAL (not supported) examples: medicine, "
+            "dentistry, law, architecture, civil/chemical/mechanical/biomedical engineering, pharmacy, "
+            "biotechnology, accounting, nursing, non-technical management/sales/marketing. "
+            "Return ONLY a JSON object with keys: 'is_technical' (boolean), 'confidence' (0-100 "
+            "integer), 'normalized_domain' (cleaned canonical role name string), 'reason' (short string)."
+        )
+        user_prompt = f'Classify this domain/role entered by a candidate: "{domain}".'
+        result = cls._call_llm(system_prompt, user_prompt, temperature=0.0)
+
+        if result is not None and 'is_technical' in result:
+            try:
+                confidence = int(float(result.get('confidence', 70)))
+            except (TypeError, ValueError):
+                confidence = 70
+            return {
+                'is_technical': bool(result.get('is_technical')),
+                'confidence': max(0, min(confidence, 100)),
+                'normalized_domain': (result.get('normalized_domain') or domain).strip(),
+                'reason': str(result.get('reason', '')).strip(),
+                'source': 'llm'
+            }
+
+        return cls._fallback_classify_domain(domain)
+
+    @classmethod
+    def _fallback_classify_domain(cls, domain):
+        d = f" {domain.lower()} "
+        for keyword in cls.NON_TECHNICAL_DOMAIN_KEYWORDS:
+            if keyword in d:
+                return {'is_technical': False, 'confidence': 75, 'normalized_domain': domain,
+                        'reason': f'Matched known non-technical domain ("{keyword}").', 'source': 'fallback'}
+        for keyword in cls.TECHNICAL_DOMAIN_KEYWORDS:
+            if keyword in d:
+                return {'is_technical': True, 'confidence': 70, 'normalized_domain': domain,
+                        'reason': f'Matched technical keyword ("{keyword.strip()}").', 'source': 'fallback'}
+        # Unknown domain: allow as best-effort (brief only blocks *clearly* non-technical ones)
+        # but flag low confidence so it can be reviewed later.
+        return {'is_technical': True, 'confidence': 40, 'normalized_domain': domain,
+                'reason': 'Domain not recognised; proceeding as a best-effort technical interview.',
+                'source': 'fallback'}
 
     @classmethod
     def generate_questions(cls, interview_type, job_role, experience_level, difficulty, num_questions, custom_jd=None, custom_skills=None):
-        system_prompt = (
-            "You are an expert AI recruiter. Generate highly specific, technical, and domain-focused interview questions. "
-            "CRITICAL DIRECTIVE: The questions must be deeply relevant to the candidate's selected job role and target skills. "
-            "Do not ask generic or vague software engineering questions. Ask about core syntax, performance bottlenecks, "
-            "architecture patterns, database designs, or libraries specific to the role. "
-            "You must return the response as a JSON object with a single key 'questions' containing a list of objects. "
-            "Each object must have: 'question_text' and 'question_type' ('conceptual', 'scenario', 'coding', 'behavioral', 'hr'). "
-            "Return EXACTLY the requested number of questions."
-        )
-
-        # Add a random seed/timestamp salt to force high diversity in LLM completions
         import uuid
-        salt = str(uuid.uuid4())[:8]
-        user_prompt = (
-            f"Generate {num_questions} interview questions for a {difficulty} level {job_role} interview. "
-            f"Interview Type: {interview_type}. Experience Level: {experience_level}. "
-            f"Crucial Directive: Make this question set completely unique, creative, and different from previous sets. "
-            f"Random seed ID: {salt}. "
+        jd_mode = bool(custom_jd and len(custom_jd.strip()) >= 30)
+
+        system_prompt = (
+            "You are an expert interviewer building a real, credible interview. "
+            "Return ONLY a JSON object of the form "
+            '{"questions": [{"question_text": string, "question_type": string}]} '
+            f"containing EXACTLY {num_questions} questions. "
+            "'question_type' must be one of: 'conceptual', 'scenario', 'behavioral', 'hr'. "
+            "STRICT DOMAIN LOCK: every question MUST be directly relevant to the specified role/domain; "
+            "never include questions from an unrelated domain (e.g. no React questions in a Data Science "
+            "interview). Favour specific technical depth — syntax, architecture, performance, trade-offs, "
+            "and realistic scenarios — over generic filler. "
+            "Answers are spoken aloud, so ask the candidate to explain and reason; do not require them to "
+            "type out full code."
         )
-        if custom_jd:
-            user_prompt += f"Job Description context: {custom_jd}. "
-        if custom_skills:
-            user_prompt += f"Target Skills: {custom_skills}. "
 
-        # Try API
-        api_result = cls._call_llm(system_prompt, user_prompt)
-        if api_result and 'questions' in api_result:
-            return api_result['questions']
+        if jd_mode:
+            user_prompt = (
+                f"Build an interview from the JOB DESCRIPTION below. First internally extract the key "
+                f"skills, technologies, responsibilities, and seniority level it implies, then generate "
+                f"exactly {num_questions} questions that strictly target those extracted requirements. "
+                f"If the JD is vague or very short, produce a best-effort set anchored to the role title "
+                f"'{job_role}'. Difficulty: {difficulty}. Experience level: {experience_level}. "
+                f"Interview focus: {interview_type}. "
+            )
+            if custom_skills:
+                user_prompt += f"Especially emphasise these required skills: {custom_skills}. "
+            user_prompt += f"\n\nJOB DESCRIPTION:\n{custom_jd.strip()[:4000]}"
+        else:
+            focus_map = {
+                'technical': f"a technical interview for a {job_role}",
+                'hr': f"an HR / workplace-fit interview for a {job_role} candidate",
+                'behavioral': f"a STAR-format behavioral interview for a {job_role} candidate",
+            }
+            focus = focus_map.get(interview_type, f"an interview for a {job_role}")
+            user_prompt = (
+                f"Generate exactly {num_questions} questions for {focus}. "
+                f"Domain/role to stay strictly within: {job_role}. "
+                f"Difficulty: {difficulty}. Experience level: {experience_level}. "
+            )
+            if custom_skills:
+                user_prompt += f"Target these specific skills: {custom_skills}. "
+            user_prompt += f"Make the set fresh and non-repetitive (variation id: {str(uuid.uuid4())[:8]})."
 
-        # Fallback Mock Question Generator
+        api_result = cls._call_llm(system_prompt, user_prompt, temperature=0.5)
+        if api_result and isinstance(api_result.get('questions'), list) and api_result['questions']:
+            cleaned = []
+            allowed_types = {'conceptual', 'scenario', 'coding', 'behavioral', 'hr'}
+            for idx, q in enumerate(api_result['questions'][:num_questions]):
+                text = (q.get('question_text') or '').strip() if isinstance(q, dict) else ''
+                if not text:
+                    continue
+                q_type = q.get('question_type', 'conceptual') if isinstance(q, dict) else 'conceptual'
+                if q_type not in allowed_types:
+                    q_type = 'conceptual'
+                cleaned.append({
+                    'question_text': text,
+                    'question_type': q_type,
+                    'order_num': len(cleaned) + 1
+                })
+            if cleaned:
+                return cleaned
+
+        # Fallback Mock Question Generator (domain-aware)
         return cls._generate_mock_questions(interview_type, job_role, experience_level, difficulty, num_questions, custom_jd)
 
+    @staticmethod
+    def _clamp_score(value, default=0.0):
+        try:
+            return max(0.0, min(float(value), 100.0))
+        except (TypeError, ValueError):
+            return default
+
     @classmethod
-    def evaluate_response(cls, question_text, response_text):
+    def _normalize_evaluation(cls, result):
+        def as_list(v):
+            if isinstance(v, list):
+                return [str(x).strip() for x in v if str(x).strip()]
+            if v:
+                return [str(v).strip()]
+            return []
+
+        confidence = cls._clamp_score(result.get('confidence_score', 60), 60.0)
+        return {
+            'score': cls._clamp_score(result.get('score')),
+            'technical_score': cls._clamp_score(result.get('technical_score')),
+            'communication_score': cls._clamp_score(result.get('communication_score')),
+            'confidence_score': confidence,
+            'feedback': str(result.get('feedback', '')).strip() or 'No rationale was provided.',
+            'strengths': as_list(result.get('strengths')),
+            'weaknesses': as_list(result.get('weaknesses')),
+            # Flag low-confidence evaluations so admins can review them (§2.3 / §7).
+            'needs_manual_review': confidence < 40
+        }
+
+    @staticmethod
+    def _fallback_evaluation():
+        """Used only when the LLM is unavailable. Never fabricates a correctness score
+        via keyword matching; instead applies a neutral placeholder and flags the answer
+        for manual review so a transient failure can't unfairly zero out a candidate."""
+        return {
+            'score': 50.0,
+            'technical_score': 50.0,
+            'communication_score': 50.0,
+            'confidence_score': 0.0,
+            'feedback': (
+                "Automated evaluation was temporarily unavailable, so this answer has been "
+                "flagged for manual review. The placeholder score is not final."
+            ),
+            'strengths': [],
+            'weaknesses': [],
+            'needs_manual_review': True
+        }
+
+    @classmethod
+    def evaluate_response(cls, question_text, response_text, job_role=None, difficulty=None, question_type=None):
+        answer = (response_text or '').strip()
+
+        # A genuinely empty answer scores 0 without any model call (length-based, not
+        # keyword-based). Refusals/gibberish are judged by the LLM below.
+        if len(answer) < 2:
+            return {
+                'score': 0.0, 'technical_score': 0.0, 'communication_score': 0.0,
+                'confidence_score': 100.0,
+                'feedback': 'No answer was provided for this question.',
+                'strengths': [], 'weaknesses': ['No response was given.'],
+                'needs_manual_review': False
+            }
+
+        context_bits = []
+        if job_role:
+            context_bits.append(f"Role/Domain: {job_role}")
+        if difficulty:
+            context_bits.append(f"Difficulty: {difficulty}")
+        if question_type:
+            context_bits.append(f"Question type: {question_type}")
+        context = " | ".join(context_bits) if context_bits else "General technical interview"
+
         system_prompt = (
-            "You are a rigid technical interviewer evaluating a candidate's answer. "
-            "Evaluate the response strictly for technical correctness and depth. "
-            "CRITICAL CRITERIA: "
-            "1. If the candidate explicitly says they do not know (e.g. 'I do not know', 'I know nothing', 'dont know', 'no idea', 'skip', 'idk'), "
-            "or if the response is completely blank, vague, gibberish, or unrelated to the question, you MUST set 'score' = 0 and 'technical_score' = 0. "
-            "2. Do not offer a baseline passing score for effort or politeness. Only award points for accurate facts, definitions, or code syntax matching the question. "
-            "You must return a JSON object with these keys: "
-            "'score' (0-100 overall score), 'technical_score' (0-100), 'communication_score' (0-100), "
-            "'confidence_score' (0-100), and 'feedback' (detailed string explanation)."
+            "You are an expert technical interviewer scoring a candidate's spoken answer. "
+            "First, internally formulate the ideal expert answer to the question for the given role "
+            "and difficulty. Then compare the candidate's answer against it on technical correctness, "
+            "completeness, clarity, and relevance. Judge the SUBSTANCE of the answer, never merely the "
+            "presence of specific keywords. "
+            "The answer is a speech-to-text transcript, so tolerate minor transcription noise, filler "
+            "words, and phonetic errors, and do not penalise those. "
+            "If the answer is a refusal ('I don't know'), gibberish, or unrelated to the question, "
+            "score it 0 and say why. Do not award points for mere effort or politeness. "
+            "Return ONLY a JSON object with keys: 'score' (0-100 overall), 'technical_score' (0-100), "
+            "'communication_score' (0-100), 'confidence_score' (0-100 = how confident YOU are in this "
+            "evaluation), 'feedback' (2-4 sentence rationale citing what was correct or missing versus "
+            "the ideal answer), 'strengths' (list of short strings), 'weaknesses' (list of short strings)."
+        )
+        user_prompt = (
+            f"Context: {context}\n\n"
+            f"Question: {question_text}\n\n"
+            f"Candidate's transcribed answer: {answer}\n\n"
+            "Evaluate it now."
         )
 
-        user_prompt = f"Question: {question_text}\nCandidate Answer: {response_text}\nEvaluate their response."
+        result = cls._call_llm(system_prompt, user_prompt, temperature=0.2)
+        if result is not None and all(
+            k in result for k in ('score', 'technical_score', 'communication_score', 'confidence_score', 'feedback')
+        ):
+            return cls._normalize_evaluation(result)
 
-        api_result = cls._call_llm(system_prompt, user_prompt)
-        if api_result and all(k in api_result for k in ['score', 'technical_score', 'communication_score', 'confidence_score', 'feedback']):
-            return api_result
-
-        # Fallback Mock Evaluation Engine
-        return cls._generate_mock_evaluation(question_text, response_text)
+        # LLM unavailable after retries -> safe manual-review fallback (no keyword scoring).
+        return cls._fallback_evaluation()
 
     @classmethod
     def generate_report(cls, interview_type, job_role, qas):
@@ -322,86 +582,6 @@ class MixtralService:
             })
 
         return questions
-
-    @classmethod
-    def _generate_mock_evaluation(cls, question_text, response_text):
-        resp_lower = (response_text or "").lower().strip()
-        
-        # Check for explicit ignorant responses, skipping, or empty fields
-        negative_phrases = [
-            "don't know", "dont know", "do not know", "know nothing", "no idea", 
-            "idk", "skip", "pass", "no clue", "not sure", "forget", "forgot",
-            "nothing", "sorry", "have no clue"
-        ]
-        
-        if not resp_lower or len(resp_lower) < 15 or any(phrase in resp_lower for phrase in negative_phrases):
-            return {
-                "score": 0.0,
-                "technical_score": 0.0,
-                "communication_score": 10.0,
-                "confidence_score": 10.0,
-                "feedback": "The candidate provided no substantive technical response or explicitly stated that they do not know the answer."
-            }
-
-        # Define a list of technical keywords
-        tech_keywords = [
-            "hook", "virtual dom", "state", "index", "normalization", "gil", "event loop", 
-            "asynchronous", "star", "situation", "optimize", "cache", "scale", "performance", 
-            "react", "python", "node", "database", "query", "memory", "thread", "process", 
-            "garbage", "decorator", "closure", "indexing", "acid", "rag", "transformer", 
-            "attention", "pytorch", "model", "quantization", "embedding", "vector", "api", 
-            "express", "middleware", "stream", "cluster", "lock", "reconciliation"
-        ]
-        
-        # Find which technical terms are used in candidate response
-        found_terms = [term for term in tech_keywords if term in resp_lower]
-        
-        # Technical score starts low and builds based on verified keywords
-        if len(found_terms) == 0:
-            base_tech = 10.0
-        elif len(found_terms) == 1:
-            base_tech = 35.0
-        elif len(found_terms) == 2:
-            base_tech = 65.0
-        else:
-            base_tech = min(75.0 + (len(found_terms) - 2) * 8, 98.0)
-            
-        # Give limited credit for long structured text if no technical keywords are present
-        word_count = len(resp_lower.split())
-        if word_count > 30 and base_tech <= 10.0:
-            base_tech = 20.0
-            
-        # Communication Score based on word count
-        base_comm = min(20.0 + (word_count * 0.8), 90.0)
-        
-        # Confidence Score
-        base_conf = min(30.0 + (word_count * 0.5) + random.randint(-5, 10), 92.0)
-        
-        # If technical substance is very low, cap communication/confidence to reflect fail states
-        if base_tech <= 20.0:
-            base_comm = min(base_comm, 30.0)
-            base_conf = min(base_conf, 30.0)
-            
-        # Overall Score calculation
-        overall = round((base_tech * 0.6) + (base_comm * 0.25) + (base_conf * 0.15), 1)
-        
-        # Generate feedback string
-        if base_tech >= 80.0:
-            feedback = f"Excellent! Your response demonstrated a strong technical understanding. You correctly referenced key terms: {', '.join(found_terms)}."
-        elif base_tech >= 60.0:
-            feedback = f"Good attempt. You highlighted relevant details and used terms like {', '.join(found_terms)}, but you could explain the internal mechanics and tradeoffs more deeply."
-        elif base_tech >= 35.0:
-            feedback = f"Fair attempt. You mentioned some relevant concepts ({', '.join(found_terms)}), but the answer lacked technical depth, execution details, or structural accuracy."
-        else:
-            feedback = "The response lacks technical substance. Please explain the concepts using correct framework terminology, syntax logic, or architectural diagrams."
-
-        return {
-            "score": overall,
-            "technical_score": float(base_tech),
-            "communication_score": float(base_comm),
-            "confidence_score": float(base_conf),
-            "feedback": feedback
-        }
 
     @classmethod
     def _generate_mock_report(cls, qas):

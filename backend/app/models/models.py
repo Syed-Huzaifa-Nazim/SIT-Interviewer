@@ -323,6 +323,37 @@ class Feedback(db.Model):
             'created_at': self.created_at.isoformat() if self.created_at else None
         }
 
+class CodeSubmission(db.Model):
+    __tablename__ = 'code_submissions'
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    # Optional link to an interview once the sandbox is embedded in the live flow (§3.5).
+    interview_id = db.Column(db.Integer, db.ForeignKey('interviews.id', ondelete='SET NULL'), nullable=True)
+    problem_id = db.Column(db.String(100), nullable=False)
+    language = db.Column(db.String(30), nullable=False)
+    code = db.Column(db.Text, nullable=True)
+    passed = db.Column(db.Integer, default=0)
+    total = db.Column(db.Integer, default=0)
+    score = db.Column(db.Float, default=0.0)
+    results = db.Column(db.Text, nullable=True)  # JSON: per-test-case pass/fail + timing
+    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'user_id': self.user_id,
+            'interview_id': self.interview_id,
+            'problem_id': self.problem_id,
+            'language': self.language,
+            'code': self.code,
+            'passed': self.passed,
+            'total': self.total,
+            'score': self.score,
+            'results': self.results,
+            'created_at': self.created_at.isoformat() if self.created_at else None
+        }
+
 class AdminLog(db.Model):
     __tablename__ = 'admin_logs'
     

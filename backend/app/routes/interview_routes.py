@@ -10,7 +10,7 @@ from app.models import (
     InterviewResponse, InterviewReport, Notification, AdminLog
 )
 from app.ai.mixtral.mixtral_service import MixtralService
-from app.ai.whisper.whisper_service import WhisperService
+from app.ai.whisper.whisper_service import WhisperService, TranscriptionError
 from app.config.config import Config
 from app.utils.security import get_current_user_id
 
@@ -33,6 +33,37 @@ async def start_interview(request: Request, user_id: int = Depends(get_current_u
 
     if not interview_type or not job_role or not experience_level:
         raise HTTPException(status_code=400, detail="Interview type, job role, and experience level are required")
+
+    # Domain validation (§3.4): block clearly non-technical custom domains BEFORE charging a
+    # token or creating the session. JD-driven interviews skip this (a JD implies a real role).
+    has_jd = bool(custom_jd and len(custom_jd.strip()) >= 30)
+    if not has_jd:
+        classification = MixtralService.classify_domain(job_role)
+        # Only block when we are reasonably sure the domain is non-technical.
+        if not classification['is_technical'] and classification['confidence'] >= 50:
+            # Log the rejected domain so admins can see which unsupported domains are requested.
+            try:
+                admin_user = User.query.filter_by(role='admin').first()
+                db.session.add(AdminLog(
+                    admin_id=admin_user.id if admin_user else user_id,
+                    action='REJECTED_DOMAIN',
+                    details=(
+                        f"User ID {user_id} attempted an interview for unsupported domain "
+                        f"'{job_role}'. Reason: {classification['reason']} "
+                        f"(confidence {classification['confidence']}%, source {classification['source']})."
+                    )
+                ))
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Sorry, interviews cannot currently be conducted for this domain. "
+                    "This feature is under development and will be supported in a future update."
+                )
+            )
 
     token_account = Token.query.filter_by(user_id=user_id).first()
     if not token_account or token_account.tokens_available < 1:
@@ -103,6 +134,18 @@ async def get_history(user_id: int = Depends(get_current_user_id)):
     interviews = Interview.query.filter_by(user_id=user_id).order_by(Interview.created_at.desc()).all()
     return [i.to_dict() for i in interviews]
 
+@interview_bp.get('/stats/summary')
+async def get_stats_summary(user_id: int = Depends(get_current_user_id)):
+    completed_interviews = Interview.query.filter_by(user_id=user_id, status='completed').all()
+    total_interviews = len(completed_interviews)
+    total_score = sum(i.overall_score for i in completed_interviews if i.overall_score is not None)
+    average_score = round(total_score / total_interviews) if total_interviews > 0 else 0
+    return {
+        'total_interviews': total_interviews,
+        'average_score': average_score,
+        'top_skills': []
+    }
+
 @interview_bp.get('/{interview_id}/details')
 async def get_interview_details(interview_id: int, user_id: int = Depends(get_current_user_id)):
     interview = Interview.query.filter_by(id=interview_id, user_id=user_id).first()
@@ -132,13 +175,20 @@ async def transcribe_audio(audio: UploadFile = File(...), user_id: int = Depends
         contents = await audio.read()
         with open(save_path, "wb") as f:
             f.write(contents)
+        print(f"[transcribe] Received {len(contents)} bytes of audio from user {user_id}.")
 
         transcribed = WhisperService.transcribe(save_path)
-        
+
         if os.path.exists(save_path):
             os.remove(save_path)
 
         return {'transcript': transcribed}
+    except TranscriptionError as te:
+        # STT genuinely failed — tell the client clearly instead of returning fake/empty
+        # text. The frontend surfaces this and lets the candidate type their answer.
+        if os.path.exists(save_path):
+            os.remove(save_path)
+        raise HTTPException(status_code=503, detail=str(te))
     except Exception as e:
         if os.path.exists(save_path):
             os.remove(save_path)
@@ -179,18 +229,40 @@ async def submit_answer(
                 f.write(contents)
                 
             audio_path = save_path
-            
-            # First-pass fallback transcription if text isn't supplied
-            if not response_text:
-                transcribed = WhisperService.transcribe(audio_path, question_text=question.question_text)
-                response_text = transcribed
 
-    if not response_text:
-        raise HTTPException(status_code=400, detail="Response content is empty")
+            # First-pass fallback transcription if the client didn't supply text.
+            if not response_text:
+                try:
+                    response_text = WhisperService.transcribe(audio_path, question_text=question.question_text)
+                except TranscriptionError as te:
+                    # Do NOT score a fabricated or empty answer — surface the failure so the
+                    # candidate can retry or type their answer instead.
+                    raise HTTPException(
+                        status_code=503,
+                        detail=(
+                            "We couldn't transcribe your audio right now. Please type your answer "
+                            f"or try again. ({te})"
+                        )
+                    )
+
+    if not response_text or not response_text.strip():
+        raise HTTPException(status_code=400, detail="Response content is empty. Please type or record your answer.")
 
     try:
         existing_resp = InterviewResponse.query.filter_by(interview_id=interview_id, question_id=question_id).first()
-        eval_data = MixtralService.evaluate_response(question.question_text, response_text)
+        eval_data = MixtralService.evaluate_response(
+            question.question_text,
+            response_text,
+            job_role=interview.job_role,
+            difficulty=interview.difficulty,
+            question_type=question.question_type
+        )
+
+        # Persist the LLM rationale together with the transcript (§2.4). Low-confidence
+        # evaluations are prefixed so they surface as needing manual review.
+        stored_feedback = eval_data.get('feedback', '')
+        if eval_data.get('needs_manual_review'):
+            stored_feedback = f"[FLAGGED FOR MANUAL REVIEW] {stored_feedback}"
 
         if existing_resp:
             existing_resp.response_text = response_text
@@ -200,7 +272,7 @@ async def submit_answer(
             existing_resp.technical_score = eval_data.get('technical_score', 0)
             existing_resp.communication_score = eval_data.get('communication_score', 0)
             existing_resp.confidence_score = eval_data.get('confidence_score', 0)
-            existing_resp.feedback = eval_data.get('feedback', '')
+            existing_resp.feedback = stored_feedback
             resp_record = existing_resp
         else:
             resp_record = InterviewResponse(
@@ -213,7 +285,7 @@ async def submit_answer(
                 technical_score=eval_data.get('technical_score', 0),
                 communication_score=eval_data.get('communication_score', 0),
                 confidence_score=eval_data.get('confidence_score', 0),
-                feedback=eval_data.get('feedback', '')
+                feedback=stored_feedback
             )
             db.session.add(resp_record)
 
@@ -245,7 +317,16 @@ async def submit_answer(
                     })
 
             report_data = MixtralService.generate_report(interview.type, interview.job_role, qas)
-            
+
+            # The LLM path returns real lists; the mock path returns JSON strings. Serialize
+            # any list/dict so the stored value is always valid JSON the frontend can parse.
+            def _as_text(value, empty='[]'):
+                if value is None:
+                    return empty
+                if isinstance(value, (list, dict)):
+                    return json.dumps(value)
+                return value
+
             report = InterviewReport(
                 interview_id=interview_id,
                 overall_score=report_data.get('overall_score', 0),
@@ -253,10 +334,10 @@ async def submit_answer(
                 communication_score=report_data.get('communication_score', 0),
                 confidence_score=report_data.get('confidence_score', 0),
                 problem_solving_score=report_data.get('problem_solving_score', 0),
-                strengths=report_data.get('strengths', '[]'),
-                weaknesses=report_data.get('weaknesses', '[]'),
-                missing_concepts=report_data.get('missing_concepts', ''),
-                recommendations=report_data.get('recommendations', '')
+                strengths=_as_text(report_data.get('strengths'), '[]'),
+                weaknesses=_as_text(report_data.get('weaknesses'), '[]'),
+                missing_concepts=_as_text(report_data.get('missing_concepts'), ''),
+                recommendations=_as_text(report_data.get('recommendations'), '')
             )
             
             interview.overall_score = report_data.get('overall_score')
@@ -491,6 +572,8 @@ def check_and_apply_user_ban(user_id):
     user = User.query.get(user_id)
     if not user:
         return
+    if user.role == 'admin':
+        return
     terminated_count = Interview.query.filter_by(user_id=user_id, is_proctor_failed=True).count()
     if terminated_count >= 3:
         user.status = 'banned'
@@ -536,7 +619,9 @@ async def log_proctoring_violation(interview_id: int, request: Request, user_id:
         })
         
         interview.proctor_logs = json.dumps(logs)
-        interview.proctor_violations_count += 1
+        # Coerce NULL/None (older rows created before this column had data) to 0
+        # before incrementing, otherwise `None + 1` raises and the count never updates.
+        interview.proctor_violations_count = (interview.proctor_violations_count or 0) + 1
         
         auto_terminate = False
         # Allow exactly 3 warnings. Terminate when violations_count reaches 4 (exceeding 3)

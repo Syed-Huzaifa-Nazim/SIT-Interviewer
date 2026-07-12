@@ -102,7 +102,7 @@ async def login(request: Request):
     if not user or not user.check_password(password):
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
-    if user.status == 'banned':
+    if user.status == 'banned' and user.role != 'admin':
         if user.banned_until and user.banned_until <= datetime.datetime.utcnow():
             user.status = 'active'
             user.banned_until = None

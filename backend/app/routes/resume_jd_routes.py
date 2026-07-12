@@ -46,6 +46,23 @@ async def analyze_resume(resume: UploadFile = File(...), user_id: int = Depends(
         if not resume_text or len(resume_text.strip()) < 50:
             raise HTTPException(status_code=400, detail="Failed to extract text. File might be blank or scanned.")
 
+        # Validate that the extracted text looks like a resume
+        text_lower = resume_text.lower()
+        resume_keywords = [
+            'experience', 'education', 'skills', 'projects', 'employment', 
+            'history', 'summary', 'contact', 'qualification', 'certifications', 
+            'cv', 'resume', 'work history', 'professional experience',
+            'academic', 'courses', 'achievements', 'objective'
+        ]
+        matches = sum(1 for kw in resume_keywords if kw in text_lower)
+        if matches < 2 and 'curriculum vitae' not in text_lower and 'resume' not in text_lower:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+            raise HTTPException(
+                status_code=400, 
+                detail="Invalid file content: The uploaded document does not appear to be a valid resume or CV. Please ensure it contains standard sections such as Experience, Education, or Skills."
+            )
+
         analysis = MixtralService.analyze_resume(resume_text)
 
         resume_record = ResumeAnalysis(

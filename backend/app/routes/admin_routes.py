@@ -1,7 +1,10 @@
 import datetime
 from fastapi import APIRouter, Request, HTTPException, status, Depends
 from app.database.db import db
-from app.models import User, Token, Transaction, Interview, Feedback, AdminLog
+from app.models import (
+    User, Token, Transaction, Interview, Feedback, AdminLog,
+    InterviewResponse, InterviewQuestion
+)
 from app.utils.security import admin_required, get_current_user_id
 
 admin_bp = APIRouter()
@@ -205,3 +208,116 @@ async def list_logs(user: User = Depends(admin_required)):
         d['admin_email'] = u.email if u else ''
         logs_list.append(d)
     return logs_list
+
+
+def _is_flagged(response):
+    """A response needs manual review if the LLM was low-confidence or the fallback
+    marked it (matches the persistence in §2)."""
+    if response.confidence_score is not None and response.confidence_score < 40:
+        return True
+    return (response.feedback or '').startswith('[FLAGGED')
+
+
+@admin_bp.get('/scoring/analytics')
+async def scoring_analytics(user: User = Depends(admin_required)):
+    """Aggregate view of how the LLM has been scoring interviews (§7).
+
+    Built entirely from the persisted per-question evaluation data (score, confidence,
+    rationale) — no separate evaluation pipeline.
+    """
+    completed = Interview.query.filter_by(status='completed').order_by(Interview.created_at.desc()).all()
+
+    all_scores, all_conf = [], []
+    flagged_total, eval_total = 0, 0
+    buckets = [0, 0, 0, 0, 0]  # 0-20, 20-40, 40-60, 60-80, 80-100
+    interview_rows = []
+
+    for itv in completed:
+        responses = InterviewResponse.query.filter_by(interview_id=itv.id).all()
+        if not responses:
+            continue
+
+        scores = [r.score for r in responses if r.score is not None]
+        confs = [r.confidence_score for r in responses if r.confidence_score is not None]
+        flagged = 0
+        for r in responses:
+            eval_total += 1
+            if r.score is not None:
+                all_scores.append(r.score)
+                buckets[min(int(r.score // 20), 4)] += 1
+            if r.confidence_score is not None:
+                all_conf.append(r.confidence_score)
+            if _is_flagged(r):
+                flagged += 1
+        flagged_total += flagged
+
+        u = User.query.get(itv.user_id)
+        interview_rows.append({
+            'interview_id': itv.id,
+            'candidate_name': u.name if u else 'Unknown',
+            'job_role': itv.job_role,
+            'type': itv.type,
+            'question_count': len(responses),
+            'avg_score': round(sum(scores) / len(scores), 1) if scores else 0,
+            'avg_confidence': round(sum(confs) / len(confs), 1) if confs else 0,
+            'flagged_count': flagged,
+            'overall_score': itv.overall_score,
+            'created_at': itv.created_at.isoformat() if itv.created_at else None,
+        })
+
+    overview = {
+        'total_interviews': len(interview_rows),
+        'total_evaluations': eval_total,
+        'avg_score': round(sum(all_scores) / len(all_scores), 1) if all_scores else 0,
+        'avg_confidence': round(sum(all_conf) / len(all_conf), 1) if all_conf else 0,
+        'flagged_evaluations': flagged_total,
+        'score_distribution': [
+            {'range': '0-20', 'count': buckets[0]},
+            {'range': '20-40', 'count': buckets[1]},
+            {'range': '40-60', 'count': buckets[2]},
+            {'range': '60-80', 'count': buckets[3]},
+            {'range': '80-100', 'count': buckets[4]},
+        ],
+    }
+    return {'overview': overview, 'interviews': interview_rows}
+
+
+@admin_bp.get('/scoring/interviews/{interview_id}')
+async def scoring_interview_detail(interview_id: int, user: User = Depends(admin_required)):
+    """Per-question breakdown for one interview: question, transcript, score, rationale (§7)."""
+    itv = Interview.query.get(interview_id)
+    if not itv:
+        raise HTTPException(status_code=404, detail="Interview not found")
+
+    u = User.query.get(itv.user_id)
+    questions = InterviewQuestion.query.filter_by(interview_id=interview_id).order_by(InterviewQuestion.order_num).all()
+    resp_map = {r.question_id: r for r in InterviewResponse.query.filter_by(interview_id=interview_id).all()}
+
+    items = []
+    for q in questions:
+        r = resp_map.get(q.id)
+        feedback = (r.feedback if r else '') or ''
+        items.append({
+            'question': q.question_text,
+            'question_type': q.question_type,
+            'transcript': r.response_text if r else None,
+            'score': r.score if r else None,
+            'confidence': r.confidence_score if r else None,
+            'technical_score': r.technical_score if r else None,
+            'communication_score': r.communication_score if r else None,
+            'rationale': feedback,
+            'flagged': _is_flagged(r) if r else False,
+        })
+
+    return {
+        'interview': {
+            'id': itv.id,
+            'candidate_name': u.name if u else 'Unknown',
+            'job_role': itv.job_role,
+            'type': itv.type,
+            'difficulty': itv.difficulty,
+            'overall_score': itv.overall_score,
+            'created_at': itv.created_at.isoformat() if itv.created_at else None,
+        },
+        'questions': items,
+    }

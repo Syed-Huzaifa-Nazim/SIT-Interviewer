@@ -10,5 +10,6 @@ from app.models.models import (
     JdAnalysis,
     Notification,
     Feedback,
-    AdminLog
+    AdminLog,
+    CodeSubmission
 )
