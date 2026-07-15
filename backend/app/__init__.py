@@ -14,6 +14,7 @@ from app.routes.notification_routes import notification_bp
 from app.routes.feedback_routes import feedback_bp
 from app.routes.admin_routes import admin_bp
 from app.routes.coding_routes import coding_bp
+from app.routes.candidate_routes import candidate_bp
 
 def create_app(config_class=Config):
     app = FastAPI(
@@ -50,12 +51,15 @@ def create_app(config_class=Config):
     app.include_router(feedback_bp, prefix="/api/feedback", tags=["Feedback"])
     app.include_router(admin_bp, prefix="/api/admin", tags=["Admin"])
     app.include_router(coding_bp, prefix="/api/coding", tags=["Coding Sandbox"])
+    app.include_router(candidate_bp, prefix="/api/candidate", tags=["Candidate"])
 
     # Create storage folders
     os.makedirs(config_class.UPLOAD_FOLDER, exist_ok=True)
     os.makedirs(config_class.REPORTS_FOLDER, exist_ok=True)
 
-    # Initialize tables
+    # Initialize tables + apply lightweight column migrations for pre-existing DBs
+    from app.database.migrate import ensure_schema
+    ensure_schema()
     Base.metadata.create_all(bind=engine)
 
     # Seed Admin User
