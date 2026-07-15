@@ -1,3 +1,4 @@
+import datetime
 from fastapi import APIRouter, Request, HTTPException, status, Depends, UploadFile, File
 from app.database.db import db
 from app.models import User, Token, Interview, ResumeAnalysis
@@ -5,6 +6,35 @@ from app.utils.security import get_current_user_id
 from app.utils.supabase_service import SupabaseService
 
 user_bp = APIRouter()
+
+@user_bp.post('/heartbeat')
+async def heartbeat(user_id: int = Depends(get_current_user_id)):
+    """Lightweight presence ping (§4.2): the frontend calls this every ~20s while a
+    user is active; the admin hub shows anyone seen within the last minute as online."""
+    user = User.query.get(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    try:
+        user.last_seen_at = datetime.datetime.utcnow()
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+    return {'online': True}
+
+@user_bp.post('/presence/offline')
+async def mark_offline(user_id: int = Depends(get_current_user_id)):
+    """Explicit "went offline" signal, fired on logout and on tab/browser close
+    (via a keepalive fetch from `beforeunload`/`pagehide`) so the admin hub reflects
+    it immediately instead of waiting out the heartbeat timeout window."""
+    user = User.query.get(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    try:
+        user.last_seen_at = None
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+    return {'online': False}
 
 @user_bp.get('/profile')
 async def get_profile(user_id: int = Depends(get_current_user_id)):
