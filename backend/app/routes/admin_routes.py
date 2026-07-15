@@ -1,13 +1,34 @@
+import re
 import datetime
 from fastapi import APIRouter, Request, HTTPException, status, Depends
 from app.database.db import db
 from app.models import (
     User, Token, Transaction, Interview, Feedback, AdminLog,
-    InterviewResponse, InterviewQuestion
+    InterviewResponse, InterviewQuestion, SecondInterviewRequest, EmailLog,
+    Notification, CodeSubmission
 )
 from app.utils.security import admin_required, get_current_user_id
+from app.utils.candidate import (
+    COURSE_CATEGORIES, COURSE_STATUSES, SIGNUP_CATEGORIES, INSTRUCTOR_CATEGORY,
+    is_instructor_category, normalize_cnic, generate_otp
+)
+from app.email import EmailService
+from app.email import templates as email_templates
 
 admin_bp = APIRouter()
+
+EMAIL_REGEX = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+
+# A user is "online" if their heartbeat was seen within this window (§4.2). Kept
+# short since the frontend also clears last_seen_at explicitly on logout/tab-close,
+# so this window only covers ungraceful disconnects (crash, network drop).
+ONLINE_WINDOW_SECONDS = 60
+
+
+def _is_online(user):
+    if not user.last_seen_at:
+        return False
+    return (datetime.datetime.utcnow() - user.last_seen_at).total_seconds() <= ONLINE_WINDOW_SECONDS
 
 @admin_bp.get('/stats')
 async def get_stats(user: User = Depends(admin_required)):
@@ -73,15 +94,304 @@ async def get_stats(user: User = Depends(admin_required)):
 async def list_users(user: User = Depends(admin_required)):
     users = User.query.filter(User.role != 'admin').order_by(User.created_at.desc()).all()
     users_list = []
-    
+
     for u in users:
         t = Token.query.filter_by(user_id=u.id).first()
         t_val = t.tokens_available if t else 0
         u_dict = u.to_dict()
         u_dict['tokens_available'] = t_val
+        u_dict['online'] = _is_online(u)
         users_list.append(u_dict)
 
     return users_list
+
+
+@admin_bp.put('/users/{target_user_id}/profile')
+async def update_user_profile(target_user_id: int, request: Request, user: User = Depends(admin_required)):
+    """Full candidate profile editing (§4.1) — including course status, which only
+    an admin may change after signup (§2.2)."""
+    target = User.query.get(target_user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    if target.role == 'admin' and target.id != user.id:
+        raise HTTPException(status_code=400, detail="Cannot edit another administrator's account")
+
+    data = await request.json() or {}
+    changes = []
+
+    if data.get('name'):
+        if target.name != data['name']:
+            changes.append(f"name '{target.name}' → '{data['name']}'")
+        target.name = data['name']
+
+    if data.get('email'):
+        new_email = data['email'].strip()
+        if not re.match(EMAIL_REGEX, new_email):
+            raise HTTPException(status_code=400, detail="Invalid email format")
+        owner = User.query.filter_by(email=new_email).first()
+        if owner and owner.id != target.id:
+            raise HTTPException(status_code=409, detail="Another account already uses this email")
+        if target.email != new_email:
+            changes.append(f"email '{target.email}' → '{new_email}'")
+        target.email = new_email
+
+    if data.get('cnic'):
+        new_cnic = normalize_cnic(data['cnic'])
+        if not new_cnic:
+            raise HTTPException(status_code=400, detail="Invalid CNIC format (13 digits required)")
+        owner = User.query.filter_by(cnic=new_cnic).first()
+        if owner and owner.id != target.id:
+            raise HTTPException(status_code=409, detail="Another account already uses this CNIC")
+        if target.cnic != new_cnic:
+            changes.append(f"CNIC '{target.cnic}' → '{new_cnic}'")
+        target.cnic = new_cnic
+
+    if data.get('course_category'):
+        if data['course_category'] not in SIGNUP_CATEGORIES:
+            raise HTTPException(status_code=400, detail="Invalid category")
+        if target.course_category != data['course_category']:
+            changes.append(f"category '{target.course_category}' → '{data['course_category']}'")
+        target.course_category = data['course_category']
+
+    if data.get('course_status'):
+        new_status = data['course_status'].lower()
+        if new_status not in COURSE_STATUSES:
+            raise HTTPException(status_code=400, detail="Invalid course status")
+        if target.course_status != new_status:
+            changes.append(f"course status '{target.course_status}' → '{new_status}'")
+        # Per the confirmed workflow: flipping the status does NOT auto-send credentials.
+        # The admin explicitly triggers the interview invite (send-interview-invite).
+        target.course_status = new_status
+
+    for field in ('country', 'experience_level', 'job_role'):
+        if data.get(field) is not None and data[field] != '':
+            if getattr(target, field) != data[field]:
+                changes.append(f"{field} → '{data[field]}'")
+            setattr(target, field, data[field])
+
+    db.session.add(AdminLog(
+        admin_id=user.id,
+        action='EDIT_PROFILE',
+        details=f"Edited profile of User ID {target.id} ({target.email}): " + ('; '.join(changes) if changes else 'no changes')
+    ))
+
+    try:
+        db.session.commit()
+        return {'message': 'Profile updated successfully', 'user': target.to_dict()}
+    except Exception as e:
+        db.session.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to update profile: {str(e)}")
+
+
+@admin_bp.post('/users/{target_user_id}/send-interview-invite')
+async def send_interview_invite(target_user_id: int, user: User = Depends(admin_required)):
+    """Issue (or re-issue) one-time interview credentials to a completed-course
+    candidate (§2.2 confirmed workflow: admin manually triggers the OTP email).
+
+    From this moment the candidate's password login is disabled and only the fresh
+    emailed OTP works — exactly once.
+    """
+    target = User.query.get(target_user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    if target.role == 'admin':
+        raise HTTPException(status_code=400, detail="Cannot send an interview invite to an administrator")
+
+    # Eligible: Completed-course candidates OR Instructors (Update §3). Instructors have
+    # no course-status, so they qualify by category instead.
+    instructor = is_instructor_category(target.course_category)
+    if not instructor and target.course_status != 'completed':
+        raise HTTPException(
+            status_code=400,
+            detail="Candidate's course status must be 'Completed' before sending an interview invite. "
+                   "Update their course status first."
+        )
+    if not target.cnic:
+        raise HTTPException(status_code=400, detail="Candidate has no CNIC on record — edit their profile first.")
+
+    otp = generate_otp()
+    try:
+        target.must_use_otp = True
+        target.set_otp(otp)  # also resets otp_used to False
+        target.interview_status = 'invited'
+
+        db.session.add(AdminLog(
+            admin_id=user.id,
+            action='SEND_INTERVIEW_INVITE',
+            details=f"Issued one-time interview credentials to User ID {target.id} ({target.email}, CNIC {target.cnic})"
+        ))
+        db.session.add(Notification(
+            user_id=target.id,
+            title='Official Interview Invitation',
+            message='You have been invited to your official interview. Check your email for one-time login credentials.',
+            type='interview'
+        ))
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to issue invite: {str(e)}")
+
+    if instructor:
+        subject, html = email_templates.instructor_invite(target.name, target.cnic, otp)
+    else:
+        subject, html = email_templates.completed_signup(target.name, target.cnic, otp)
+    EmailService.send(target.email, subject, html, email_type='interview_invite', user_id=target.id)
+
+    return {'message': f'One-time interview credentials sent to {target.email}', 'user': target.to_dict()}
+
+
+@admin_bp.get('/reinterview-requests')
+async def list_reinterview_requests(user: User = Depends(admin_required)):
+    """Approval queue for second-interview attempts (§4.3)."""
+    requests_q = SecondInterviewRequest.query.order_by(SecondInterviewRequest.requested_at.desc()).all()
+    pending, decided = [], []
+    for r in requests_q:
+        d = r.to_dict()
+        candidate = User.query.get(r.user_id)
+        d['course_category'] = candidate.course_category if candidate else None
+        d['course_status'] = candidate.course_status if candidate else None
+
+        first_itv = Interview.query.get(r.first_interview_id) if r.first_interview_id else None
+        if not first_itv and candidate:
+            first_itv = Interview.query.filter_by(user_id=candidate.id, status='completed') \
+                .order_by(Interview.created_at.desc()).first()
+        d['first_interview_date'] = first_itv.created_at.isoformat() if first_itv else None
+        d['first_interview_score'] = first_itv.overall_score if first_itv else None
+        d['first_interview_proctor_failed'] = bool(first_itv.is_proctor_failed) if first_itv else None
+
+        if r.decided_by:
+            decider = User.query.get(r.decided_by)
+            d['decided_by_name'] = decider.name if decider else 'Unknown'
+
+        (pending if r.status == 'pending' else decided).append(d)
+
+    return {'pending': pending, 'decided': decided}
+
+
+@admin_bp.post('/reinterview-requests/{request_id}/decision')
+async def decide_reinterview_request(request_id: int, request: Request, user: User = Depends(admin_required)):
+    """Approve → fresh one-time credentials emailed; Reject → ineligibility email (§3.4)."""
+    req = SecondInterviewRequest.query.get(request_id)
+    if not req:
+        raise HTTPException(status_code=404, detail="Request not found")
+    if req.status != 'pending':
+        raise HTTPException(status_code=400, detail=f"This request has already been {req.status}")
+
+    data = await request.json() or {}
+    decision = (data.get('decision') or '').lower()
+    if decision not in ('approve', 'reject'):
+        raise HTTPException(status_code=400, detail="Decision must be 'approve' or 'reject'")
+
+    candidate = User.query.get(req.user_id)
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidate account no longer exists")
+
+    otp = None
+    try:
+        req.decided_at = datetime.datetime.utcnow()
+        req.decided_by = user.id
+
+        if decision == 'approve':
+            req.status = 'approved'
+            otp = generate_otp()
+            candidate.must_use_otp = True
+            candidate.set_otp(otp)  # resets otp_used → login works exactly once again
+            candidate.interview_status = 'reinterview_approved'
+            action, details = 'APPROVE_REINTERVIEW', \
+                f"Approved second interview for {candidate.name} (CNIC {candidate.cnic}); one-time credentials emailed."
+        else:
+            req.status = 'rejected'
+            candidate.interview_status = 'reinterview_rejected'
+            action, details = 'REJECT_REINTERVIEW', \
+                f"Rejected second interview for {candidate.name} (CNIC {candidate.cnic}); ineligibility email sent."
+
+        db.session.add(AdminLog(admin_id=user.id, action=action, details=details))
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to record decision: {str(e)}")
+
+    if decision == 'approve':
+        subject, html = email_templates.reinterview_approved(req.name, candidate.cnic, otp)
+        EmailService.send(req.email, subject, html, email_type='reinterview_approved', user_id=candidate.id)
+    else:
+        subject, html = email_templates.reinterview_rejected(req.name)
+        EmailService.send(req.email, subject, html, email_type='reinterview_rejected', user_id=candidate.id)
+
+    return {'message': f'Request {req.status}. The candidate has been emailed.', 'request': req.to_dict()}
+
+
+@admin_bp.get('/email-logs')
+async def list_email_logs(user: User = Depends(admin_required)):
+    """Outbound email audit (§1): failed sends surface here instead of dying silently."""
+    logs = EmailLog.query.order_by(EmailLog.created_at.desc()).limit(200).all()
+    return [l.to_dict() for l in logs]
+
+
+@admin_bp.get('/pending-actions/count')
+async def pending_actions_count(user: User = Depends(admin_required)):
+    """Counts for the in-portal admin badge (Update §4) — replaces admin email alerts."""
+    reinterview_pending = SecondInterviewRequest.query.filter_by(status='pending').count()
+    return {
+        'reinterview_pending': reinterview_pending,
+        'total': reinterview_pending,
+    }
+
+
+def _send_post_interview_email(target_user_id, admin, kind):
+    """Shared handler for the two post-interview admin email actions (Update §5):
+    'clearance' and 'hr_invite'. Sends a distinct template, records the timestamp for
+    the profile audit trail, logs the admin action, and notifies the candidate."""
+    target = User.query.get(target_user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    if target.role == 'admin':
+        raise HTTPException(status_code=400, detail="This action does not apply to administrator accounts")
+
+    if kind == 'clearance':
+        subject, html = email_templates.interview_clearance(target.name)
+        email_type = 'interview_clearance'
+        target.clearance_email_sent_at = datetime.datetime.utcnow()
+        action = 'SEND_CLEARANCE_EMAIL'
+        notif_title = 'Interview Cleared'
+        notif_msg = 'Congratulations! You have cleared your interview. Please check your email.'
+        ok_msg = f'Clearance email sent to {target.email}'
+    else:  # hr_invite
+        subject, html = email_templates.hr_assessment_invite(target.name)
+        email_type = 'hr_assessment_invite'
+        target.hr_invite_sent_at = datetime.datetime.utcnow()
+        action = 'SEND_HR_INVITE'
+        notif_title = 'HR Assessment Invitation'
+        notif_msg = 'You have been invited to the HR assessment stage. Please check your email.'
+        ok_msg = f'HR assessment invite sent to {target.email}'
+
+    try:
+        db.session.add(AdminLog(
+            admin_id=admin.id, action=action,
+            details=f"{action} for User ID {target.id} ({target.email})"
+        ))
+        db.session.add(Notification(
+            user_id=target.id, title=notif_title, message=notif_msg, type='activity'
+        ))
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to record action: {str(e)}")
+
+    EmailService.send(target.email, subject, html, email_type=email_type, user_id=target.id)
+    return {'message': ok_msg, 'user': target.to_dict()}
+
+
+@admin_bp.post('/users/{target_user_id}/send-clearance')
+async def send_clearance_email(target_user_id: int, user: User = Depends(admin_required)):
+    """'Send Clearance Email' (Update §5): informs the candidate/instructor they cleared."""
+    return _send_post_interview_email(target_user_id, user, 'clearance')
+
+
+@admin_bp.post('/users/{target_user_id}/send-hr-invite')
+async def send_hr_invite_email(target_user_id: int, user: User = Depends(admin_required)):
+    """'Send HR Assessment Invite' (Update §5): distinct next-stage HR invitation."""
+    return _send_post_interview_email(target_user_id, user, 'hr_invite')
 
 @admin_bp.post('/users/{target_user_id}/ban')
 async def toggle_ban(target_user_id: int, user: User = Depends(admin_required)):
@@ -153,6 +463,104 @@ async def override_tokens(target_user_id: int, request: Request, user: User = De
     except Exception as e:
         db.session.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to override user tokens: {str(e)}")
+
+# ---------------------------------------------------------------------------
+# Admin deletion (destructive, irreversible). Admins can delete any record type,
+# but ADMIN ACCOUNTS CAN NEVER BE DELETED. Every deletion is written to the audit log.
+# ---------------------------------------------------------------------------
+
+@admin_bp.delete('/users/{target_user_id}')
+async def delete_user(target_user_id: int, user: User = Depends(admin_required)):
+    """Permanently delete a candidate/instructor account and ALL their data.
+
+    Admin accounts are hard-blocked. Dependent rows that aren't covered by an ORM
+    delete-orphan cascade are removed explicitly first, so the delete is consistent
+    on both SQLite (FK enforcement often off) and PostgreSQL."""
+    target = User.query.get(target_user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    if target.role == 'admin':
+        raise HTTPException(status_code=403, detail="Administrator accounts cannot be deleted.")
+
+    label = f"User ID {target.id} ({target.email}, CNIC {target.cnic or 'N/A'})"
+    try:
+        uid = target.id
+        # Explicitly clear rows not handled by the User relationship cascades.
+        Transaction.query.filter_by(user_id=uid).delete(synchronize_session=False)
+        CodeSubmission.query.filter_by(user_id=uid).delete(synchronize_session=False)
+        SecondInterviewRequest.query.filter_by(user_id=uid).delete(synchronize_session=False)
+        # Preserve the outbound-email audit trail but detach it from the deleted user.
+        EmailLog.query.filter_by(user_id=uid).update({'user_id': None}, synchronize_session=False)
+
+        # ORM cascade handles tokens, interviews (+questions/responses/report),
+        # resume/JD analyses, notifications, and feedback.
+        db.session.delete(target)
+
+        db.session.add(AdminLog(
+            admin_id=user.id, action='DELETE_USER',
+            details=f"Permanently deleted {label} and all associated data."
+        ))
+        db.session.commit()
+        return {'message': f'{target.name} and all their data have been permanently deleted.'}
+    except Exception as e:
+        db.session.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to delete user: {str(e)}")
+
+
+def _delete_record(model, record_id, admin, label, action, pre_delete=None):
+    """Shared handler for deleting a single data record with audit logging."""
+    record = model.query.get(record_id)
+    if not record:
+        raise HTTPException(status_code=404, detail=f"{label} not found")
+    try:
+        if pre_delete:
+            pre_delete(record)
+        db.session.delete(record)
+        db.session.add(AdminLog(
+            admin_id=admin.id, action=action,
+            details=f"Deleted {label} ID {record_id}."
+        ))
+        db.session.commit()
+        return {'message': f'{label} deleted successfully.'}
+    except Exception as e:
+        db.session.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to delete {label.lower()}: {str(e)}")
+
+
+@admin_bp.delete('/interviews/{interview_id}')
+async def delete_interview(interview_id: int, user: User = Depends(admin_required)):
+    """Delete an interview and its questions/responses/report (ORM cascade). Detaches
+    any feedback / code submissions that referenced it so they aren't orphaned."""
+    def _detach(_itv):
+        Feedback.query.filter_by(interview_id=interview_id).update({'interview_id': None}, synchronize_session=False)
+        CodeSubmission.query.filter_by(interview_id=interview_id).update({'interview_id': None}, synchronize_session=False)
+    return _delete_record(Interview, interview_id, user, 'Interview', 'DELETE_INTERVIEW', pre_delete=_detach)
+
+
+@admin_bp.delete('/feedback/{feedback_id}')
+async def delete_feedback(feedback_id: int, user: User = Depends(admin_required)):
+    return _delete_record(Feedback, feedback_id, user, 'Feedback', 'DELETE_FEEDBACK')
+
+
+@admin_bp.delete('/transactions/{transaction_id}')
+async def delete_transaction(transaction_id: int, user: User = Depends(admin_required)):
+    return _delete_record(Transaction, transaction_id, user, 'Transaction', 'DELETE_TRANSACTION')
+
+
+@admin_bp.delete('/logs/{log_id}')
+async def delete_admin_log(log_id: int, user: User = Depends(admin_required)):
+    return _delete_record(AdminLog, log_id, user, 'Audit log', 'DELETE_ADMIN_LOG')
+
+
+@admin_bp.delete('/email-logs/{log_id}')
+async def delete_email_log(log_id: int, user: User = Depends(admin_required)):
+    return _delete_record(EmailLog, log_id, user, 'Email log', 'DELETE_EMAIL_LOG')
+
+
+@admin_bp.delete('/reinterview-requests/{request_id}')
+async def delete_reinterview_request(request_id: int, user: User = Depends(admin_required)):
+    return _delete_record(SecondInterviewRequest, request_id, user, 'Second-interview request', 'DELETE_REINTERVIEW_REQUEST')
+
 
 @admin_bp.get('/interviews')
 async def list_interviews(user: User = Depends(admin_required)):
