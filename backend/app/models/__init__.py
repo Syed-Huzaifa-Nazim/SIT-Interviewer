@@ -11,5 +11,7 @@ from app.models.models import (
     Notification,
     Feedback,
     AdminLog,
-    CodeSubmission
+    CodeSubmission,
+    SecondInterviewRequest,
+    EmailLog
 )
