@@ -4,7 +4,7 @@ from app.database.db import db
 
 class User(db.Model):
     __tablename__ = 'users'
-    
+
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=False)
     email = db.Column(db.String(120), unique=True, nullable=False)
@@ -18,6 +18,32 @@ class User(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
     profile_pic_url = db.Column(db.Text, nullable=True)
+
+    # Candidate classification (CNIC-based signup). Nullable so pre-existing accounts
+    # and the seeded admin remain valid.
+    cnic = db.Column(db.String(20), unique=True, nullable=True)  # formatted 12345-1234567-1
+    course_category = db.Column(db.String(80), nullable=True)
+    course_status = db.Column(db.String(20), nullable=True)  # ongoing, completed
+    # not_interviewed, invited, interview_completed, reinterview_pending,
+    # reinterview_approved, reinterview_rejected
+    interview_status = db.Column(db.String(40), default='not_interviewed')
+
+    # One-time-password login (completed-course candidates)
+    must_use_otp = db.Column(db.Boolean, default=False)
+    otp_hash = db.Column(db.String(128), nullable=True)
+    otp_used = db.Column(db.Boolean, default=False)
+    otp_issued_at = db.Column(db.DateTime, nullable=True)
+
+    # Any access token issued before this moment is rejected (forced logout).
+    session_revoked_at = db.Column(db.DateTime, nullable=True)
+
+    # Presence heartbeat for the admin online/offline indicator
+    last_seen_at = db.Column(db.DateTime, nullable=True)
+
+    # Post-interview admin email actions (Update §5): timestamps power the visible
+    # "sent on <date>" audit trail on the candidate/instructor profile.
+    clearance_email_sent_at = db.Column(db.DateTime, nullable=True)
+    hr_invite_sent_at = db.Column(db.DateTime, nullable=True)
 
     # Relationships
     tokens = db.relationship('Token', backref='user', uselist=False, cascade="all, delete-orphan")
@@ -34,6 +60,17 @@ class User(db.Model):
     def check_password(self, password):
         return bcrypt.checkpw(password.encode('utf-8'), self.password_hash.encode('utf-8'))
 
+    def set_otp(self, otp):
+        salt = bcrypt.gensalt()
+        self.otp_hash = bcrypt.hashpw(otp.encode('utf-8'), salt).decode('utf-8')
+        self.otp_issued_at = datetime.datetime.utcnow()
+        self.otp_used = False
+
+    def check_otp(self, otp):
+        if not self.otp_hash:
+            return False
+        return bcrypt.checkpw(otp.encode('utf-8'), self.otp_hash.encode('utf-8'))
+
     def to_dict(self):
         return {
             'id': self.id,
@@ -45,6 +82,15 @@ class User(db.Model):
             'role': self.role,
             'status': self.status,
             'profile_pic_url': self.profile_pic_url,
+            'cnic': self.cnic,
+            'course_category': self.course_category,
+            'course_status': self.course_status,
+            'interview_status': self.interview_status or 'not_interviewed',
+            'must_use_otp': bool(self.must_use_otp),
+            'otp_used': bool(self.otp_used),
+            'last_seen_at': self.last_seen_at.isoformat() if self.last_seen_at else None,
+            'clearance_email_sent_at': self.clearance_email_sent_at.isoformat() if self.clearance_email_sent_at else None,
+            'hr_invite_sent_at': self.hr_invite_sent_at.isoformat() if self.hr_invite_sent_at else None,
             'banned_until': self.banned_until.isoformat() if self.banned_until else None,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None
@@ -112,6 +158,10 @@ class Interview(db.Model):
     proctor_violations_count = db.Column(db.Integer, default=0)
     proctor_logs = db.Column(db.Text, default='[]')  # Serialized list of timestamped events
 
+    # Why an interview ended, when not a normal completion (Timer feature §2.2):
+    # e.g. 'time_expired'. NULL for normally-completed / proctor-failed sessions.
+    terminated_reason = db.Column(db.String(40), nullable=True)
+
     # Relationships
     questions = db.relationship('InterviewQuestion', backref='interview', lazy=True, cascade="all, delete-orphan")
     responses = db.relationship('InterviewResponse', backref='interview', lazy=True, cascade="all, delete-orphan")
@@ -132,6 +182,7 @@ class Interview(db.Model):
             'is_proctor_failed': self.is_proctor_failed,
             'proctor_violations_count': self.proctor_violations_count,
             'proctor_logs': self.proctor_logs,
+            'terminated_reason': self.terminated_reason,
             'created_at': self.created_at.isoformat() if self.created_at else None
         }
 
@@ -144,7 +195,22 @@ class InterviewQuestion(db.Model):
     question_type = db.Column(db.String(50), default='conceptual')  # conceptual, scenario, coding, hr, behavioral
     order_num = db.Column(db.Integer, nullable=False)
 
+    # Per-question timer (§2). ``time_limit_seconds`` is set at creation from the
+    # question type; ``started_at`` is anchored server-side the first time the question
+    # is presented, so the countdown is authoritative and survives a page reload.
+    time_limit_seconds = db.Column(db.Integer, default=120)
+    started_at = db.Column(db.DateTime, nullable=True)
+
     responses = db.relationship('InterviewResponse', backref='question', lazy=True, cascade="all, delete-orphan")
+
+    def remaining_seconds(self):
+        """Server-authoritative time left for this question, or the full limit if it
+        hasn't been started yet. Never negative."""
+        limit = self.time_limit_seconds or 120
+        if not self.started_at:
+            return limit
+        elapsed = (datetime.datetime.utcnow() - self.started_at).total_seconds()
+        return max(0, int(round(limit - elapsed)))
 
     def to_dict(self):
         return {
@@ -152,7 +218,10 @@ class InterviewQuestion(db.Model):
             'interview_id': self.interview_id,
             'question_text': self.question_text,
             'question_type': self.question_type,
-            'order_num': self.order_num
+            'order_num': self.order_num,
+            'time_limit_seconds': self.time_limit_seconds or 120,
+            'started_at': self.started_at.isoformat() if self.started_at else None,
+            'remaining_seconds': self.remaining_seconds()
         }
 
 class InterviewResponse(db.Model):
@@ -351,6 +420,69 @@ class CodeSubmission(db.Model):
             'total': self.total,
             'score': self.score,
             'results': self.results,
+            'created_at': self.created_at.isoformat() if self.created_at else None
+        }
+
+class SecondInterviewRequest(db.Model):
+    """A completed-course candidate re-signing up with an already-interviewed CNIC.
+
+    The admin approves (issues a fresh one-time password) or rejects (sends the
+    ineligibility email) from the Admin Hub approval queue (§3.4/§4.3).
+    """
+    __tablename__ = 'second_interview_requests'
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    cnic = db.Column(db.String(20), nullable=False)
+    name = db.Column(db.String(100), nullable=False)   # as submitted on the re-signup form
+    email = db.Column(db.String(120), nullable=False)  # as submitted on the re-signup form
+    first_interview_id = db.Column(db.Integer, db.ForeignKey('interviews.id', ondelete='SET NULL'), nullable=True)
+    status = db.Column(db.String(20), default='pending')  # pending, approved, rejected
+    requested_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+    decided_at = db.Column(db.DateTime, nullable=True)
+    decided_by = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+
+    user = db.relationship('User', foreign_keys=[user_id])
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'user_id': self.user_id,
+            'cnic': self.cnic,
+            'name': self.name,
+            'email': self.email,
+            'first_interview_id': self.first_interview_id,
+            'status': self.status,
+            'requested_at': self.requested_at.isoformat() if self.requested_at else None,
+            'decided_at': self.decided_at.isoformat() if self.decided_at else None,
+            'decided_by': self.decided_by
+        }
+
+class EmailLog(db.Model):
+    """Delivery record for every outbound email so failures surface to the admin
+    instead of failing silently (§1)."""
+    __tablename__ = 'email_logs'
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    to_email = db.Column(db.String(120), nullable=False)
+    email_type = db.Column(db.String(50), nullable=False)  # ongoing_signup, completed_signup, reinterview_approved, ...
+    subject = db.Column(db.String(200), nullable=False)
+    status = db.Column(db.String(20), default='sent')  # sent, failed
+    error = db.Column(db.Text, nullable=True)
+    attempts = db.Column(db.Integer, default=1)
+    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'user_id': self.user_id,
+            'to_email': self.to_email,
+            'email_type': self.email_type,
+            'subject': self.subject,
+            'status': self.status,
+            'error': self.error,
+            'attempts': self.attempts,
             'created_at': self.created_at.isoformat() if self.created_at else None
         }
 
