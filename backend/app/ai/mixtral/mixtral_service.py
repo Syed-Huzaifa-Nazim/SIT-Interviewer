@@ -96,7 +96,10 @@ class MixtralService:
         'database administrator', 'ai engineer', 'machine learning engineer',
         'full stack developer', 'system architect', 'software engineer', 'frontend developer',
         'backend developer', 'devops engineer', 'data scientist', 'data engineer',
-        'qa engineer', 'cybersecurity analyst', 'cloud engineer', 'mobile developer'
+        'qa engineer', 'cybersecurity analyst', 'cloud engineer', 'mobile developer',
+        # Canonical roles for the course-category signup system (§3.3) — additive only,
+        # guarantees the auto-created official interview is never rejected.
+        'cloud & data engineer', 'web & mobile app developer', 'ui/ux designer'
     ]
 
     # Safety-net keyword lists used when the LLM classification call is unavailable.
@@ -181,10 +184,68 @@ class MixtralService:
                 'reason': 'Domain not recognised; proceeding as a best-effort technical interview.',
                 'source': 'fallback'}
 
+    # Instructor competency question bank (Update §3) — teaching-oriented, NOT candidate-level
+    # technical questions. Used both to steer the LLM and as the offline mock fallback.
+    INSTRUCTOR_QUESTIONS = [
+        ("Walk us through how you would plan and structure a course for absolute beginners in your subject area.", "conceptual"),
+        ("Describe a time a student was struggling to grasp a concept. How did you adapt your teaching approach?", "behavioral"),
+        ("How do you assess whether your students have genuinely understood a topic versus just memorised it?", "conceptual"),
+        ("A student challenges your explanation in front of the class and turns out to be partly right. How do you handle it?", "scenario"),
+        ("How do you keep your own technical knowledge current so your teaching stays relevant to industry?", "conceptual"),
+        ("Explain a complex concept in your field as if you were teaching it to someone with no background — keep it clear and structured.", "scenario"),
+        ("How do you handle a classroom with a wide range of skill levels, so neither the fast nor the slow learners are left behind?", "scenario"),
+        ("What does effective feedback on student work look like to you, and how do you deliver it constructively?", "behavioral"),
+        ("How would you design a hands-on project or assessment that genuinely measures practical mastery of your subject?", "conceptual"),
+        ("Tell us about a time you received critical feedback on your teaching. What did you change as a result?", "behavioral"),
+        ("How do you keep students engaged and motivated during long or difficult topics?", "scenario"),
+        ("What is your approach to mentoring students beyond the syllabus — career guidance, portfolios, and industry readiness?", "behavioral"),
+    ]
+
     @classmethod
     def generate_questions(cls, interview_type, job_role, experience_level, difficulty, num_questions, custom_jd=None, custom_skills=None):
         import uuid
         jd_mode = bool(custom_jd and len(custom_jd.strip()) >= 30)
+        instructor_mode = (interview_type == 'instructor')
+
+        # Instructor interviews assess teaching competency, not candidate-level technical
+        # depth (Update §3). Distinct prompt + question bank; same scoring/report pipeline.
+        if instructor_mode:
+            instructor_system = (
+                "You are an experienced academic hiring panellist interviewing a candidate for an "
+                "INSTRUCTOR / TEACHER role at a technical bootcamp. Return ONLY a JSON object of the form "
+                '{"questions": [{"question_text": string, "question_type": string}]} '
+                f"containing EXACTLY {num_questions} questions. "
+                "'question_type' must be one of: 'conceptual', 'scenario', 'behavioral', 'hr'. "
+                "Assess TEACHING COMPETENCY: curriculum design, ability to explain complex ideas simply, "
+                "classroom management, student assessment, mentoring, handling mixed skill levels, and "
+                "staying industry-relevant — NOT candidate-level coding trivia. "
+                "Answers are spoken aloud, so ask them to explain and reason."
+            )
+            instructor_user = (
+                f"Generate exactly {num_questions} interview questions to evaluate this person's ability to "
+                f"TEACH and mentor in their subject area. Keep them open-ended and reflective. "
+                f"Make the set fresh and non-repetitive (variation id: {str(uuid.uuid4())[:8]})."
+            )
+            api_result = cls._call_llm(instructor_system, instructor_user, temperature=0.6)
+            if api_result and isinstance(api_result.get('questions'), list) and api_result['questions']:
+                cleaned = []
+                allowed_types = {'conceptual', 'scenario', 'coding', 'behavioral', 'hr'}
+                for q in api_result['questions'][:num_questions]:
+                    text = (q.get('question_text') or '').strip() if isinstance(q, dict) else ''
+                    if not text:
+                        continue
+                    q_type = q.get('question_type', 'conceptual') if isinstance(q, dict) else 'conceptual'
+                    if q_type not in allowed_types:
+                        q_type = 'conceptual'
+                    cleaned.append({'question_text': text, 'question_type': q_type, 'order_num': len(cleaned) + 1})
+                if cleaned:
+                    return cleaned
+            # Offline / fallback: deterministic instructor competency set.
+            picks = cls.INSTRUCTOR_QUESTIONS[:num_questions]
+            return [
+                {'question_text': t, 'question_type': qt, 'order_num': i + 1}
+                for i, (t, qt) in enumerate(picks)
+            ]
 
         system_prompt = (
             "You are an expert interviewer building a real, credible interview. "
