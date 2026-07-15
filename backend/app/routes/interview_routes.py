@@ -13,6 +13,8 @@ from app.ai.mixtral.mixtral_service import MixtralService
 from app.ai.whisper.whisper_service import WhisperService, TranscriptionError
 from app.config.config import Config
 from app.utils.security import get_current_user_id
+from app.utils.candidate import question_time_limit
+from app.utils.supabase_service import SupabaseService
 
 interview_bp = APIRouter()
 
@@ -34,10 +36,49 @@ async def start_interview(request: Request, user_id: int = Depends(get_current_u
     if not interview_type or not job_role or not experience_level:
         raise HTTPException(status_code=400, detail="Interview type, job role, and experience level are required")
 
+    # Instructor interviews (Update §3): the backend is authoritative — regardless of what
+    # the client sends, an Instructor account always gets the instructor competency question
+    # set and skips the technical-domain classifier (its domain isn't "technical").
+    from app.utils.candidate import is_instructor_category
+    _requesting_user = User.query.get(user_id)
+    is_instructor = bool(_requesting_user and is_instructor_category(_requesting_user.course_category))
+    if is_instructor:
+        interview_type = 'instructor'
+        job_role = 'Instructor'
+
+    # One-time (completed-course) candidates get exactly one official interview (§3.2):
+    # resume an in-progress session instead of creating another, and hard-block any
+    # attempt to start again after completion. Scoped to interviews created after the
+    # current OTP was issued, so mock interviews taken earlier as an "Ongoing" candidate
+    # (or a previous official attempt before a re-approval) don't consume the attempt.
+    # Regular candidates are unaffected.
+    requesting_user = User.query.get(user_id)
+    if requesting_user and requesting_user.must_use_otp:
+        official_scope = Interview.query.filter_by(user_id=user_id)
+        if requesting_user.otp_issued_at:
+            official_scope = official_scope.filter(Interview.created_at >= requesting_user.otp_issued_at)
+        existing_official = official_scope.order_by(Interview.created_at.desc()).first()
+        if existing_official:
+            if existing_official.status == 'completed':
+                raise HTTPException(
+                    status_code=403,
+                    detail="Your official interview has already been completed. You cannot start another session."
+                )
+            if existing_official.status == 'active':
+                resumed_questions = InterviewQuestion.query.filter_by(
+                    interview_id=existing_official.id
+                ).order_by(InterviewQuestion.order_num).all()
+                return {
+                    'message': 'Resuming your official interview session',
+                    'interview': existing_official.to_dict(),
+                    'questions': [q.to_dict() for q in resumed_questions]
+                }
+
     # Domain validation (§3.4): block clearly non-technical custom domains BEFORE charging a
     # token or creating the session. JD-driven interviews skip this (a JD implies a real role).
+    # Instructor interviews also skip it — they use a dedicated non-technical competency set.
     has_jd = bool(custom_jd and len(custom_jd.strip()) >= 30)
-    if not has_jd:
+    if not has_jd and not is_instructor:
         classification = MixtralService.classify_domain(job_role)
         # Only block when we are reasonably sure the domain is non-technical.
         if not classification['is_technical'] and classification['confidence'] >= 50:
@@ -106,12 +147,13 @@ async def start_interview(request: Request, user_id: int = Depends(get_current_u
         for idx, q_data in enumerate(questions_list):
             q_text = q_data.get('question_text')
             q_type = q_data.get('question_type', 'conceptual')
-            
+
             question = InterviewQuestion(
                 interview_id=interview.id,
                 question_text=q_text,
                 question_type=q_type,
-                order_num=idx + 1
+                order_num=idx + 1,
+                time_limit_seconds=question_time_limit(q_type)  # per-question timer (§2)
             )
             db.session.add(question)
 
@@ -160,6 +202,54 @@ async def get_interview_details(interview_id: int, user_id: int = Depends(get_cu
         'responses_count': responses_count
     }
 
+@interview_bp.post('/{interview_id}/start-question')
+async def start_question(interview_id: int, request: Request, user_id: int = Depends(get_current_user_id)):
+    """Anchor the server-side countdown for a question the first time it is presented
+    (§2.3 backend-enforced timer). Idempotent: calling it again (e.g. after a page
+    reload / reconnect) returns the already-reduced remaining time, so the clock keeps
+    running server-side and can't be reset or extended by the client."""
+    data = await request.json() or {}
+    question_id = data.get('question_id')
+    if not question_id:
+        raise HTTPException(status_code=400, detail="question_id is required")
+
+    interview = Interview.query.filter_by(id=interview_id, user_id=user_id).first()
+    if not interview:
+        raise HTTPException(status_code=404, detail="Interview session not found")
+
+    question = InterviewQuestion.query.filter_by(id=question_id, interview_id=interview_id).first()
+    if not question:
+        raise HTTPException(status_code=400, detail="Question does not belong to this interview")
+
+    if not question.started_at:
+        question.started_at = datetime.datetime.utcnow()
+        db.session.commit()
+
+    return {
+        'question_id': question.id,
+        'time_limit_seconds': question.time_limit_seconds or 120,
+        'remaining_seconds': question.remaining_seconds(),
+        'started_at': question.started_at.isoformat() if question.started_at else None,
+    }
+
+
+@interview_bp.get('/{interview_id}/timer')
+async def get_timer(interview_id: int, question_id: int, user_id: int = Depends(get_current_user_id)):
+    """Lightweight resync endpoint: returns the authoritative remaining time for a
+    question so the visual countdown re-aligns to the server after any drift/reconnect."""
+    interview = Interview.query.filter_by(id=interview_id, user_id=user_id).first()
+    if not interview:
+        raise HTTPException(status_code=404, detail="Interview session not found")
+    question = InterviewQuestion.query.filter_by(id=question_id, interview_id=interview_id).first()
+    if not question:
+        raise HTTPException(status_code=400, detail="Question does not belong to this interview")
+    return {
+        'question_id': question.id,
+        'time_limit_seconds': question.time_limit_seconds or 120,
+        'remaining_seconds': question.remaining_seconds(),
+    }
+
+
 @interview_bp.post('/transcribe')
 async def transcribe_audio(audio: UploadFile = File(...), user_id: int = Depends(get_current_user_id)):
     """API endpoint to receive raw audio and return transcription quickly."""
@@ -199,7 +289,13 @@ async def submit_answer(
     interview_id: int,
     question_id: int = Form(...),
     response_text: str = Form(""),
+    # Live browser (Web Speech API) transcript — used as the display/fallback answer if
+    # authoritative Whisper transcription of the audio fails, so an answer is never lost (§3).
+    fallback_text: str = Form(""),
     duration: int = Form(0),
+    # True when the client submitted because the question's timer expired (§2.2). A
+    # timed-out question may legitimately carry an empty answer (a skip).
+    timed_out: bool = Form(False),
     audio: UploadFile = File(None),
     user_id: int = Depends(get_current_user_id)
 ):
@@ -223,40 +319,78 @@ async def submit_answer(
         if filename and allowed_file(filename):
             safe_name = f"user_{user_id}_int_{interview_id}_q_{question_id}_{int(datetime.datetime.utcnow().timestamp())}.webm"
             save_path = os.path.join(Config.UPLOAD_FOLDER, safe_name)
-            
+
             contents = await audio.read()
             with open(save_path, "wb") as f:
                 f.write(contents)
-                
+
+            # Whisper needs a local file to read/convert, so the temp file above is
+            # written first regardless of storage destination.
             audio_path = save_path
 
-            # First-pass fallback transcription if the client didn't supply text.
-            if not response_text:
+            # Whisper stays authoritative for scoring (§3). If the client didn't already
+            # supply reviewed text, transcribe the audio; if Whisper fails, fall back to the
+            # live browser transcript rather than discarding the candidate's answer.
+            if not response_text or not response_text.strip():
                 try:
                     response_text = WhisperService.transcribe(audio_path, question_text=question.question_text)
                 except TranscriptionError as te:
-                    # Do NOT score a fabricated or empty answer — surface the failure so the
-                    # candidate can retry or type their answer instead.
-                    raise HTTPException(
-                        status_code=503,
-                        detail=(
-                            "We couldn't transcribe your audio right now. Please type your answer "
-                            f"or try again. ({te})"
+                    if fallback_text and fallback_text.strip():
+                        print(f"[submit-answer] Whisper failed ({te}); using live browser transcript fallback.")
+                        response_text = fallback_text
+                    elif timed_out:
+                        response_text = ''  # a timed-out skip with no usable transcript
+                    else:
+                        raise HTTPException(
+                            status_code=503,
+                            detail=(
+                                "We couldn't transcribe your audio right now. Please type your answer "
+                                f"or try again. ({te})"
+                            )
                         )
-                    )
 
-    if not response_text or not response_text.strip():
+            # Persist the recorded audio directly to a PRIVATE Supabase Storage bucket
+            # rather than keeping it on local disk — candidate voice recordings are
+            # sensitive personal data, so this is never made public (unlike profile
+            # pictures). On success the local temp copy is removed; if Supabase is
+            # unconfigured or the upload fails, the local file is kept as a fallback so
+            # no recording is ever silently lost.
+            storage_ref = SupabaseService.upload_interview_audio(
+                user_id, interview_id, question_id, contents, content_type=audio.content_type or 'audio/webm'
+            )
+            if storage_ref:
+                audio_path = storage_ref
+                try:
+                    os.remove(save_path)
+                except OSError:
+                    pass
+            else:
+                print(f"[submit-answer] Supabase audio upload unavailable; keeping local file at {save_path}.")
+
+    # Use the live browser transcript when no other text is available.
+    if (not response_text or not response_text.strip()) and fallback_text and fallback_text.strip():
+        response_text = fallback_text
+
+    # A normal (non-timeout) submission still requires content. A timed-out question may
+    # be an empty skip — record it as an unanswered question scored 0 (§2.2).
+    is_empty = not response_text or not response_text.strip()
+    if is_empty and not timed_out:
         raise HTTPException(status_code=400, detail="Response content is empty. Please type or record your answer.")
+
+    # Text actually scored (empty for a skip) vs the text stored for display.
+    answer_for_eval = response_text or ''
+    display_text = response_text if not is_empty else '[No answer recorded — time expired]'
 
     try:
         existing_resp = InterviewResponse.query.filter_by(interview_id=interview_id, question_id=question_id).first()
         eval_data = MixtralService.evaluate_response(
             question.question_text,
-            response_text,
+            answer_for_eval,
             job_role=interview.job_role,
             difficulty=interview.difficulty,
             question_type=question.question_type
         )
+        response_text = display_text
 
         # Persist the LLM rationale together with the transcript (§2.4). Low-confidence
         # evaluations are prefixed so they surface as needing manual review.
@@ -298,6 +432,10 @@ async def submit_answer(
 
         if is_completed:
             interview.status = 'completed'
+            # When the final question is submitted because its timer ran out, record that
+            # the session ended on time expiry for admin visibility (§2.2).
+            if timed_out and not interview.terminated_reason:
+                interview.terminated_reason = 'time_expired'
             db.session.commit()
 
             qas = []
@@ -352,6 +490,12 @@ async def submit_answer(
                 type='interview'
             )
             db.session.add(notification)
+
+            # One-time candidates: record that their single official interview is done
+            # (drives §3.4 re-signup detection even if the thank-you screen never loads).
+            completing_user = User.query.get(user_id)
+            if completing_user and completing_user.must_use_otp:
+                completing_user.interview_status = 'interview_completed'
 
             db.session.commit()
 
@@ -568,6 +712,12 @@ def mark_interview_as_failed_proctoring(interview, snapshot_image=None, snapshot
     )
     db.session.add(notification)
 
+    # A proctor-terminated session still counts as the one-time candidate's single
+    # official attempt (§3.2) — mark it so re-signup routes into admin approval.
+    terminated_user = User.query.get(interview.user_id)
+    if terminated_user and terminated_user.must_use_otp:
+        terminated_user.interview_status = 'interview_completed'
+
 def check_and_apply_user_ban(user_id):
     user = User.query.get(user_id)
     if not user:
@@ -602,6 +752,10 @@ async def log_proctoring_violation(interview_id: int, request: Request, user_id:
     violation_type = data.get('type')
     details = data.get('details', '')
     snapshot_image = data.get('snapshot_image')
+    # Soft violations (e.g. full-face-not-visible, §4.2) are logged for admin visibility
+    # but never increment the terminating counter or auto-terminate — face positioning is
+    # often an innocent, temporary issue, so it must not fail an interview.
+    soft = bool(data.get('soft', False))
 
     if not violation_type:
         raise HTTPException(status_code=400, detail="Violation type is required")
@@ -611,31 +765,43 @@ async def log_proctoring_violation(interview_id: int, request: Request, user_id:
             logs = json.loads(interview.proctor_logs or '[]')
         except Exception:
             logs = []
-            
+
         logs.append({
             'timestamp': datetime.datetime.utcnow().isoformat(),
             'type': violation_type,
-            'details': details
+            'details': details,
+            'soft': soft
         })
-        
+
         interview.proctor_logs = json.dumps(logs)
+
+        if soft:
+            # Warning-only: recorded above, counter untouched, interview continues.
+            db.session.commit()
+            return {
+                'message': 'Warning recorded',
+                'auto_terminate': False,
+                'violations_count': interview.proctor_violations_count or 0,
+                'soft': True
+            }
+
         # Coerce NULL/None (older rows created before this column had data) to 0
         # before incrementing, otherwise `None + 1` raises and the count never updates.
         interview.proctor_violations_count = (interview.proctor_violations_count or 0) + 1
-        
+
         auto_terminate = False
         # Allow exactly 3 warnings. Terminate when violations_count reaches 4 (exceeding 3)
         if interview.proctor_violations_count > 3:
             snapshot_description = f"Integrity breach detected: {details} (Violation type: {violation_type})."
             mark_interview_as_failed_proctoring(
-                interview, 
-                snapshot_image=snapshot_image, 
+                interview,
+                snapshot_image=snapshot_image,
                 snapshot_description=snapshot_description
             )
             db.session.flush()
             check_and_apply_user_ban(user_id)
             auto_terminate = True
-            
+
         db.session.commit()
         return {
             'message': 'Violation recorded successfully',
