@@ -35,17 +35,18 @@ def create_refresh_token(identity: int, expires_delta: datetime.timedelta = None
     return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
 
 def get_current_user_id(credentials: HTTPAuthorizationCredentials = Depends(security_scheme)) -> int:
-    """Dependency validator: checks token signature, expiry, and returns decoded user_id."""
+    """Dependency validator: checks token signature, expiry, and server-side session
+    revocation (forced logout after a one-time interview), returning the user_id."""
     if not credentials:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Request does not contain an access token."
         )
-    
+
     token = credentials.credentials
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
-        return int(payload["sub"])
+        user_id = int(payload["sub"])
     except jwt.ExpiredSignatureError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -56,6 +57,25 @@ def get_current_user_id(credentials: HTTPAuthorizationCredentials = Depends(secu
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Signature verification failed. Token is invalid."
         )
+
+    # Server-side revocation: tokens issued before session_revoked_at are dead.
+    # This is what makes the post-interview forced logout airtight (§3.3) — a
+    # candidate keeping a copied token cannot reuse it after the session closes.
+    user = User.query.get(user_id)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Account record not found."
+        )
+    if user.session_revoked_at:
+        iat = payload.get("iat")
+        issued_at = datetime.datetime.utcfromtimestamp(iat) if iat else datetime.datetime.min
+        if issued_at < user.session_revoked_at:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Your session has ended. This one-time access is no longer valid."
+            )
+    return user_id
 
 def get_current_user(user_id: int = Depends(get_current_user_id)) -> User:
     """Resolves active candidate model instance or raises 401."""
