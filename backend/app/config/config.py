@@ -29,6 +29,12 @@ class Config:
     UPLOAD_FOLDER = os.environ.get('UPLOAD_FOLDER', os.path.join(BASE_DIR, 'uploads'))
     REPORTS_FOLDER = os.environ.get('REPORTS_FOLDER', os.path.join(BASE_DIR, 'reports'))
 
+    # Feature flags
+    # Temporarily disables the "Ongoing" course-status option for NEW signups
+    # (Update §1). Existing Ongoing users are unaffected. Flip to 'True' to re-enable
+    # instantly without any code change or redeploy of core logic.
+    ONGOING_CATEGORY_ENABLED = os.environ.get('ONGOING_CATEGORY_ENABLED', 'False').lower() == 'true'
+
     # AI Configurations
     # 'api' to run with real API keys, 'mock' to use dummy evaluations
     AI_MODE = os.environ.get('AI_MODE', 'mock')
@@ -82,3 +88,24 @@ class Config:
     SUPABASE_URL = os.environ.get('SUPABASE_URL', '')
     SUPABASE_KEY = os.environ.get('SUPABASE_SECRET_KEY', os.environ.get('SUPABASE_KEY', ''))
     SUPABASE_BUCKET = os.environ.get('SUPABASE_BUCKET', 'profile-pictures')
+    # Separate bucket for recorded interview answer audio (create this bucket in the
+    # Supabase project — it can be private; the backend uses the service key to write).
+    SUPABASE_AUDIO_BUCKET = os.environ.get('SUPABASE_AUDIO_BUCKET', 'interview-audio')
+
+    # Email service (Python smtplib — no third-party provider required).
+    # 'smtp' sends real mail; 'console' prints the rendered email to the server log
+    # so the whole platform stays testable with zero credentials (same philosophy
+    # as AI_MODE=mock). Credentials come exclusively from the environment.
+    EMAIL_MODE = os.environ.get('EMAIL_MODE', 'console')  # 'smtp' or 'console'
+    SMTP_HOST = os.environ.get('SMTP_HOST', 'smtp.gmail.com')
+    SMTP_PORT = int(os.environ.get('SMTP_PORT', '587'))
+    SMTP_USERNAME = os.environ.get('SMTP_USERNAME', '')
+    SMTP_PASSWORD = os.environ.get('SMTP_PASSWORD', '')  # e.g. a Gmail App Password
+    SMTP_USE_TLS = os.environ.get('SMTP_USE_TLS', 'True').lower() == 'true'   # STARTTLS (port 587)
+    SMTP_USE_SSL = os.environ.get('SMTP_USE_SSL', 'False').lower() == 'true'  # implicit SSL (port 465)
+    EMAIL_FROM = os.environ.get('EMAIL_FROM', os.environ.get('SMTP_USERNAME', 'no-reply@smit-portal.local'))
+    EMAIL_FROM_NAME = os.environ.get('EMAIL_FROM_NAME', 'SMIT Assessment Portal')
+    EMAIL_MAX_RETRIES = int(os.environ.get('EMAIL_MAX_RETRIES', '2'))
+    EMAIL_RETRY_DELAY = int(os.environ.get('EMAIL_RETRY_DELAY', '3'))  # seconds between attempts
+    # Used for links inside emails (e.g. the admin approval queue, candidate login page)
+    APP_BASE_URL = os.environ.get('APP_BASE_URL', 'http://localhost:5173')
