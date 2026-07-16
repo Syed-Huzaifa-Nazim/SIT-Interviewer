@@ -8,7 +8,7 @@ import Button from '../components/ui/Button';
 import Spinner from '../components/ui/Spinner';
 import {
   Mic,
-  Square,
+  MicOff,
   Type,
   Send,
   Sparkles,
@@ -19,7 +19,9 @@ import {
   CameraOff,
   Activity,
   ShieldAlert,
-  AlertTriangle
+  AlertTriangle,
+  Timer as TimerIcon,
+  ScanFace
 } from 'lucide-react';
 
 const InterviewSession = () => {
@@ -32,10 +34,22 @@ const InterviewSession = () => {
   const [currentIdx, setCurrentIdx] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  
+
   // Response modes: 'voice' (default) or 'text'
   const [inputMode, setInputMode] = useState('voice');
   const [typedAnswer, setTypedAnswer] = useState('');
+
+  // Live transcript (§3): accumulated final text + current interim words for the active
+  // question. `liveTranscriptRef` mirrors the accumulated finals so async submit handlers
+  // always read the latest value without waiting for a re-render.
+  const [liveTranscript, setLiveTranscript] = useState('');
+  const [interimText, setInterimText] = useState('');
+  const liveTranscriptRef = useRef('');
+  const [micActive, setMicActive] = useState(false);
+  const [sttSupported, setSttSupported] = useState(true);
+  // True once any audio has been captured for the current question (so the Submit
+  // button enables even in browsers without live captions, where transcript stays empty).
+  const [hasRecorded, setHasRecorded] = useState(false);
 
   // Camera & MediaPipe states
   const [cameraOn, setCameraOn] = useState(true);
@@ -43,24 +57,34 @@ const InterviewSession = () => {
   const [violationsCount, setViolationsCount] = useState(0);
   const violationsCountRef = useRef(0);
   const [violationAlert, setViolationAlert] = useState('');
+  // Soft (non-terminating) proctor warning, e.g. full-face-not-visible (§4).
+  const [softAlert, setSoftAlert] = useState('');
   const [isMuted, setIsMuted] = useState(false);
-  const [isReviewingTranscript, setIsReviewingTranscript] = useState(false);
-  const [isTranscribing, setIsTranscribing] = useState(false);
-  const recordedAudioBlobRef = useRef(null);
 
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const lastViolationTimeRef = useRef({});
+  const faceBadSinceRef = useRef(null);
 
-  // Voice recording states
+  // Voice capture refs
   const [isRecording, setIsRecording] = useState(false);
-  const [recordDuration, setRecordDuration] = useState(0);
   const mediaRecorderRef = useRef(null);
+  const audioStreamRef = useRef(null);
   const audioChunksRef = useRef([]);
-  const durationTimerRef = useRef(null);
+  const recognitionRef = useRef(null);
+  const micActiveRef = useRef(false);
+  const submittingRef = useRef(false);
+
+  // Per-question timer (§2)
+  const [remaining, setRemaining] = useState(null);
+  const [timeLimit, setTimeLimit] = useState(null);
+  const timerRef = useRef(null);
+  const timerQuestionRef = useRef(null);
 
   // General session timer
   const [sessionTime, setSessionTime] = useState(0);
+
+  const activeQuestion = questions[currentIdx];
 
   // 1. Setup Session Timers
   useEffect(() => {
@@ -89,9 +113,14 @@ const InterviewSession = () => {
 
     return () => {
       clearInterval(sTimer);
-      clearInterval(durationTimerRef.current);
     };
   }, [id, questions.length, navigate]);
+
+  // Detect Web Speech API availability once.
+  useEffect(() => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    setSttSupported(!!SR);
+  }, []);
 
   // 2. Play Warning Beep Alarm (Web Audio API)
   const playBeepAlarm = () => {
@@ -99,14 +128,14 @@ const InterviewSession = () => {
       const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       const oscillator = audioCtx.createOscillator();
       const gainNode = audioCtx.createGain();
-      
+
       oscillator.type = 'sine';
       oscillator.frequency.setValueAtTime(650, audioCtx.currentTime); // 650 Hz warning tone
       gainNode.gain.setValueAtTime(0.4, audioCtx.currentTime);
-      
+
       oscillator.connect(gainNode);
       gainNode.connect(audioCtx.destination);
-      
+
       oscillator.start();
       oscillator.stop(audioCtx.currentTime + 1.0); // play beep for 1.0s
     } catch (err) {
@@ -114,7 +143,7 @@ const InterviewSession = () => {
     }
   };
 
-  // 3. Send Proctor Log payload to backend
+  // 3. Send Proctor Log payload to backend (hard violation — counts toward termination)
   const logProctorViolation = async (type, details) => {
     const now = Date.now();
     // Throttle reporting of same violation types to once every 5 seconds
@@ -147,8 +176,8 @@ const InterviewSession = () => {
     }
 
     try {
-      const res = await api.post(`/interviews/${id}/proctor-log`, { 
-        type, 
+      const res = await api.post(`/interviews/${id}/proctor-log`, {
+        type,
         details,
         snapshot_image: snapshot
       });
@@ -157,7 +186,7 @@ const InterviewSession = () => {
         setViolationsCount(count);
         violationsCountRef.current = count;
       }
-      
+
       if (res.data.auto_terminate) {
         stopCamera();
         // Redirect directly with proctor violation flags
@@ -165,6 +194,26 @@ const InterviewSession = () => {
       }
     } catch (err) {
       console.error('Failed to log violation to server:', err);
+    }
+  };
+
+  // 3b. Soft proctor warning (§4): logged for admin visibility, shown to the candidate,
+  // but never increments the terminating counter — used for full-face-not-visible.
+  const logSoftViolation = async (type, details) => {
+    const now = Date.now();
+    const key = `soft_${type}`;
+    if (lastViolationTimeRef.current[key] && now - lastViolationTimeRef.current[key] < 6000) {
+      return;
+    }
+    lastViolationTimeRef.current[key] = now;
+
+    setSoftAlert(details);
+    setTimeout(() => setSoftAlert(''), 4000);
+
+    try {
+      await api.post(`/interviews/${id}/proctor-log`, { type, details, soft: true });
+    } catch (err) {
+      console.error('Failed to log soft violation:', err);
     }
   };
 
@@ -243,7 +292,7 @@ const InterviewSession = () => {
           video: { width: 640, height: 480 },
           audio: false
         });
-        
+
         if (!active) {
           stream.getTracks().forEach(track => track.stop());
           return;
@@ -261,7 +310,7 @@ const InterviewSession = () => {
 
         // Load MediaPipe FaceMesh script
         await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js');
-        
+
         if (!active) return;
 
         if (window.FaceMesh) {
@@ -365,33 +414,63 @@ const InterviewSession = () => {
     }
   };
 
-  // 7. Process MediaPipe Face Landmarks (Face counts / gaze & look-away checks)
+  // 7. Process MediaPipe Face Landmarks (Face counts / gaze / full-face framing)
   const handleProctoringResults = (results) => {
     const faces = results.multiFaceLandmarks || [];
-    
+
     // Multiple Person Detection
     if (faces.length >= 2) {
+      faceBadSinceRef.current = null;
       logProctorViolation('MULTIPLE_FACES', 'Multiple people detected in front of the camera.');
       return;
     }
 
-    // No Face Detection
+    // No Face Detection (existing hard violation, unchanged)
     if (faces.length === 0) {
+      faceBadSinceRef.current = null;
       logProctorViolation('NO_FACE', 'No face detected. Please look directly into the camera.');
       return;
     }
 
-    // Face look-away / Gaze tracking
     const landmarks = faces[0];
+
+    // Full-face visibility check (§4, soft): the face must be well-framed — not tiny/far
+    // and not clipped by the frame edges. Requires the condition to persist ~2s before
+    // warning, so momentary seat adjustments don't produce false positives.
+    let minX = 1, maxX = 0, minY = 1, maxY = 0;
+    for (const p of landmarks) {
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.y > maxY) maxY = p.y;
+    }
+    const faceW = maxX - minX;
+    const faceH = maxY - minY;
+    const tooSmall = faceW < 0.14 || faceH < 0.18;          // face too far from camera
+    const clipped = minX < 0.03 || maxX > 0.97 || minY < 0.02 || maxY > 0.98; // out of frame
+    if (tooSmall || clipped) {
+      if (!faceBadSinceRef.current) {
+        faceBadSinceRef.current = Date.now();
+      } else if (Date.now() - faceBadSinceRef.current > 2000) {
+        const reason = tooSmall
+          ? 'Please move closer — your full face must be clearly visible in the frame.'
+          : 'Please center your full face in the camera frame.';
+        logSoftViolation('FULL_FACE', reason);
+      }
+    } else {
+      faceBadSinceRef.current = null;
+    }
+
+    // Face look-away / Gaze tracking (existing hard violation, unchanged)
     if (landmarks && landmarks.length > 263) {
       const nose = landmarks[4];
       const leftEye = landmarks[33];
       const rightEye = landmarks[263];
-      
+
       const distance = Math.abs(rightEye.x - leftEye.x);
       if (distance > 0) {
         const noseOffset = (nose.x - leftEye.x) / distance;
-        
+
         // Balanced center is ~0.5. Left or right lookaways skew this:
         if (noseOffset < 0.33 || noseOffset > 0.67) {
           logProctorViolation('LOOK_AWAY', 'Turned head or looked away from the monitor.');
@@ -405,10 +484,6 @@ const InterviewSession = () => {
     const hands = results.multiHandLandmarks || [];
     if (hands.length === 0) return;
 
-    // Only flag a hand that is prominently in front of the camera (i.e. held up
-    // close to the screen). A large bounding box means the hand is near the lens.
-    // Small/distant hand movement (natural typing, resting) is ignored so the
-    // proctor does not fire false violations.
     for (const landmarks of hands) {
       let minX = 1, maxX = 0, minY = 1, maxY = 0;
       for (const p of landmarks) {
@@ -424,48 +499,143 @@ const InterviewSession = () => {
     }
   };
 
-  // 8. Recording Duration timer
-  useEffect(() => {
-    if (isRecording) {
-      durationTimerRef.current = setInterval(() => {
-        setRecordDuration(prev => prev + 1);
-      }, 1000);
-    } else {
-      clearInterval(durationTimerRef.current);
-      setRecordDuration(0);
-    }
-    return () => clearInterval(durationTimerRef.current);
-  }, [isRecording]);
-
   const formatTime = (secs) => {
-    const mins = Math.floor(secs / 60);
-    const remainingSecs = secs % 60;
+    const s = Math.max(0, secs || 0);
+    const mins = Math.floor(s / 60);
+    const remainingSecs = s % 60;
     return `${mins.toString().padStart(2, '0')}:${remainingSecs.toString().padStart(2, '0')}`;
   };
 
-  // 9. Audio Recording Controls
-  const startRecording = async () => {
-    audioChunksRef.current = [];
-    setError('');
-    
+  // ------------------------------------------------------------------ Timer (§2)
+  // Anchor the server-side clock for the active question, then run a visual countdown
+  // synced to the server's authoritative remaining time. On expiry, auto-submit whatever
+  // has been captured so far (a skip if empty) and advance.
+  const clearCountdown = () => {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+  };
+
+  const startQuestionTimer = async (question) => {
+    clearCountdown();
+    setRemaining(null);
+    setTimeLimit(question.time_limit_seconds || null);
+    timerQuestionRef.current = question.id;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      mediaRecorderRef.current = new MediaRecorder(stream, { mimeType: 'audio/webm' });
-      
-      mediaRecorderRef.current.ondataavailable = (event) => {
-        if (event.data && event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
+      const res = await api.post(`/interviews/${id}/start-question`, { question_id: question.id });
+      const rem = res.data.remaining_seconds;
+      setTimeLimit(res.data.time_limit_seconds);
+      setRemaining(rem);
+      if (rem <= 0) {
+        handleAutoSubmit();
+        return;
+      }
+    } catch (err) {
+      // If anchoring fails, fall back to the client-provided limit so the interview still runs.
+      setRemaining(question.time_limit_seconds || 120);
+    }
+
+    timerRef.current = setInterval(() => {
+      setRemaining((prev) => {
+        if (prev === null) return prev;
+        if (prev <= 1) {
+          clearCountdown();
+          handleAutoSubmit();
+          return 0;
         }
-      };
+        return prev - 1;
+      });
+    }, 1000);
+  };
 
-      mediaRecorderRef.current.onstop = () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        transcribeSpeech(audioBlob);
-        stream.getTracks().forEach(track => track.stop());
-      };
+  // When the active question changes, reset the answer state and (re)start its timer.
+  useEffect(() => {
+    if (!activeQuestion) return;
+    // reset per-question answer state
+    liveTranscriptRef.current = '';
+    setLiveTranscript('');
+    setInterimText('');
+    setTypedAnswer('');
+    audioChunksRef.current = [];
+    setHasRecorded(false);
+    faceBadSinceRef.current = null;
+    startQuestionTimer(activeQuestion);
 
-      mediaRecorderRef.current.start(250);
+    return () => clearCountdown();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentIdx, questions.length]);
+
+  // ------------------------------------------------------------------ Voice capture (§3)
+  const getSpeechRecognition = () => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) return null;
+    const recognition = new SR();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = 'en-US';
+
+    recognition.onresult = (event) => {
+      let interim = '';
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const chunk = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          liveTranscriptRef.current = `${liveTranscriptRef.current} ${chunk}`.trim();
+          setLiveTranscript(liveTranscriptRef.current);
+          setInterimText('');
+        } else {
+          interim += chunk;
+        }
+      }
+      if (interim) setInterimText(interim);
+    };
+
+    recognition.onerror = (e) => {
+      // 'no-speech'/'aborted' are benign; log others.
+      if (e.error && !['no-speech', 'aborted'].includes(e.error)) {
+        console.warn('SpeechRecognition error:', e.error);
+      }
+    };
+
+    recognition.onend = () => {
+      // Chrome stops recognition periodically; restart while the mic is still active.
+      if (micActiveRef.current) {
+        try { recognition.start(); } catch (e) { /* already started */ }
+      }
+    };
+
+    return recognition;
+  };
+
+  const startMic = async () => {
+    setError('');
+    try {
+      // One continuous audio stream + recorder per question; mic toggle pauses/resumes it
+      // so multiple on/off cycles accumulate into a single answer (§3.2).
+      if (!audioStreamRef.current) {
+        audioStreamRef.current = await navigator.mediaDevices.getUserMedia({ audio: true });
+      }
+      if (!mediaRecorderRef.current || mediaRecorderRef.current.state === 'inactive') {
+        const mr = new MediaRecorder(audioStreamRef.current, { mimeType: 'audio/webm' });
+        mr.ondataavailable = (e) => {
+          if (e.data && e.data.size > 0) audioChunksRef.current.push(e.data);
+        };
+        mediaRecorderRef.current = mr;
+        mr.start(500);
+      } else if (mediaRecorderRef.current.state === 'paused') {
+        mediaRecorderRef.current.resume();
+      }
+
+      // Live captions via the browser Web Speech API (best-effort; Whisper stays authoritative).
+      if (sttSupported) {
+        if (!recognitionRef.current) recognitionRef.current = getSpeechRecognition();
+        try { if (recognitionRef.current) recognitionRef.current.start(); } catch (e) { /* already running */ }
+      }
+
+      micActiveRef.current = true;
+      setMicActive(true);
       setIsRecording(true);
+      setHasRecorded(true);
     } catch (err) {
       console.error('Mic access error:', err);
       setError('Could not access microphone. Please check permissions or switch to Text Mode.');
@@ -473,74 +643,89 @@ const InterviewSession = () => {
     }
   };
 
-  const stopRecording = () => {
-    if (mediaRecorderRef.current && isRecording) {
-      mediaRecorderRef.current.stop();
-      setIsRecording(false);
-    }
-  };
-
-  const transcribeSpeech = async (audioBlob) => {
-    setIsTranscribing(true);
-    setError('');
-    
-    const formData = new FormData();
-    formData.append('audio', audioBlob, 'response.webm');
-
+  const stopMic = () => {
+    micActiveRef.current = false;
+    setMicActive(false);
+    setIsRecording(false);
+    // Pause (not stop) the recorder so we can resume into the same answer.
     try {
-      const res = await api.post('/interviews/transcribe', formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-      });
-      setTypedAnswer(res.data.transcript || '');
-      recordedAudioBlobRef.current = audioBlob;
-      setIsReviewingTranscript(true);
-    } catch (err) {
-      console.error('Failed to transcribe audio:', err);
-      const detail = err.response?.data?.message;
-      setError(
-        detail
-          ? `${detail} You can type your answer in the text box below.`
-          : 'Speech transcription is unavailable right now. Please type your answer in the text box below.'
-      );
-      setInputMode('text');
-    } finally {
-      setIsTranscribing(false);
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+        mediaRecorderRef.current.pause();
+      }
+    } catch (e) { /* ignore */ }
+    try { if (recognitionRef.current) recognitionRef.current.stop(); } catch (e) { /* ignore */ }
+    setInterimText('');
+  };
+
+  const toggleMic = () => {
+    if (micActive) stopMic();
+    else startMic();
+  };
+
+  // Fully stop + release the audio pipeline (on submit / unmount).
+  const teardownAudio = () => {
+    micActiveRef.current = false;
+    try { if (recognitionRef.current) recognitionRef.current.stop(); } catch (e) { /* ignore */ }
+    recognitionRef.current = null;
+    try {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        mediaRecorderRef.current.stop();
+      }
+    } catch (e) { /* ignore */ }
+    if (audioStreamRef.current) {
+      audioStreamRef.current.getTracks().forEach(t => t.stop());
+      audioStreamRef.current = null;
     }
   };
 
-  const handleConfirmSubmit = async () => {
-    // Only clear the reviewed transcript/audio once the submission actually succeeds,
-    // so a mid-session network drop doesn't discard the candidate's answer (§12).
-    const ok = await submitAnswer(recordedAudioBlobRef.current);
-    if (ok) {
-      setIsReviewingTranscript(false);
-      recordedAudioBlobRef.current = null;
-    }
+  // Assemble the recorded audio (across pause/resume cycles) into one blob.
+  const finalizeAudioBlob = () => {
+    return new Promise((resolve) => {
+      const mr = mediaRecorderRef.current;
+      if (!mr || mr.state === 'inactive') {
+        resolve(audioChunksRef.current.length ? new Blob(audioChunksRef.current, { type: 'audio/webm' }) : null);
+        return;
+      }
+      mr.onstop = () => {
+        resolve(audioChunksRef.current.length ? new Blob(audioChunksRef.current, { type: 'audio/webm' }) : null);
+      };
+      try { mr.stop(); } catch (e) {
+        resolve(audioChunksRef.current.length ? new Blob(audioChunksRef.current, { type: 'audio/webm' }) : null);
+      }
+    });
   };
 
-  const handleDiscardRecord = () => {
-    setIsReviewingTranscript(false);
-    setTypedAnswer('');
-    recordedAudioBlobRef.current = null;
-  };
+  // ------------------------------------------------------------------ Submit (§2/§3)
+  const submitAnswer = async ({ timedOut = false } = {}) => {
+    if (submittingRef.current) return;
+    const question = questions[currentIdx];
+    if (!question) return;
+    submittingRef.current = true;
 
-  // 10. Submit Answer payload. Returns true on success, false on failure so callers
-  // can preserve the candidate's answer for retry (§12).
-  const submitAnswer = async (audioBlob = null) => {
-    const activeQuestion = questions[currentIdx];
-    if (!activeQuestion) return false;
-
+    clearCountdown();
     setLoading(true);
     setError('');
 
-    const formData = new FormData();
-    formData.append('question_id', activeQuestion.id);
+    let audioBlob = null;
+    let voiceText = '';
+    if (inputMode === 'voice') {
+      stopMic();
+      audioBlob = await finalizeAudioBlob();
+      voiceText = liveTranscriptRef.current;
+      teardownAudio();
+    }
 
-    if (audioBlob) {
-      formData.append('audio', audioBlob, 'response.webm');
-      formData.append('duration', recordDuration);
+    const formData = new FormData();
+    formData.append('question_id', question.id);
+    formData.append('timed_out', timedOut ? 'true' : 'false');
+
+    if (inputMode === 'voice') {
+      if (audioBlob && audioBlob.size > 0) {
+        formData.append('audio', audioBlob, 'response.webm');
+      }
+      // Live browser transcript travels as the fallback/authoritative-backup answer.
+      formData.append('fallback_text', voiceText || '');
+      formData.append('duration', timeLimit && remaining !== null ? (timeLimit - remaining) : 0);
     } else {
       formData.append('response_text', typedAnswer);
       formData.append('duration', 0);
@@ -548,12 +733,8 @@ const InterviewSession = () => {
 
     try {
       const res = await api.post(`/interviews/${id}/submit-answer`, formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
+        headers: { 'Content-Type': 'multipart/form-data' },
       });
-
-      setTypedAnswer('');
 
       if (res.data.is_completed) {
         stopCamera();
@@ -563,14 +744,27 @@ const InterviewSession = () => {
       }
       return true;
     } catch (err) {
-      setError(err.response?.data?.message || 'Failed to submit response. Your answer was kept — please try again.');
+      setError(err.response?.data?.message || 'Failed to submit response. Please try again.');
       return false;
     } finally {
       setLoading(false);
+      submittingRef.current = false;
     }
   };
 
-  const activeQuestion = questions[currentIdx];
+  const handleAutoSubmit = () => {
+    // Timer expired — submit whatever exists (a skip if empty).
+    submitAnswer({ timedOut: true });
+  };
+
+  // Clean up audio + timer on unmount.
+  useEffect(() => {
+    return () => {
+      clearCountdown();
+      teardownAudio();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const speakQuestion = () => {
     if ('speechSynthesis' in window && activeQuestion) {
@@ -578,9 +772,9 @@ const InterviewSession = () => {
       if (isMuted) return;
       const utterance = new SpeechSynthesisUtterance(activeQuestion.question_text);
       utterance.rate = 0.95;
-      
+
       const voices = window.speechSynthesis.getVoices();
-      const engVoice = voices.find(v => v.lang.startsWith('en') && (v.name.includes('Google') || v.name.includes('Natural'))) || 
+      const engVoice = voices.find(v => v.lang.startsWith('en') && (v.name.includes('Google') || v.name.includes('Natural'))) ||
                        voices.find(v => v.lang.startsWith('en') && v.name.includes('Microsoft')) ||
                        voices.find(v => v.lang.startsWith('en'));
       if (engVoice) {
@@ -598,6 +792,7 @@ const InterviewSession = () => {
       }, 350);
       return () => clearTimeout(timer);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentIdx, questions.length, isMuted]);
 
   // Clean up speech synthesis on page transition
@@ -617,6 +812,9 @@ const InterviewSession = () => {
     );
   }
 
+  const timerLow = remaining !== null && remaining <= 20;
+  const combinedTranscript = `${liveTranscript}${interimText ? (liveTranscript ? ' ' : '') + interimText : ''}`.trim();
+
   return (
     <div className="max-w-6xl mx-auto space-y-6 animate-fade-in">
       {/* Session Header */}
@@ -624,7 +822,7 @@ const InterviewSession = () => {
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="space-y-0.5">
             <Badge variant="primary" size="lg" className="!normal-case !tracking-normal mb-1">
-              Mock Session Active
+              Session Active
             </Badge>
             <h2 className="text-sm font-bold text-slate-800 dark:text-slate-200">
               Question {currentIdx + 1} of {questions.length}
@@ -632,6 +830,19 @@ const InterviewSession = () => {
           </div>
 
           <div className="flex items-center gap-4 md:gap-6">
+            {/* Per-question countdown timer (§2) */}
+            {remaining !== null && (
+              <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold border ${
+                timerLow
+                  ? 'bg-red-500/10 border-red-500/40 text-red-500 dark:text-red-400 animate-pulse'
+                  : 'bg-slate-100 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300'
+              }`}>
+                <TimerIcon size={14} />
+                <span className="font-mono">{formatTime(remaining)}</span>
+                <span className="text-[10px] font-semibold opacity-70">left</span>
+              </div>
+            )}
+
             <div className="flex items-center gap-2.5 px-3 py-1.5 bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs">
               <span className="relative flex h-2 w-2">
                 <span
@@ -661,7 +872,7 @@ const InterviewSession = () => {
             </div>
           </div>
 
-          {/* Interview progress indicator (§12) */}
+          {/* Interview progress indicator */}
           <div className="mt-4 space-y-1.5">
             <div className="flex items-center justify-between text-[11px] font-semibold text-slate-500 dark:text-slate-400">
               <span>Progress</span>
@@ -684,6 +895,14 @@ const InterviewSession = () => {
         </div>
       )}
 
+      {/* Soft (non-terminating) full-face warning (§4) */}
+      {softAlert && (
+        <div className="p-3.5 bg-amber-500/10 border border-amber-500/40 text-amber-700 dark:text-amber-400 rounded-xl text-sm font-semibold flex items-center gap-2.5">
+          <ScanFace className="shrink-0" size={18} />
+          <span>{softAlert}</span>
+        </div>
+      )}
+
       {error && <Alert variant="error">{error}</Alert>}
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
@@ -702,7 +921,7 @@ const InterviewSession = () => {
             <div>
               <h4 className="font-bold text-sm text-slate-800 dark:text-slate-200">AI Recruiter</h4>
               <span className="text-[10px] text-slate-500 uppercase font-semibold block mt-0.5">
-                {loading ? 'Analyzing response...' : isRecording ? 'Listening...' : 'Awaiting Reply'}
+                {loading ? 'Analyzing response...' : micActive ? 'Listening...' : 'Awaiting Reply'}
               </span>
             </div>
           </Card>
@@ -775,7 +994,7 @@ const InterviewSession = () => {
                 <div className={`h-full flex-1 rounded-r transition-all duration-300 ${violationsCount >= 3 ? 'bg-red-500' : 'bg-slate-300 dark:bg-slate-800'}`} />
               </div>
               <p className="text-[10px] text-slate-500 leading-normal">
-                Accumulating 3 infractions automatically voids and terminates this session, resulting in a day-ban from mock interviews.
+                Keep your full face visible and centered. Accumulating 3 integrity infractions automatically voids and terminates this session.
               </p>
             </div>
           </Card>
@@ -791,7 +1010,7 @@ const InterviewSession = () => {
                 </div>
                 <div className="text-center space-y-1">
                   <h3 className="font-bold text-slate-900 dark:text-white text-base">Processing Response...</h3>
-                  <p className="text-xs text-slate-500">Mixtral & Whisper are evaluating your input.</p>
+                  <p className="text-xs text-slate-500">Whisper & the evaluator are analyzing your answer.</p>
                 </div>
               </div>
             )}
@@ -834,91 +1053,74 @@ const InterviewSession = () => {
               </h1>
             </div>
 
-            <div className="mt-12 pt-8 border-t border-slate-200 dark:border-slate-800 flex flex-col items-center">
+            <div className="mt-10 pt-8 border-t border-slate-200 dark:border-slate-800 flex flex-col items-center">
               {inputMode === 'voice' ? (
-                <div className="flex flex-col items-center space-y-6 w-full max-w-md">
-                  {isTranscribing ? (
-                    <Spinner size="md" label="Transcribing your response with Whisper STT..." className="py-6 w-full" />
-                  ) : isReviewingTranscript ? (
-                    <div className="w-full space-y-4 text-left">
-                      <div className="p-3.5 bg-primary-500/5 border border-primary-500/20 rounded-xl">
-                        <h4 className="text-xs font-bold text-primary-500 dark:text-primary-400 uppercase tracking-widest flex items-center gap-1.5 mb-1.5">
-                          <Sparkles size={12} className="animate-pulse" />
-                          Review Transcribed Response
-                        </h4>
-                        <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-                          We've converted your speech to text. Double-check and correct any typos or grammar details below before submitting.
-                        </p>
-                      </div>
-
-                      <textarea
-                        className="w-full glass-input min-h-32 text-sm resize-none"
-                        value={typedAnswer}
-                        onChange={(e) => setTypedAnswer(e.target.value)}
-                        disabled={loading}
-                      />
-
-                      <div className="flex gap-3">
-                        <Button
-                          onClick={handleConfirmSubmit}
-                          disabled={loading}
-                          loading={loading}
-                          size="sm"
-                          fullWidth
-                        >
-                          {loading ? 'Evaluating...' : 'Confirm & Submit Answer'}
-                        </Button>
-
-                        <Button variant="secondary" size="sm" onClick={handleDiscardRecord} disabled={loading}>
-                          Discard
-                        </Button>
-                      </div>
-                    </div>
-                  ) : isRecording ? (
-                    <div className="space-y-6 text-center w-full">
-                      <div className="h-16 flex items-center justify-center">
-                        {[...Array(5)].map((_, i) => (
-                          <span key={i} className="wave-bar" />
-                        ))}
-                      </div>
-
-                      <div className="space-y-1">
-                        <span className="text-red-500 dark:text-red-400 font-bold text-sm block">Recording Answer...</span>
-                        <span className="text-slate-500 dark:text-slate-400 text-xs font-mono">{formatTime(recordDuration)}</span>
-                      </div>
-
-                      <button
-                        onClick={stopRecording}
-                        className="mx-auto w-16 h-16 bg-red-600 hover:bg-red-700 text-white rounded-full flex items-center justify-center border border-red-500/30 shadow-xl shadow-red-600/20 transition-all hover:scale-105 cursor-pointer"
-                      >
-                        <Square size={24} fill="white" />
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="text-center space-y-6 w-full">
-                      <p className="text-slate-500 dark:text-slate-400 text-sm">
-                        Click the microphone and start speaking your answer.
-                      </p>
-
-                      <button
-                        onClick={startRecording}
-                        className="mx-auto w-20 h-20 bg-gradient-to-tr from-primary-500 to-indigo-500 hover:from-primary-600 hover:to-indigo-600 text-white rounded-full flex items-center justify-center border border-primary-400/20 shadow-xl shadow-primary-500/25 transition-all hover:scale-105 cursor-pointer"
-                      >
-                        <Mic size={32} />
-                      </button>
-                    </div>
-                  )}
-
+                <div className="flex flex-col items-center space-y-5 w-full max-w-lg">
+                  {/* Mic control */}
                   <button
-                    onClick={() => {
-                      setInputMode('text');
-                      setIsReviewingTranscript(false);
-                    }}
-                    className="text-xs text-primary-500 dark:text-primary-400 hover:text-primary-600 dark:hover:text-primary-300 font-semibold flex items-center gap-1.5 transition pt-4 cursor-pointer"
+                    onClick={toggleMic}
+                    disabled={loading}
+                    className={`mx-auto w-20 h-20 rounded-full flex items-center justify-center border shadow-xl transition-all hover:scale-105 cursor-pointer ${
+                      micActive
+                        ? 'bg-red-600 hover:bg-red-700 text-white border-red-500/30 shadow-red-600/20'
+                        : 'bg-gradient-to-tr from-primary-500 to-indigo-500 hover:from-primary-600 hover:to-indigo-600 text-white border-primary-400/20 shadow-primary-500/25'
+                    }`}
+                    title={micActive ? 'Turn Mic Off' : 'Turn Mic On'}
                   >
-                    <Type size={14} />
-                    Switch to Typed Input
+                    {micActive ? <MicOff size={30} /> : <Mic size={32} />}
                   </button>
+                  <p className="text-slate-500 dark:text-slate-400 text-xs text-center">
+                    {micActive
+                      ? 'Listening — speak your answer. Turn the mic off to pause; your words are kept.'
+                      : 'Turn on the mic and start speaking. You can pause and resume anytime.'}
+                  </p>
+
+                  {/* Live transcript panel directly below the mic (§3) */}
+                  <div className="w-full">
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
+                        <Sparkles size={11} className={micActive ? 'text-primary-500 animate-pulse' : 'text-slate-400'} />
+                        Live Transcript
+                      </span>
+                      {micActive && <span className="text-[10px] font-semibold text-red-500 flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" /> Recording</span>}
+                    </div>
+                    <div className="w-full min-h-24 max-h-44 overflow-y-auto p-3.5 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl text-sm text-slate-700 dark:text-slate-200 leading-relaxed whitespace-pre-wrap">
+                      {combinedTranscript
+                        ? (
+                          <>
+                            <span>{liveTranscript}</span>
+                            {interimText && <span className="text-slate-400 dark:text-slate-500"> {interimText}</span>}
+                          </>
+                        )
+                        : <span className="text-slate-400 dark:text-slate-600 italic">Your spoken words will appear here as you speak…</span>}
+                    </div>
+                    {!sttSupported && (
+                      <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-1.5">
+                        Live captions aren't supported in this browser — your audio is still recorded and transcribed on submit.
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="flex items-center justify-between gap-4 w-full">
+                    <button
+                      onClick={() => { if (micActive) stopMic(); setInputMode('text'); }}
+                      className="text-xs text-primary-500 dark:text-primary-400 hover:text-primary-600 dark:hover:text-primary-300 font-semibold flex items-center gap-1.5 transition"
+                    >
+                      <Type size={14} />
+                      Switch to Typed Input
+                    </button>
+
+                    <Button
+                      onClick={() => submitAnswer({ timedOut: false })}
+                      disabled={loading || micActive || (!combinedTranscript && !hasRecorded)}
+                      loading={loading}
+                      size="sm"
+                      icon={Send}
+                      iconPosition="right"
+                    >
+                      {currentIdx + 1 >= questions.length ? 'Submit & Finish' : 'Submit & Next'}
+                    </Button>
+                  </div>
                 </div>
               ) : (
                 <div className="w-full space-y-4">
@@ -926,7 +1128,7 @@ const InterviewSession = () => {
                     <label className="text-xs font-semibold text-slate-500 dark:text-slate-400">Type your answer here</label>
                     <textarea
                       className="w-full glass-input min-h-36 text-sm resize-none"
-                      placeholder="Explain your approach, list architectural layers or code fragments details..."
+                      placeholder="Explain your approach, reasoning, and any relevant details..."
                       value={typedAnswer}
                       onChange={(e) => setTypedAnswer(e.target.value)}
                       disabled={loading}
@@ -943,14 +1145,14 @@ const InterviewSession = () => {
                     </button>
 
                     <Button
-                      onClick={() => submitAnswer(null)}
+                      onClick={() => submitAnswer({ timedOut: false })}
                       disabled={loading || !typedAnswer.trim()}
                       loading={loading}
                       size="sm"
                       icon={Send}
                       iconPosition="right"
                     >
-                      Submit Answer
+                      {currentIdx + 1 >= questions.length ? 'Submit & Finish' : 'Submit & Next'}
                     </Button>
                   </div>
                 </div>
