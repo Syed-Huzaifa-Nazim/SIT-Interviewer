@@ -303,6 +303,35 @@ const ProfilePage = () => {
                 </div>
               </div>
 
+              {/* Enrollment record — set once at signup, editable only by the
+                  administration (§2.2). Shown read-only for transparency. */}
+              {(user?.cnic || user?.course_category || user?.course_status) && (
+                <div className="p-4 bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-800 rounded-xl space-y-2">
+                  <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest">
+                    Enrollment Record (managed by administration)
+                  </span>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                    <div>
+                      <span className="block text-slate-400 dark:text-slate-500">CNIC</span>
+                      <span className="font-mono font-bold text-slate-800 dark:text-slate-200">{user?.cnic || '—'}</span>
+                    </div>
+                    <div>
+                      <span className="block text-slate-400 dark:text-slate-500">Course Category</span>
+                      <span className="font-bold text-slate-800 dark:text-slate-200">{user?.course_category || '—'}</span>
+                    </div>
+                    <div>
+                      <span className="block text-slate-400 dark:text-slate-500">Course Status</span>
+                      <span className={`font-bold capitalize ${user?.course_status === 'completed' ? 'text-accent-600 dark:text-accent-400' : 'text-primary-600 dark:text-primary-400'}`}>
+                        {user?.course_status || '—'}
+                      </span>
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-slate-400 dark:text-slate-500 leading-snug">
+                    Completed your course? Contact the administration to update your status and unlock the official interview.
+                  </p>
+                </div>
+              )}
+
               <div className="flex justify-end pt-3">
                 <Button type="submit" size="sm" loading={loading}>
                   {loading ? 'Saving details...' : 'Save Settings'}
