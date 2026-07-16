@@ -11,3 +11,4 @@ pypdf
 python-dotenv
 gunicorn
 psycopg2-binary
+sqlalchemy
