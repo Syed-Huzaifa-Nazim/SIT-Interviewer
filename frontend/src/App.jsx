@@ -32,24 +32,83 @@ import AdminScoringPage from './pages/AdminScoringPage';
 import AdminTransactionsPage from './pages/AdminTransactionsPage';
 import AdminFeedbackPage from './pages/AdminFeedbackPage';
 import AdminLogsPage from './pages/AdminLogsPage';
+import AdminApprovalsPage from './pages/AdminApprovalsPage';
+import OfficialInterviewStart from './pages/OfficialInterviewStart';
+import OfficialThankYou from './pages/OfficialThankYou';
+
+// A one-time (completed-course) candidate: single proctored interview, no dashboard (§3.3)
+const isOneTimeCandidate = (user) => !!user && user.must_use_otp && user.role !== 'admin';
+
+const FullPageSpinner = () => (
+  <div className="min-h-screen bg-slate-100 dark:bg-slate-950 flex items-center justify-center">
+    <Spinner size="md" label="Loading..." />
+  </div>
+);
 
 // Protected Route Guard
 const ProtectedRoute = ({ children }) => {
   const { user, loading } = useAuth();
-  
+
   if (loading) {
-    return (
-      <div className="min-h-screen bg-slate-100 dark:bg-slate-950 flex items-center justify-center">
-        <Spinner size="md" label="Loading..." />
-      </div>
-    );
+    return <FullPageSpinner />;
   }
 
   if (!user) {
     return <Navigate to="/login" replace />;
   }
 
+  // One-time candidates never see the dashboard shell — they are locked to the
+  // official interview flow.
+  if (isOneTimeCandidate(user)) {
+    return <Navigate to="/interview/official" replace />;
+  }
+
   return <DashboardLayout>{children}</DashboardLayout>;
+};
+
+// The official interview gate: only for one-time candidates.
+const OfficialGateRoute = () => {
+  const { user, loading } = useAuth();
+  if (loading) return <FullPageSpinner />;
+  if (!user) return <Navigate to="/login" replace />;
+  if (!isOneTimeCandidate(user)) return <Navigate to="/dashboard" replace />;
+  return <OfficialInterviewStart />;
+};
+
+// Interview session: one-time candidates get a bare full-screen shell (no sidebar to
+// navigate away with); everyone else keeps the existing DashboardLayout unchanged.
+const InterviewSessionRoute = () => {
+  const { user, loading } = useAuth();
+  if (loading) return <FullPageSpinner />;
+  if (!user) return <Navigate to="/login" replace />;
+  if (isOneTimeCandidate(user)) {
+    return (
+      <div className="min-h-screen bg-slate-100 dark:bg-slate-950 text-slate-800 dark:text-slate-100 p-5 md:p-8 overflow-y-auto">
+        <InterviewSession />
+      </div>
+    );
+  }
+  return (
+    <ProtectedRoute>
+      <InterviewSession />
+    </ProtectedRoute>
+  );
+};
+
+// Interview report: for one-time candidates the interview's end means thank-you +
+// forced logout (§3.3 steps 7–8) instead of the report page.
+const InterviewReportRoute = () => {
+  const { user, loading } = useAuth();
+  if (loading) return <FullPageSpinner />;
+  if (isOneTimeCandidate(user)) {
+    return <OfficialThankYou />;
+  }
+  if (!user) return <Navigate to="/login" replace />;
+  return (
+    <ProtectedRoute>
+      <ReportDetailPage />
+    </ProtectedRoute>
+  );
 };
 
 // Admin Route Guard
@@ -117,22 +176,9 @@ function App() {
                 </ProtectedRoute>
               } 
             />
-            <Route 
-              path="/interview/session/:id" 
-              element={
-                <ProtectedRoute>
-                  <InterviewSession />
-                </ProtectedRoute>
-              } 
-            />
-            <Route 
-              path="/interview/report/:id" 
-              element={
-                <ProtectedRoute>
-                  <ReportDetailPage />
-                </ProtectedRoute>
-              } 
-            />
+            <Route path="/interview/official" element={<OfficialGateRoute />} />
+            <Route path="/interview/session/:id" element={<InterviewSessionRoute />} />
+            <Route path="/interview/report/:id" element={<InterviewReportRoute />} />
             <Route 
               path="/coding" 
               element={
@@ -215,13 +261,21 @@ function App() {
                 </AdminRoute>
               } 
             />
-            <Route 
-              path="/admin/logs" 
+            <Route
+              path="/admin/logs"
               element={
                 <AdminRoute>
                   <AdminLogsPage />
                 </AdminRoute>
-              } 
+              }
+            />
+            <Route
+              path="/admin/approvals"
+              element={
+                <AdminRoute>
+                  <AdminApprovalsPage />
+                </AdminRoute>
+              }
             />
 
             {/* Catch-all Fallback */}
