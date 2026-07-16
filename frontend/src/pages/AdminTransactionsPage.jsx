@@ -6,6 +6,7 @@ import Alert from '../components/ui/Alert';
 import Badge from '../components/ui/Badge';
 import SearchBar from '../components/ui/SearchBar';
 import Spinner from '../components/ui/Spinner';
+import DeleteButton from '../components/ui/DeleteButton';
 import {
   Coins,
   TrendingUp,
@@ -34,6 +35,16 @@ const AdminTransactionsPage = () => {
     };
     fetchTransactions();
   }, []);
+
+  const handleDelete = async (id) => {
+    setError('');
+    try {
+      await api.delete(`/admin/transactions/${id}`);
+      setTransactions((prev) => prev.filter((t) => t.id !== id));
+    } catch (err) {
+      setError(err.response?.data?.message || 'Failed to delete the transaction.');
+    }
+  };
 
   const filteredTransactions = transactions.filter((t) => {
     return (
@@ -92,12 +103,13 @@ const AdminTransactionsPage = () => {
                 <th className="py-3 font-bold text-center">Amount (USD)</th>
                 <th className="py-3 font-bold text-center">Tokens Delta</th>
                 <th className="py-3 font-bold text-right">Timestamp</th>
+                <th className="py-3 font-bold text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
               {filteredTransactions.length === 0 ? (
                 <tr>
-                  <td colSpan="5" className="py-8 text-center text-slate-500 dark:text-slate-400 text-xs">
+                  <td colSpan="6" className="py-8 text-center text-slate-500 dark:text-slate-400 text-xs">
                     No token transaction records found.
                   </td>
                 </tr>
@@ -132,6 +144,16 @@ const AdminTransactionsPage = () => {
 
                       <td className="py-4 text-right text-slate-500 dark:text-slate-400 font-mono text-[10px]">
                         {new Date(item.created_at).toLocaleString()}
+                      </td>
+
+                      <td className="py-4">
+                        <div className="flex justify-end">
+                          <DeleteButton
+                            onConfirm={() => handleDelete(item.id)}
+                            confirmMessage={`Delete this ${item.transaction_type.replace('_', ' ')} transaction record permanently?`}
+                            title="Delete Transaction"
+                          />
+                        </div>
                       </td>
                     </tr>
                   );
