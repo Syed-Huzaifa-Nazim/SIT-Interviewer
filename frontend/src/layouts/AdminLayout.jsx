@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import api from '../services/api';
 import BrandLogo from '../components/layout/BrandLogo';
 import ThemeToggle from '../components/layout/ThemeToggle';
 import {
@@ -15,7 +16,8 @@ import {
   X,
   ShieldCheck,
   Gauge,
-  ChevronLeft
+  ChevronLeft,
+  ClipboardCheck
 } from 'lucide-react';
 
 const AdminLayout = ({ children }) => {
@@ -23,6 +25,23 @@ const AdminLayout = ({ children }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  // In-portal pending-actions badge (Update §4) — replaces admin email alerts.
+  const [pendingCount, setPendingCount] = useState(0);
+
+  const isAdmin = user && user.role === 'admin';
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    const fetchPending = () => {
+      api.get('/admin/pending-actions/count')
+        .then((res) => setPendingCount(res.data.total || 0))
+        .catch(() => {});
+    };
+    fetchPending();
+    // Refresh so the badge stays current while the admin works, and after they act.
+    const poll = setInterval(fetchPending, 20000);
+    return () => clearInterval(poll);
+  }, [isAdmin, location.pathname]);
 
   // Security check mapping
   if (!user || user.role !== 'admin') {
@@ -43,6 +62,7 @@ const AdminLayout = ({ children }) => {
   const adminMenu = [
     { name: 'Overview', path: '/admin', icon: Activity },
     { name: 'Manage Users', path: '/admin/users', icon: Users },
+    { name: 'Approvals', path: '/admin/approvals', icon: ClipboardCheck, badge: pendingCount },
     { name: 'Interviews', path: '/admin/interviews', icon: TerminalSquare },
     { name: 'Scoring Analytics', path: '/admin/scoring', icon: Gauge },
     { name: 'Transactions', path: '/admin/transactions', icon: CreditCard },
@@ -67,7 +87,7 @@ const AdminLayout = ({ children }) => {
           of the app so it switches with the theme toggle (§6.1). */}
       <aside className={`fixed inset-y-0 left-0 z-50 flex flex-col w-64 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 transition-transform duration-300 lg:translate-x-0 lg:static ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <div className="flex items-center justify-between px-6 py-5 border-b border-slate-200 dark:border-slate-800">
-          <BrandLogo variant="admin" />
+          <BrandLogo variant="" />
           <button className="lg:hidden text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white" onClick={() => setSidebarOpen(false)}>
             <X size={20} />
           </button>
@@ -91,6 +111,13 @@ const AdminLayout = ({ children }) => {
               >
                 <Icon size={18} className="shrink-0" />
                 <span className="flex-1 min-w-0 truncate whitespace-nowrap">{item.name}</span>
+                {item.badge > 0 && (
+                  <span className={`shrink-0 min-w-5 h-5 px-1.5 inline-flex items-center justify-center rounded-full text-[10px] font-bold ${
+                    isActive ? 'bg-white text-primary-700' : 'bg-red-500 text-white'
+                  }`}>
+                    {item.badge}
+                  </span>
+                )}
               </Link>
             );
           })}
