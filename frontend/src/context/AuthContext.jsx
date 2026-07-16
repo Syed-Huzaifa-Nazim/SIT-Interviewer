@@ -47,29 +47,69 @@ export const AuthProvider = ({ children }) => {
     }
   }, []);
 
-  // Login
-  const login = async (email, password) => {
-    let finalEmail = email;
+  // Presence heartbeat (§4.2): ping every 20s while logged in so the admin hub
+  // can show a live online/offline indicator. Silently skips once tokens are
+  // cleared (e.g. after the one-time interview forced logout).
+  useEffect(() => {
+    if (!user) return;
+
+    const ping = () => {
+      if (!localStorage.getItem('access_token')) return;
+      api.post('/users/heartbeat').catch(() => {});
+    };
+
+    ping();
+    const beat = setInterval(ping, 20000);
+
+    // Fire an explicit "gone offline" signal when the tab/browser actually closes
+    // (or is refreshed), instead of waiting out the heartbeat timeout window.
+    // `keepalive` lets the request survive page teardown; `pagehide` fires more
+    // reliably across browsers than `beforeunload` (including on mobile/bfcache).
+    const markOffline = () => {
+      const token = localStorage.getItem('access_token');
+      if (!token) return;
+      fetch(`${api.defaults.baseURL}/users/presence/offline`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        keepalive: true,
+      }).catch(() => {});
+    };
+    window.addEventListener('pagehide', markOffline);
+
+    return () => {
+      clearInterval(beat);
+      window.removeEventListener('pagehide', markOffline);
+    };
+  }, [user?.id]);
+
+  // Login — identifier may be an email address or a CNIC number (§3.1)
+  const login = async (identifier, password) => {
+    let finalIdentifier = identifier;
     let finalPassword = password;
-    if (email && typeof email === 'object') {
-      finalEmail = email.email;
-      finalPassword = email.password;
+    if (identifier && typeof identifier === 'object') {
+      finalIdentifier = identifier.email || identifier.identifier;
+      finalPassword = identifier.password;
     }
 
     setLoading(true);
     setError('');
     try {
-      const res = await api.post('/auth/login', { email: finalEmail, password: finalPassword });
+      const res = await api.post('/auth/login', { email: finalIdentifier, password: finalPassword });
       const { user: userData, tokens: tokenData, access_token, refresh_token } = res.data;
 
       localStorage.setItem('access_token', access_token);
-      localStorage.setItem('refresh_token', refresh_token);
+      if (refresh_token) {
+        localStorage.setItem('refresh_token', refresh_token);
+      } else {
+        // One-time interview sessions get no refresh token by design (§3.3)
+        localStorage.removeItem('refresh_token');
+      }
 
       setUser(userData);
       setTokens(tokenData);
       fetchNotifications();
       setLoading(false);
-      return userData;
+      return res.data;
     } catch (err) {
       setLoading(false);
       setError(err.response?.data?.message || 'Unable to log in. Please check your credentials and try again.');
@@ -77,45 +117,24 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  // Register
-  const register = async (name, email, password, country, experience_level, job_role) => {
-    let finalName = name;
-    let finalEmail = email;
-    let finalPassword = password;
-    let finalCountry = country;
-    let finalExp = experience_level;
-    let finalJob = job_role;
-
-    if (name && typeof name === 'object') {
-      finalName = name.name;
-      finalEmail = name.email;
-      finalPassword = name.password;
-      finalCountry = name.country;
-      finalExp = name.experience_level;
-      finalJob = name.job_role;
-    }
-
+  // Register — completed-course candidates and re-interview requests do NOT get
+  // auto-logged-in; the caller inspects res.status to show the right screen.
+  const register = async (payload) => {
     setLoading(true);
     setError('');
     try {
-      const res = await api.post('/auth/register', {
-        name: finalName,
-        email: finalEmail,
-        password: finalPassword,
-        country: finalCountry,
-        experience_level: finalExp,
-        job_role: finalJob,
-      });
+      const res = await api.post('/auth/register', payload);
       const { user: userData, tokens: tokenData, access_token, refresh_token } = res.data;
 
-      localStorage.setItem('access_token', access_token);
-      localStorage.setItem('refresh_token', refresh_token);
-
-      setUser(userData);
-      setTokens(tokenData);
-      fetchNotifications();
+      if (access_token) {
+        localStorage.setItem('access_token', access_token);
+        if (refresh_token) localStorage.setItem('refresh_token', refresh_token);
+        setUser(userData);
+        setTokens(tokenData);
+        fetchNotifications();
+      }
       setLoading(false);
-      return userData;
+      return res.data;
     } catch (err) {
       setLoading(false);
       setError(err.response?.data?.message || 'Unable to register right now. Please try again.');
@@ -126,6 +145,7 @@ export const AuthProvider = ({ children }) => {
   // Logout
   const logout = async () => {
     try {
+      await api.post('/users/presence/offline');
       await api.post('/auth/logout');
     } catch (err) {
       console.warn('Logout API failed:', err);
