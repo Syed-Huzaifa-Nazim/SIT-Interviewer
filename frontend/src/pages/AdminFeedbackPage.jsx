@@ -6,6 +6,7 @@ import Alert from '../components/ui/Alert';
 import Badge from '../components/ui/Badge';
 import SearchBar from '../components/ui/SearchBar';
 import Spinner from '../components/ui/Spinner';
+import DeleteButton from '../components/ui/DeleteButton';
 import {
   MessageSquare,
   Star,
@@ -33,6 +34,16 @@ const AdminFeedbackPage = () => {
     };
     fetchFeedbacks();
   }, []);
+
+  const handleDelete = async (id) => {
+    setError('');
+    try {
+      await api.delete(`/admin/feedback/${id}`);
+      setFeedbacks((prev) => prev.filter((f) => f.id !== id));
+    } catch (err) {
+      setError(err.response?.data?.message || 'Failed to delete the feedback.');
+    }
+  };
 
   const filteredFeedbacks = feedbacks.filter((f) => {
     return (
@@ -99,6 +110,12 @@ const AdminFeedbackPage = () => {
                     <Calendar size={10} />
                     {new Date(item.created_at).toLocaleDateString()}
                   </span>
+
+                  <DeleteButton
+                    onConfirm={() => handleDelete(item.id)}
+                    confirmMessage={`Delete this feedback from ${item.user_name} permanently?`}
+                    title="Delete Feedback"
+                  />
                 </div>
               </div>
 
