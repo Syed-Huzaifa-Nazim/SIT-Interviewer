@@ -7,6 +7,7 @@ import Alert from '../components/ui/Alert';
 import Badge from '../components/ui/Badge';
 import SearchBar from '../components/ui/SearchBar';
 import Spinner from '../components/ui/Spinner';
+import DeleteButton from '../components/ui/DeleteButton';
 import {
   Video,
   ArrowRight,
@@ -20,20 +21,31 @@ const AdminInterviewsPage = () => {
   const [error, setError] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
 
+  const fetchInterviews = async () => {
+    try {
+      const res = await api.get('/admin/interviews');
+      setInterviews(res.data);
+    } catch (err) {
+      console.error(err);
+      setError('Failed to fetch system mock sessions history.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    const fetchInterviews = async () => {
-      try {
-        const res = await api.get('/admin/interviews');
-        setInterviews(res.data);
-      } catch (err) {
-        console.error(err);
-        setError('Failed to fetch system mock sessions history.');
-      } finally {
-        setLoading(false);
-      }
-    };
     fetchInterviews();
   }, []);
+
+  const handleDelete = async (id) => {
+    setError('');
+    try {
+      await api.delete(`/admin/interviews/${id}`);
+      setInterviews((prev) => prev.filter((i) => i.id !== id));
+    } catch (err) {
+      setError(err.response?.data?.message || 'Failed to delete the interview.');
+    }
+  };
 
   const filteredInterviews = interviews.filter((i) => {
     return (
@@ -136,18 +148,25 @@ const AdminInterviewsPage = () => {
                       )}
                     </td>
 
-                    <td className="py-4 text-right">
-                      {item.status === 'completed' ? (
-                        <Link
-                          to={`/interview/report/${item.id}`}
-                          className="p-2 bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 hover:text-slate-900 dark:hover:text-white text-slate-500 dark:text-slate-400 rounded-lg transition inline-flex items-center"
-                          title="Inspect Report Card"
-                        >
-                          <ArrowRight size={14} />
-                        </Link>
-                      ) : (
-                        <span className="text-[10px] text-slate-500 dark:text-slate-400 italic pr-2">Awaiting Completion</span>
-                      )}
+                    <td className="py-4">
+                      <div className="flex items-center justify-end gap-2">
+                        {item.status === 'completed' ? (
+                          <Link
+                            to={`/interview/report/${item.id}`}
+                            className="p-2 bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 hover:text-slate-900 dark:hover:text-white text-slate-500 dark:text-slate-400 rounded-lg transition inline-flex items-center"
+                            title="Inspect Report Card"
+                          >
+                            <ArrowRight size={14} />
+                          </Link>
+                        ) : (
+                          <span className="text-[10px] text-slate-500 dark:text-slate-400 italic">Awaiting</span>
+                        )}
+                        <DeleteButton
+                          onConfirm={() => handleDelete(item.id)}
+                          confirmMessage={`Permanently delete ${item.user_name}'s ${item.job_role} interview and its report? This cannot be undone.`}
+                          title="Delete Interview"
+                        />
+                      </div>
                     </td>
                   </tr>
                 ))
