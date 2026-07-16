@@ -96,7 +96,7 @@ const InterviewSession = () => {
       try {
         const res = await api.get(`/interviews/${id}/details`);
         if (res.data.interview.status === 'completed') {
-          navigate(`/interview/report/${id}`);
+          navigate(`/interview/report/${id}`, { replace: true });
           return;
         }
         setQuestions(res.data.questions);
@@ -190,7 +190,7 @@ const InterviewSession = () => {
       if (res.data.auto_terminate) {
         stopCamera();
         // Redirect directly with proctor violation flags
-        navigate(`/interview/report/${id}`, { state: { proctorFailed: true } });
+        navigate(`/interview/report/${id}`, { state: { proctorFailed: true }, replace: true });
       }
     } catch (err) {
       console.error('Failed to log violation to server:', err);
@@ -738,7 +738,7 @@ const InterviewSession = () => {
 
       if (res.data.is_completed) {
         stopCamera();
-        navigate(`/interview/report/${id}`);
+        navigate(`/interview/report/${id}`, { replace: true });
       } else {
         setCurrentIdx(prev => prev + 1);
       }
