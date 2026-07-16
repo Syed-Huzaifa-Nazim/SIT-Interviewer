@@ -20,8 +20,14 @@ const LoginPage = () => {
     e.preventDefault();
     setLoading(true);
     try {
-      const ok = await login({ email, password });
-      if (ok) {
+      const res = await login({ email, password });
+      if (res) {
+        // One-time (completed-course) candidates go straight to the proctored
+        // interview gate — they have no dashboard (§3.3).
+        if (res.one_time || res.user?.must_use_otp) {
+          navigate('/interview/official', { replace: true });
+          return;
+        }
         // Brief success animation before redirecting (§10).
         setSuccess(true);
         setTimeout(() => navigate('/dashboard'), 1000);
@@ -87,12 +93,12 @@ const LoginPage = () => {
           <form onSubmit={handleSubmit} className="space-y-5">
             <Input
               id="email"
-              type="email"
-              label="Student Email Address"
+              type="text"
+              label="Email Address or CNIC Number"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               icon={Mail}
-              placeholder="rollnumber@student.smit.edu"
+              placeholder="email@example.com or 42101-1234567-1"
               required
             />
             
