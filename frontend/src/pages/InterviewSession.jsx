@@ -284,6 +284,7 @@ const InterviewSession = () => {
     let active = true;
     let animationFrameId = null;
     let timeoutId = null;
+    let objectScanTimeoutId = null;
 
     const startCameraAndProctoring = async () => {
       try {
@@ -374,7 +375,47 @@ const InterviewSession = () => {
           };
 
           animationFrameId = requestAnimationFrame(processFrame);
+          // Proctoring is considered active as soon as the face pipeline is running —
+          // we do NOT wait for the heavier object-detection model, so the interview
+          // starts quickly. The phone model is loaded and run separately below.
           setProctoringActive(true);
+
+          // Optional object-detection model (TensorFlow.js COCO-SSD): flags a mobile
+          // phone in view of the camera. Loaded in the background (not awaited before
+          // proctoring starts) and run on its own independent scan loop — decoupled from
+          // the face frame loop so neither blocks the other. Any failure here never
+          // disrupts the face/hands proctoring above.
+          (async () => {
+            try {
+              await loadScript('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js');
+              await loadScript('https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js');
+              if (!active || !window.cocoSsd) return;
+              // Use the full mobilenet_v2 base (not the "lite" one): it is noticeably
+              // more accurate at spotting a phone held straight toward the camera, which
+              // the lite base often misses. It runs in its own loop so the extra cost
+              // does not affect face tracking.
+              const phoneModel = await window.cocoSsd.load({ base: 'mobilenet_v2' });
+              if (!active) return;
+
+              const scanForPhone = async () => {
+                if (!active) return;
+                if (cameraOn && videoRef.current && videoRef.current.readyState >= 2) {
+                  try {
+                    const predictions = await phoneModel.detect(videoRef.current);
+                    if (active) handleObjectDetections(predictions);
+                  } catch (e) {
+                    // Ignore transient inference failures
+                  }
+                }
+                // Run about twice per second — fast enough to catch a phone within ~1s
+                // yet light enough to coexist with the face pipeline.
+                objectScanTimeoutId = setTimeout(scanForPhone, 450);
+              };
+              scanForPhone();
+            } catch (e) {
+              console.warn('Object detection (phone) model unavailable; face proctoring continues.', e);
+            }
+          })();
         }
       } catch (err) {
         console.warn('MediaPipe initialization failed. Proctoring is active but running on fallback system event monitors.', err);
@@ -399,6 +440,9 @@ const InterviewSession = () => {
       }
       if (animationFrameId) {
         cancelAnimationFrame(animationFrameId);
+      }
+      if (objectScanTimeoutId) {
+        clearTimeout(objectScanTimeoutId);
       }
       stopCamera();
     };
@@ -496,6 +540,20 @@ const InterviewSession = () => {
         logProctorViolation('HAND_DETECTED', 'Hand raised in front of the screen. Keep your hands down.');
         return;
       }
+    }
+  };
+
+  // 7c. Process object detections (COCO-SSD): flag a mobile phone in the frame.
+  // A phone is flagged as soon as it is seen with reasonable confidence — no sustained
+  // wait — so bringing any smartphone toward the camera warns immediately. The
+  // logProctorViolation throttle (same type once per 5s) already prevents spamming, so
+  // an occasional noisy frame cannot pile up violations.
+  const handleObjectDetections = (predictions) => {
+    const phone = (predictions || []).find(
+      (p) => p.class === 'cell phone' && p.score >= 0.4
+    );
+    if (phone) {
+      logProctorViolation('PHONE_DETECTED', 'Mobile phone detected in the camera view. Please remove all devices.');
     }
   };
 
