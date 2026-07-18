@@ -497,8 +497,8 @@ const InterviewSession = () => {
         faceBadSinceRef.current = Date.now();
       } else if (Date.now() - faceBadSinceRef.current > 2000) {
         const reason = tooSmall
-          ? 'Please move closer — your full face must be clearly visible in the frame.'
-          : 'Please center your full face in the camera frame.';
+          ? 'Please look into your camera and move closer — your face needs to be clearly visible.'
+          : 'Please look into your camera — your full face needs to be clearly visible and centered.';
         logSoftViolation('FULL_FACE', reason);
       }
     } else {
@@ -1067,8 +1067,8 @@ const InterviewSession = () => {
                   <Sparkles className="text-white animate-pulse" size={32} />
                 </div>
                 <div className="text-center space-y-1">
-                  <h3 className="font-bold text-slate-900 dark:text-white text-base">Processing Response...</h3>
-                  <p className="text-xs text-slate-500">Whisper & the evaluator are analyzing your answer.</p>
+                  <h3 className="font-bold text-slate-900 dark:text-white text-base">Saving your answer...</h3>
+                  <p className="text-xs text-slate-500">Moving you to the next question — grading happens in the background.</p>
                 </div>
               </div>
             )}
