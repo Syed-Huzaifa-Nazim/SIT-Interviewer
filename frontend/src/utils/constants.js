@@ -22,6 +22,17 @@ export const COURSE_STATUS_OPTIONS = [
   { value: 'completed', label: 'Completed (with certification)' },
 ];
 
+// Format raw input into the Pakistani CNIC pattern XXXXX-XXXXXXX-X.
+// Strips everything except digits, caps at 13 digits, and re-inserts the two
+// dashes automatically as the user types (so only integers are ever accepted).
+export const formatCnic = (value) => {
+  const digits = (value || '').replace(/\D/g, '').slice(0, 13);
+  const parts = [digits.slice(0, 5)];
+  if (digits.length > 5) parts.push(digits.slice(5, 12));
+  if (digits.length > 12) parts.push(digits.slice(12, 13));
+  return parts.join('-');
+};
+
 // Human-readable labels for a candidate's interview lifecycle state
 export const INTERVIEW_STATUS_LABELS = {
   not_interviewed: 'Not Interviewed',

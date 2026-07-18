@@ -8,7 +8,7 @@ import Input from '../components/ui/Input';
 import Button from '../components/ui/Button';
 import Alert from '../components/ui/Alert';
 import {
-  SIGNUP_CATEGORIES, COURSE_STATUS_OPTIONS, isInstructorCategory
+  SIGNUP_CATEGORIES, COURSE_STATUS_OPTIONS, isInstructorCategory, formatCnic
 } from '../utils/constants';
 import {
   User, Mail, Lock, UserPlus, ChevronLeft, CheckCircle2,
@@ -54,6 +54,10 @@ const RegisterPage = () => {
   const isOneTime = isInstructor || isCompleted;
 
   const handleChange = (e) => setFormData({ ...formData, [e.target.id]: e.target.value });
+
+  // CNIC gets its own handler so digits-only input is auto-formatted with dashes.
+  const handleCnicChange = (e) =>
+    setFormData({ ...formData, cnic: formatCnic(e.target.value) });
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -155,6 +159,9 @@ const RegisterPage = () => {
               We've sent your username (your CNIC) and a <b>one-time password</b> to your email address.
               The password works exactly once — log in only when you are ready to take your official interview.
             </p>
+            <p className="text-xs text-slate-400 dark:text-slate-500 text-center max-w-sm">
+              Can't find the email? Please check your Spam or Junk folder.
+            </p>
             <Button onClick={() => navigate('/login')} className="mt-2">Go to Login</Button>
           </div>
         )}
@@ -198,7 +205,7 @@ const RegisterPage = () => {
           <form onSubmit={handleSubmit} className="space-y-4">
             <Input id="name" type="text" label="Full Name" value={formData.name} onChange={handleChange} icon={User} placeholder="John Doe" required />
             <Input id="email" type="email" label="Email Address" value={formData.email} onChange={handleChange} icon={Mail} placeholder="john@example.com" required />
-            <Input id="cnic" type="text" label="CNIC Number" value={formData.cnic} onChange={handleChange} icon={CreditCard} placeholder="42101-1234567-1" required />
+            <Input id="cnic" type="text" inputMode="numeric" maxLength={15} label="CNIC Number" value={formData.cnic} onChange={handleCnicChange} icon={CreditCard} placeholder="42101-1234567-1" required />
 
             <div className="space-y-1.5">
               <label htmlFor="course_category" className="text-xs font-semibold text-slate-700 dark:text-slate-300">Category</label>

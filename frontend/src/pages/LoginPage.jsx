@@ -7,6 +7,7 @@ import Input from '../components/ui/Input';
 import Button from '../components/ui/Button';
 import Alert from '../components/ui/Alert';
 import { Mail, Lock, LogIn, ChevronLeft, CheckCircle2 } from 'lucide-react';
+import { formatCnic } from '../utils/constants';
 
 const LoginPage = () => {
   const [email, setEmail] = useState('');
@@ -15,6 +16,14 @@ const LoginPage = () => {
   const [success, setSuccess] = useState(false);
   const { login, error } = useAuth();
   const navigate = useNavigate();
+
+  // This field accepts EITHER an email or a CNIC. If the user is typing something
+  // that looks like a CNIC (only digits and dashes), auto-format it with dashes;
+  // otherwise it's an email, so leave it exactly as typed.
+  const handleIdentifierChange = (e) => {
+    const val = e.target.value;
+    setEmail(/^[\d-]*$/.test(val) ? formatCnic(val) : val);
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -96,9 +105,10 @@ const LoginPage = () => {
               type="text"
               label="Email Address or CNIC Number"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={handleIdentifierChange}
               icon={Mail}
               placeholder="email@example.com or 42101-1234567-1"
+              maxLength={254}
               required
             />
             
