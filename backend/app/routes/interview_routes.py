@@ -296,6 +296,9 @@ async def submit_answer(
     # True when the client submitted because the question's timer expired (§2.2). A
     # timed-out question may legitimately carry an empty answer (a skip).
     timed_out: bool = Form(False),
+    # Base64 webcam frame captured by the client on the final submission, stored on the
+    # report so an admin can see a completion snapshot (mirrors the auto-terminate one).
+    snapshot_image: str = Form(""),
     audio: UploadFile = File(None),
     user_id: int = Depends(get_current_user_id)
 ):
@@ -475,7 +478,10 @@ async def submit_answer(
                 strengths=_as_text(report_data.get('strengths'), '[]'),
                 weaknesses=_as_text(report_data.get('weaknesses'), '[]'),
                 missing_concepts=_as_text(report_data.get('missing_concepts'), ''),
-                recommendations=_as_text(report_data.get('recommendations'), '')
+                recommendations=_as_text(report_data.get('recommendations'), ''),
+                # Completion snapshot for admin review (only if the client sent one).
+                snapshot_image=snapshot_image or None,
+                snapshot_description='Camera snapshot captured at interview completion.' if snapshot_image else None
             )
             
             interview.overall_score = report_data.get('overall_score')
@@ -718,6 +724,10 @@ def mark_interview_as_failed_proctoring(interview, snapshot_image=None, snapshot
     if terminated_user and terminated_user.must_use_otp:
         terminated_user.interview_status = 'interview_completed'
 
+# A single proctoring termination blocks the candidate (their CNIC/account) for this
+# many days. Login auto-reopens the account once banned_until has passed.
+PROCTOR_BAN_DAYS = 30
+
 def check_and_apply_user_ban(user_id):
     user = User.query.get(user_id)
     if not user:
@@ -725,16 +735,24 @@ def check_and_apply_user_ban(user_id):
     if user.role == 'admin':
         return
     terminated_count = Interview.query.filter_by(user_id=user_id, is_proctor_failed=True).count()
-    if terminated_count >= 3:
+    # Any proctoring termination blocks the candidate for 30 days. Re-terminations only
+    # extend the block (never shorten an already-longer one).
+    if terminated_count >= 1:
+        new_until = datetime.datetime.utcnow() + datetime.timedelta(days=PROCTOR_BAN_DAYS)
         user.status = 'banned'
-        user.banned_until = datetime.datetime.utcnow().replace(hour=23, minute=59, second=59)
+        if not user.banned_until or new_until > user.banned_until:
+            user.banned_until = new_until
         admin_user = User.query.filter_by(role='admin').first()
         admin_fk = admin_user.id if admin_user else user_id
 
         sys_log = AdminLog(
             admin_id=admin_fk,
             action='AUTO_BAN_USER',
-            details=f"User ID {user_id} ({user.email}) automatically blocked until end of day due to 3 mock proctoring terminations."
+            details=(
+                f"User ID {user_id} ({user.email}, CNIC {user.cnic or 'n/a'}) automatically "
+                f"blocked for {PROCTOR_BAN_DAYS} days (until {user.banned_until.strftime('%Y-%m-%d %H:%M UTC')}) "
+                f"due to a proctoring termination."
+            )
         )
         db.session.add(sys_log)
 

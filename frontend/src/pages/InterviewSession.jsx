@@ -143,6 +143,27 @@ const InterviewSession = () => {
     }
   };
 
+  // Capture an un-mirrored JPEG frame from the live webcam as a base64 data URL.
+  // Returns null if the camera isn't ready or capture fails. Used both for the
+  // proctor-termination snapshot and the interview-completion snapshot (admin review).
+  const captureSnapshot = () => {
+    if (!videoRef.current) return null;
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = videoRef.current.videoWidth || 640;
+      canvas.height = videoRef.current.videoHeight || 480;
+      const ctx = canvas.getContext('2d');
+      // Un-mirror raw video frames
+      ctx.translate(canvas.width, 0);
+      ctx.scale(-1, 1);
+      ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+      return canvas.toDataURL('image/jpeg', 0.65);
+    } catch (err) {
+      console.warn('Snapshot capture failed:', err);
+      return null;
+    }
+  };
+
   // 3. Send Proctor Log payload to backend (hard violation — counts toward termination)
   const logProctorViolation = async (type, details) => {
     const now = Date.now();
@@ -157,23 +178,8 @@ const InterviewSession = () => {
     setViolationAlert(`PROCTOR WARNING: ${details}`);
     setTimeout(() => setViolationAlert(''), 4000);
 
-    let snapshot = null;
     // Capture snapshot if this is the terminating violation
-    if (violationsCountRef.current >= 2 && videoRef.current) {
-      try {
-        const canvas = document.createElement('canvas');
-        canvas.width = videoRef.current.videoWidth || 640;
-        canvas.height = videoRef.current.videoHeight || 480;
-        const ctx = canvas.getContext('2d');
-        // Un-mirror raw video frames
-        ctx.translate(canvas.width, 0);
-        ctx.scale(-1, 1);
-        ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
-        snapshot = canvas.toDataURL('image/jpeg', 0.65);
-      } catch (err) {
-        console.warn('Snapshot capture failed:', err);
-      }
-    }
+    const snapshot = violationsCountRef.current >= 2 ? captureSnapshot() : null;
 
     try {
       const res = await api.post(`/interviews/${id}/proctor-log`, {
@@ -772,6 +778,13 @@ const InterviewSession = () => {
     const formData = new FormData();
     formData.append('question_id', question.id);
     formData.append('timed_out', timedOut ? 'true' : 'false');
+
+    // On the final question, attach a webcam snapshot so completed interviews carry a
+    // completion photo for admin review (parallel to the auto-terminate snapshot).
+    if (currentIdx + 1 >= questions.length) {
+      const finalSnapshot = captureSnapshot();
+      if (finalSnapshot) formData.append('snapshot_image', finalSnapshot);
+    }
 
     if (inputMode === 'voice') {
       if (audioBlob && audioBlob.size > 0) {
