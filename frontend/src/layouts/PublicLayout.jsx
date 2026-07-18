@@ -8,6 +8,7 @@ export const PUBLIC_NAV_LINKS = [
   { to: '/features', label: 'Program Features' },
   { to: '/demo', label: 'Evaluation Demo' },
   { to: '/technology', label: 'Technology Stack' },
+  { to: '/about', label: 'About' },
   { to: '/pricing', label: 'Student Pricing' },
   { to: '/contact', label: 'Contact Helpdesk' },
 ];

@@ -12,6 +12,7 @@ import TechnologyPage from './pages/public/TechnologyPage';
 import PricingPage from './pages/public/PricingPage';
 import ContactPage from './pages/public/ContactPage';
 import DemoPage from './pages/public/DemoPage';
+import AboutPage from './pages/public/AboutPage';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import ForgotPasswordPage from './pages/ForgotPasswordPage';
@@ -144,6 +145,7 @@ function App() {
             <Route path="/" element={<LandingPage />} />
             <Route path="/features" element={<FeaturesPage />} />
             <Route path="/technology" element={<TechnologyPage />} />
+            <Route path="/about" element={<AboutPage />} />
             <Route path="/pricing" element={<PricingPage />} />
             <Route path="/contact" element={<ContactPage />} />
             <Route path="/demo" element={<DemoPage />} />
