@@ -100,18 +100,23 @@ const LoginPage = () => {
           {error && <Alert variant="error">{error}</Alert>}
 
           <form onSubmit={handleSubmit} className="space-y-5">
-            <Input
-              id="email"
-              type="text"
-              label="Email Address or CNIC Number"
-              value={email}
-              onChange={handleIdentifierChange}
-              icon={Mail}
-              placeholder="email@example.com or 42101-1234567-1"
-              maxLength={254}
-              required
-            />
-            
+            <div className="space-y-1">
+              <Input
+                id="email"
+                type="text"
+                label="Email Address or CNIC Number"
+                value={email}
+                onChange={handleIdentifierChange}
+                icon={Mail}
+                placeholder="email@example.com or 42101-1234567-1"
+                maxLength={254}
+                required
+              />
+              <p className="text-[11px] text-slate-400 dark:text-slate-500 leading-snug px-1">
+                Log in with the email or CNIC you enrolled with. Only invited @gmail.com accounts have access.
+              </p>
+            </div>
+
             <div className="space-y-1">
               <Input
                 id="password"

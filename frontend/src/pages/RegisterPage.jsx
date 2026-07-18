@@ -64,6 +64,11 @@ const RegisterPage = () => {
     setValidationError('');
     clearError();
 
+    // Only Gmail addresses are accepted for enrollment — other providers
+    // (Outlook, Yahoo, etc.) are rejected before the request is sent.
+    if (!/^[^\s@]+@gmail\.com$/i.test(formData.email.trim())) {
+      return setValidationError('Please enter a valid @gmail.com email address. Other providers (e.g. Outlook) are not accepted.');
+    }
     if (!CNIC_REGEX.test(formData.cnic.trim())) {
       return setValidationError('Please enter a valid CNIC number (13 digits, e.g. 42101-1234567-1)');
     }
@@ -204,8 +209,20 @@ const RegisterPage = () => {
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <Input id="name" type="text" label="Full Name" value={formData.name} onChange={handleChange} icon={User} placeholder="John Doe" required />
-            <Input id="email" type="email" label="Email Address" value={formData.email} onChange={handleChange} icon={Mail} placeholder="john@example.com" required />
-            <Input id="cnic" type="text" inputMode="numeric" maxLength={15} label="CNIC Number" value={formData.cnic} onChange={handleCnicChange} icon={CreditCard} placeholder="42101-1234567-1" required />
+
+            <div className="space-y-1">
+              <Input id="email" type="email" label="Email Address" value={formData.email} onChange={handleChange} icon={Mail} placeholder="john@example.com" required />
+              <p className="text-[11px] text-slate-400 dark:text-slate-500 leading-snug px-1">
+                Only invited @gmail.com accounts have access. Other providers (e.g. Outlook) are not accepted.
+              </p>
+            </div>
+
+            <div className="space-y-1">
+              <Input id="cnic" type="text" inputMode="numeric" maxLength={15} label="CNIC Number" value={formData.cnic} onChange={handleCnicChange} icon={CreditCard} placeholder="42101-1234567-1" required />
+              <p className="text-[11px] text-slate-400 dark:text-slate-500 leading-snug px-1">
+                You'll use this CNIC to log in.
+              </p>
+            </div>
 
             <div className="space-y-1.5">
               <label htmlFor="course_category" className="text-xs font-semibold text-slate-700 dark:text-slate-300">Category</label>
