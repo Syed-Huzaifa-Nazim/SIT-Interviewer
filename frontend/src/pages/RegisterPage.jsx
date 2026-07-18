@@ -40,12 +40,16 @@ const RegisterPage = () => {
   const navigate = useNavigate();
 
   useEffect(() => {
+    // Clear any auth error left over from another page (e.g. a failed login) so a
+    // warning only ever shows on the page where it actually happened.
+    clearError();
     api.get('/auth/signup-options')
       .then((res) => {
         if (Array.isArray(res.data.categories)) setCategories(res.data.categories);
         setOngoingEnabled(!!res.data.ongoing_enabled);
       })
       .catch(() => { /* keep sensible defaults (Ongoing disabled) if the call fails */ });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const isInstructor = isInstructorCategory(formData.course_category);
