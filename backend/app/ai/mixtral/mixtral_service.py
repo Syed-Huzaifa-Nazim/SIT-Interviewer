@@ -4,8 +4,18 @@ import time
 import requests
 import random
 from app.config.config import Config
+from app.utils.candidate import (
+    CODING_SCENARIO, CODING_LOGIC, CODING_CONCEPT, CODING_DEBUG,
+    CODING_FORMATS, CODING_FORMATS_WITH_SNIPPET,
+)
 
 class MixtralService:
+    # Every question_type the generator may emit. 'coding' is the legacy catch-all kept for
+    # backwards compatibility with questions created before the four coding formats existed.
+    ALLOWED_QUESTION_TYPES = {
+        'conceptual', 'scenario', 'coding', 'behavioral', 'hr', *CODING_FORMATS
+    }
+
     @staticmethod
     def is_configured():
         """True when a real LLM API is wired up and enabled."""
@@ -201,6 +211,48 @@ class MixtralService:
         ("What is your approach to mentoring students beyond the syllabus — career guidance, portfolios, and industry readiness?", "behavioral"),
     ]
 
+    # Domain-specific coding questions covering all four formats (Coding Formats §2.2),
+    # used as the offline/mock fallback. Entries are (question_text, question_type,
+    # code_snippet). Keyed by the same role buckets as the main mock library so the
+    # domain-relevance rule (§2.3) still holds when the LLM is unavailable.
+    CODING_FORMAT_BANK = {
+        "react": [
+            ("A dashboard re-renders every list row whenever any single row changes. Walk me through how you would find the cause and restructure it.", CODING_SCENARIO, None),
+            ("You need to sync a search input to the URL without spamming history entries. Explain your approach and why you'd choose it.", CODING_LOGIC, None),
+            ("What is the difference between useMemo and useCallback, and when does memoising actually hurt performance?", CODING_CONCEPT, None),
+            ("This effect causes an infinite render loop. What's wrong and how would you fix it?", CODING_DEBUG,
+             "function Profile({ userId }) {\n  const [user, setUser] = useState(null);\n  useEffect(() => {\n    fetchUser(userId).then(setUser);\n  });\n  return <div>{user?.name}</div>;\n}"),
+        ],
+        "python": [
+            ("You must process a 10GB CSV and aggregate a column, but the machine has 2GB of RAM. Describe how you'd build this.", CODING_SCENARIO, None),
+            ("Given a list of records, explain your approach to deduplicating them by a composite key while preserving the first occurrence order.", CODING_LOGIC, None),
+            ("What is the time complexity of a binary search, and why is it O(log n)?", CODING_CONCEPT, None),
+            ("This function is meant to append to a fresh list on every call, but it doesn't. What's the bug and how do you fix it?", CODING_DEBUG,
+             "def add_item(item, bucket=[]):\n    bucket.append(item)\n    return bucket\n\nprint(add_item(1))\nprint(add_item(2))"),
+        ],
+        "node": [
+            ("An Express endpoint becomes unresponsive under load because of a CPU-heavy transform. Talk me through how you'd redesign it.", CODING_SCENARIO, None),
+            ("Explain your approach to retrying a flaky downstream API call without overwhelming it.", CODING_LOGIC, None),
+            ("Explain the difference between synchronous and asynchronous code execution in Node, and why blocking the event loop matters.", CODING_CONCEPT, None),
+            ("This route always responds before the database call finishes. What's wrong and how would you fix it?", CODING_DEBUG,
+             "app.get('/users', (req, res) => {\n  let users;\n  db.query('SELECT * FROM users', (err, rows) => {\n    users = rows;\n  });\n  res.json(users);\n});"),
+        ],
+        "database": [
+            ("A report query on a 5-million-row table takes 10 seconds. Walk me through how you'd diagnose and fix it.", CODING_SCENARIO, None),
+            ("Explain your approach to safely adding a NOT NULL column to a large live table with zero downtime.", CODING_LOGIC, None),
+            ("What is a database index, and what is the trade-off it introduces on writes?", CODING_CONCEPT, None),
+            ("This query is meant to return customers with no orders, but it returns nothing. What's the bug?", CODING_DEBUG,
+             "SELECT c.name\nFROM customers c\nLEFT JOIN orders o ON o.customer_id = c.id\nWHERE o.status != 'cancelled'\n  AND o.id IS NULL;"),
+        ],
+        "ai_ml": [
+            ("Your deployed model's accuracy degrades over three months in production. Describe how you'd detect and address this.", CODING_SCENARIO, None),
+            ("Explain your approach to splitting a time-series dataset for training and validation, and why the usual random split fails.", CODING_LOGIC, None),
+            ("What is the difference between overfitting and underfitting, and how would you recognise each from training curves?", CODING_CONCEPT, None),
+            ("This evaluation reports suspiciously high accuracy. What's the bug and why does it inflate the score?", CODING_DEBUG,
+             "X_scaled = scaler.fit_transform(X)\nX_train, X_test, y_train, y_test = train_test_split(X_scaled, y)\nmodel.fit(X_train, y_train)\nprint(model.score(X_test, y_test))"),
+        ],
+    }
+
     @classmethod
     def generate_questions(cls, interview_type, job_role, experience_level, difficulty, num_questions, custom_jd=None, custom_skills=None):
         import uuid
@@ -229,36 +281,48 @@ class MixtralService:
             api_result = cls._call_llm(instructor_system, instructor_user, temperature=0.6)
             if api_result and isinstance(api_result.get('questions'), list) and api_result['questions']:
                 cleaned = []
-                allowed_types = {'conceptual', 'scenario', 'coding', 'behavioral', 'hr'}
                 for q in api_result['questions'][:num_questions]:
                     text = (q.get('question_text') or '').strip() if isinstance(q, dict) else ''
                     if not text:
                         continue
                     q_type = q.get('question_type', 'conceptual') if isinstance(q, dict) else 'conceptual'
-                    if q_type not in allowed_types:
+                    if q_type not in cls.ALLOWED_QUESTION_TYPES:
                         q_type = 'conceptual'
-                    cleaned.append({'question_text': text, 'question_type': q_type, 'order_num': len(cleaned) + 1})
+                    cleaned.append({
+                        'question_text': text, 'question_type': q_type,
+                        'code_snippet': None, 'order_num': len(cleaned) + 1
+                    })
                 if cleaned:
                     return cleaned
             # Offline / fallback: deterministic instructor competency set.
             picks = cls.INSTRUCTOR_QUESTIONS[:num_questions]
             return [
-                {'question_text': t, 'question_type': qt, 'order_num': i + 1}
+                {'question_text': t, 'question_type': qt, 'code_snippet': None, 'order_num': i + 1}
                 for i, (t, qt) in enumerate(picks)
             ]
 
         system_prompt = (
             "You are an expert interviewer building a real, credible interview. "
             "Return ONLY a JSON object of the form "
-            '{"questions": [{"question_text": string, "question_type": string}]} '
+            '{"questions": [{"question_text": string, "question_type": string, "code_snippet": string}]} '
             f"containing EXACTLY {num_questions} questions. "
-            "'question_type' must be one of: 'conceptual', 'scenario', 'behavioral', 'hr'. "
+            "'question_type' must be one of: 'conceptual', 'scenario', 'behavioral', 'hr', "
+            "'coding_scenario', 'coding_logic', 'coding_concept', 'coding_debug'. "
             "STRICT DOMAIN LOCK: every question MUST be directly relevant to the specified role/domain; "
             "never include questions from an unrelated domain (e.g. no React questions in a Data Science "
             "interview). Favour specific technical depth — syntax, architecture, performance, trade-offs, "
             "and realistic scenarios — over generic filler. "
             "Answers are spoken aloud, so ask the candidate to explain and reason; do not require them to "
-            "type out full code."
+            "type out full code. "
+            "CODING QUESTION FORMATS — include a VARIED MIX, never the same coding format twice in a row: "
+            "'coding_scenario' = a realistic problem where they talk through the solution they would build; "
+            "'coding_logic' = give a problem and ask them to explain their approach/algorithm and why; "
+            "'coding_concept' = a direct conceptual question (e.g. complexity, sync vs async, data structures); "
+            "'coding_debug' = show a SHORT buggy snippet and ask them to identify the bug and explain the fix. "
+            "For 'coding_debug' ONLY, put the buggy code in the separate 'code_snippet' field (plain code, no "
+            "markdown fences) and keep 'question_text' as the spoken prompt with NO code in it, because "
+            "question_text is read aloud to the candidate. Leave 'code_snippet' as an empty string for every "
+            "other question type."
         )
 
         if jd_mode:
@@ -292,17 +356,29 @@ class MixtralService:
         api_result = cls._call_llm(system_prompt, user_prompt, temperature=0.5)
         if api_result and isinstance(api_result.get('questions'), list) and api_result['questions']:
             cleaned = []
-            allowed_types = {'conceptual', 'scenario', 'coding', 'behavioral', 'hr'}
             for idx, q in enumerate(api_result['questions'][:num_questions]):
                 text = (q.get('question_text') or '').strip() if isinstance(q, dict) else ''
                 if not text:
                     continue
                 q_type = q.get('question_type', 'conceptual') if isinstance(q, dict) else 'conceptual'
-                if q_type not in allowed_types:
+                if q_type not in cls.ALLOWED_QUESTION_TYPES:
                     q_type = 'conceptual'
+                snippet = (q.get('code_snippet') or '').strip() if isinstance(q, dict) else ''
+                # Only debugging questions carry a snippet; strip stray markdown fences and
+                # drop snippets attached to non-debug types so nothing odd renders.
+                if snippet:
+                    snippet = re.sub(r'^```[a-zA-Z]*\n?', '', snippet)
+                    snippet = re.sub(r'\n?```$', '', snippet).strip()
+                if q_type not in CODING_FORMATS_WITH_SNIPPET:
+                    snippet = ''
+                # A debugging question with no snippet is unusable as a "find the bug"
+                # prompt — demote it to a plain conceptual coding question instead.
+                if q_type == CODING_DEBUG and not snippet:
+                    q_type = CODING_CONCEPT
                 cleaned.append({
                     'question_text': text,
                     'question_type': q_type,
+                    'code_snippet': snippet or None,
                     'order_num': len(cleaned) + 1
                 })
             if cleaned:
@@ -359,8 +435,36 @@ class MixtralService:
             'needs_manual_review': True
         }
 
+    # What the evaluator should focus on for each coding format (§2.4). All four are
+    # scored through this verbal transcript -> LLM pipeline; only the rubric differs.
+    CODING_FORMAT_RUBRICS = {
+        CODING_SCENARIO: (
+            "This is a SCENARIO-BASED coding question answered verbally. Judge the solution design: "
+            "whether their approach actually solves the stated problem, the data structures and "
+            "trade-offs they choose, and how they handle scale and edge cases. Do NOT penalise them "
+            "for not dictating literal syntax."
+        ),
+        CODING_LOGIC: (
+            "This is a LOGIC/APPROACH question. Score their problem-solving reasoning and algorithm "
+            "choice — correctness of the approach, complexity awareness, and edge-case handling. "
+            "Writing no code is EXPECTED here; never penalise the absence of code."
+        ),
+        CODING_CONCEPT: (
+            "This is a DIRECT CONCEPTUAL question. Score factual correctness and the clarity of the "
+            "explanation, including the 'why' behind it. A correct, well-explained short answer "
+            "deserves a high score — do not require extra length."
+        ),
+        CODING_DEBUG: (
+            "This is a DEBUGGING question: the candidate was shown a buggy code snippet. Score "
+            "primarily on whether they correctly IDENTIFIED the actual bug, and secondarily on "
+            "whether their proposed fix is correct and they can explain why the bug occurs. If they "
+            "identify the wrong cause, score low even if the answer sounds confident."
+        ),
+    }
+
     @classmethod
-    def evaluate_response(cls, question_text, response_text, job_role=None, difficulty=None, question_type=None):
+    def evaluate_response(cls, question_text, response_text, job_role=None, difficulty=None,
+                          question_type=None, code_snippet=None):
         answer = (response_text or '').strip()
 
         # A genuinely empty answer scores 0 without any model call (length-based, not
@@ -393,14 +497,17 @@ class MixtralService:
             "words, and phonetic errors, and do not penalise those. "
             "If the answer is a refusal ('I don't know'), gibberish, or unrelated to the question, "
             "score it 0 and say why. Do not award points for mere effort or politeness. "
+            + (cls.CODING_FORMAT_RUBRICS.get(question_type, '') and
+               " " + cls.CODING_FORMAT_RUBRICS[question_type] + " ") +
             "Return ONLY a JSON object with keys: 'score' (0-100 overall), 'technical_score' (0-100), "
             "'communication_score' (0-100), 'confidence_score' (0-100 = how confident YOU are in this "
             "evaluation), 'feedback' (2-4 sentence rationale citing what was correct or missing versus "
             "the ideal answer), 'strengths' (list of short strings), 'weaknesses' (list of short strings)."
         )
+        snippet_block = f"\n\nCode snippet shown to the candidate:\n{code_snippet}\n" if code_snippet else ""
         user_prompt = (
             f"Context: {context}\n\n"
-            f"Question: {question_text}\n\n"
+            f"Question: {question_text}{snippet_block}\n\n"
             f"Candidate's transcribed answer: {answer}\n\n"
             "Evaluate it now."
         )
@@ -600,7 +707,11 @@ class MixtralService:
         source_pool = []
 
         if interview_type == 'technical':
-            source_pool = mock_library['technical'].get(role_key, mock_library['technical']['react'])
+            # Blend the standard domain pool with the four coding formats for that same
+            # domain, so a mock interview presents a varied mix (§2.3) that is still
+            # strictly domain-relevant (§3).
+            source_pool = list(mock_library['technical'].get(role_key, mock_library['technical']['react']))
+            source_pool += cls.CODING_FORMAT_BANK.get(role_key, cls.CODING_FORMAT_BANK['python'])
         elif interview_type == 'hr':
             source_pool = mock_library['hr']
         elif interview_type == 'behavioral':
@@ -622,15 +733,33 @@ class MixtralService:
             else:
                 source_pool = mock_library['technical']['react'] + mock_library['hr']
 
-        # Shuffle source pool
-        shuffled = list(source_pool)
+        # Normalize to (text, type, snippet) — older pools are 2-tuples.
+        def _as_triple(entry):
+            if len(entry) == 3:
+                return entry
+            text, q_type = entry
+            return (text, q_type, None)
+
+        shuffled = [_as_triple(e) for e in source_pool]
         random.shuffle(shuffled)
-        
-        for i in range(min(num_questions, len(shuffled))):
-            q_text, q_type = shuffled[i]
+
+        # Pick with format variety (§2.3): never take the same question_type twice in a row
+        # while a different type is still available, so a session can't end up as four
+        # identical-format questions.
+        picked = []
+        remaining = list(shuffled)
+        last_type = None
+        while remaining and len(picked) < num_questions:
+            idx = next((i for i, e in enumerate(remaining) if e[1] != last_type), 0)
+            entry = remaining.pop(idx)
+            picked.append(entry)
+            last_type = entry[1]
+
+        for i, (q_text, q_type, snippet) in enumerate(picked):
             questions.append({
                 "question_text": q_text,
                 "question_type": q_type,
+                "code_snippet": snippet,
                 "order_num": i + 1
             })
 
@@ -639,6 +768,7 @@ class MixtralService:
             questions.append({
                 "question_text": f"Can you detail your experience in working with modern software development methodologies and how you ensure code quality for {job_role} projects?",
                 "question_type": "conceptual",
+                "code_snippet": None,
                 "order_num": len(questions) + 1
             })
 

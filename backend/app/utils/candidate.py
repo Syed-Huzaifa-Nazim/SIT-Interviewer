@@ -37,14 +37,40 @@ def is_instructor_category(category):
     return (category or '').strip().lower() == INSTRUCTOR_CATEGORY.lower()
 
 
+# The four coding question FORMATS presented in a live interview (Coding Formats §2.2).
+# All four are currently answered verbally and scored by the standard transcript -> LLM
+# pipeline; 'coding_scenario' is the format that will later hand off to the Coding Sandbox
+# for test-case execution once that integration is built.
+CODING_SCENARIO = 'coding_scenario'   # Format 1: real-world problem, describe the solution
+CODING_LOGIC = 'coding_logic'         # Format 2: explain the logic/approach, no code
+CODING_CONCEPT = 'coding_concept'     # Format 3: direct conceptual coding question
+CODING_DEBUG = 'coding_debug'         # Format 4: find the bug in a snippet + explain the fix
+
+CODING_FORMATS = [CODING_SCENARIO, CODING_LOGIC, CODING_CONCEPT, CODING_DEBUG]
+
+# Only this format carries a code snippet to display alongside the question.
+CODING_FORMATS_WITH_SNIPPET = {CODING_DEBUG}
+
+
+def is_coding_format(question_type):
+    return (question_type or '').strip().lower() in CODING_FORMATS
+
+
 # Per-question answer time budget in seconds, keyed by question type (Timer feature §2).
 # Confirmed defaults: conceptual / HR / behavioral 120s, scenario 180s, coding 300s.
+# The coding formats are verbal, so they get talk-time budgets rather than the 300s
+# write-code budget: concept is a quick recall answer, logic/debug need reasoning aloud,
+# and a full scenario walkthrough gets the most room.
 QUESTION_TIME_LIMITS = {
     'conceptual': 120,
     'hr': 120,
     'behavioral': 120,
     'scenario': 180,
-    'coding': 300,
+    'coding': 300,  # legacy type, kept so pre-existing questions keep their budget
+    CODING_CONCEPT: 120,
+    CODING_LOGIC: 180,
+    CODING_DEBUG: 180,
+    CODING_SCENARIO: 240,
 }
 DEFAULT_QUESTION_TIME_LIMIT = 120
 
