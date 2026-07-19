@@ -37,23 +37,22 @@ const LandingPage = () => (
     {/* Hero */}
     <header className="relative pt-16 pb-24 md:pb-32 overflow-hidden">
       <div className="absolute inset-0 bg-slate-50 dark:bg-slate-900/50 -z-10" />
-      <div className="max-w-7xl mx-auto px-6 grid grid-cols-1 lg:grid-cols-2 gap-16 items-center">
-        <div className="text-left space-y-8">
+      <div className="max-w-7xl mx-auto px-6 grid grid-cols-1 lg:grid-cols-5 gap-16 items-center">
+        <div className="text-left space-y-6 lg:col-span-3">
           <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-accent-100 text-accent-800 dark:bg-accent-900/30 dark:text-accent-400 text-xs font-bold uppercase tracking-wide">
             <Award size={14} /> Built by Saylani for Real Readiness
           </div>
-          <h1 className="text-4xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight leading-tight text-slate-900 dark:text-white">
-            Interviewing, <span className="text-primary-600 dark:text-primary-400">rebuilt</span> on genuine understanding.
+          <h1 className="text-4xl sm:text-5xl xl:text-6xl font-extrabold tracking-tight leading-tight text-balance text-slate-900 dark:text-white">
+            Interviews that <span className="text-primary-600 dark:text-primary-400">actually understand</span> you.
           </h1>
           <p className="text-base sm:text-lg text-slate-600 dark:text-slate-400 leading-relaxed max-w-lg">
             Most practice tools check for keywords. This one actually understands your answer —
             spoken or coded — the same way a real technical panel would, with live proctoring
             that makes the result something you can trust.
           </p>
-          <div className="flex flex-col sm:flex-row items-center gap-4 pt-2">
-            <Link to="/register" className="w-full sm:w-auto bg-primary-600 hover:bg-primary-700 text-white px-8 py-3.5 rounded-lg text-sm font-semibold shadow-corporate flex items-center justify-center gap-2 group transition-all">
-              <span>Access Student Portal</span>
-              <ArrowRight size={16} className="group-hover:translate-x-1 transition-transform" />
+          <div className="flex flex-col sm:flex-row items-center gap-3 sm:gap-4 pt-2">
+            <Link to="/register" className="w-full sm:w-auto">
+              <Button size="lg" icon={ArrowRight} iconPosition="right" className="w-full">Access Student Portal</Button>
             </Link>
             <Link to="/demo" className="w-full sm:w-auto">
               <Button variant="secondary" size="lg" icon={Play} className="w-full">Interactive Demo</Button>
@@ -62,7 +61,7 @@ const LandingPage = () => (
         </div>
 
         {/* Hero visual: Three.js neural-network scene, with a glass card floating on top */}
-        <div className="relative w-full aspect-square max-w-md mx-auto lg:max-w-none lg:ml-auto lg:aspect-[4/3]">
+        <div className="relative w-full aspect-square max-w-md mx-auto lg:col-span-2 lg:max-w-none lg:ml-auto lg:aspect-[4/3]">
           <div className="absolute inset-0 rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-white/40 dark:bg-slate-900/40">
             <NeuralHero />
           </div>
