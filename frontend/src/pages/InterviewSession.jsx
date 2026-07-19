@@ -80,6 +80,16 @@ const InterviewSession = () => {
   const micActiveRef = useRef(false);
   const submittingRef = useRef(false);
 
+  // Full-session video recording (DB Integration §2): records the SAME 640×480 proctoring
+  // camera stream (no second camera request), video-only WebM at a modest bitrate. One
+  // contiguous recording per session — if the candidate turns the camera off the recorder
+  // ends with it, and we upload whatever was captured up to that point rather than
+  // stitching invalid multi-segment WebM files together.
+  const sessionRecorderRef = useRef(null);
+  const sessionChunksRef = useRef([]);
+  const videoUploadedRef = useRef(false);
+  const [savingVideo, setSavingVideo] = useState(false);
+
   // Per-question timer (§2)
   const [remaining, setRemaining] = useState(null);
   const [timeLimit, setTimeLimit] = useState(null);
@@ -199,6 +209,9 @@ const InterviewSession = () => {
       }
 
       if (res.data.auto_terminate) {
+        // A terminated session's recording matters MOST for admin review — store it
+        // before leaving (§2.2 covers auto-termination scenarios explicitly).
+        await uploadSessionVideo();
         stopCamera();
         // Redirect directly with proctor violation flags
         navigate(`/interview/report/${id}`, { state: { proctorFailed: true }, replace: true });
@@ -317,6 +330,33 @@ const InterviewSession = () => {
             await videoRef.current.play();
           } catch (e) {
             console.log("Video playback started:", e);
+          }
+        }
+
+        // Start the session recording on the first camera stream only (§2) — a camera
+        // re-toggle would otherwise produce a second WebM segment that can't be joined.
+        // Exception: if a previous recorder died having captured only a ~stub (StrictMode's
+        // dev double-mount, or an instant camera flick), discard the stub and start fresh.
+        const prev = sessionRecorderRef.current;
+        const isDeadStub = prev && prev.state === 'inactive'
+          && sessionChunksRef.current.length < 3 && !videoUploadedRef.current;
+        if (isDeadStub) {
+          sessionRecorderRef.current = null;
+          sessionChunksRef.current = [];
+        }
+        if (!sessionRecorderRef.current) {
+          try {
+            const rec = new MediaRecorder(stream, {
+              mimeType: 'video/webm',
+              videoBitsPerSecond: 600_000, // 480p decorative-review quality, ~4.5MB/min
+            });
+            rec.ondataavailable = (e) => {
+              if (e.data && e.data.size > 0) sessionChunksRef.current.push(e.data);
+            };
+            rec.start(1000);
+            sessionRecorderRef.current = rec;
+          } catch (e) {
+            console.warn('Session video recording unavailable:', e);
           }
         }
 
@@ -862,6 +902,55 @@ const InterviewSession = () => {
     });
   };
 
+  // ---------------------------------------------------- Session video (DB Integration §2)
+  // Stop the session recorder and assemble everything captured into one WebM blob.
+  const finalizeSessionVideo = () => {
+    return new Promise((resolve) => {
+      const rec = sessionRecorderRef.current;
+      const assemble = () =>
+        resolve(sessionChunksRef.current.length
+          ? new Blob(sessionChunksRef.current, { type: 'video/webm' })
+          : null);
+      if (!rec || rec.state === 'inactive') {
+        assemble();
+        return;
+      }
+      rec.onstop = assemble;
+      try { rec.stop(); } catch (e) { assemble(); }
+    });
+  };
+
+  // Upload the finished session recording with retries (§2.2 reliability). Failures are
+  // logged and swallowed — the candidate's flow is never blocked by a lost recording,
+  // and the backend leaves video_path NULL so the admin sees the truth.
+  const uploadSessionVideo = async () => {
+    if (videoUploadedRef.current) return;
+    const blob = await finalizeSessionVideo();
+    if (!blob || blob.size < 1024) return;
+    videoUploadedRef.current = true; // one attempt cycle per session
+
+    setSavingVideo(true);
+    try {
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const fd = new FormData();
+          fd.append('video', blob, 'session.webm');
+          await api.post(`/interviews/${id}/upload-video`, fd, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+            timeout: 180000,
+          });
+          return;
+        } catch (err) {
+          console.warn(`Session video upload attempt ${attempt} failed:`, err?.response?.status || err.message);
+          if (attempt < 3) await new Promise((r) => setTimeout(r, 1500 * attempt));
+        }
+      }
+      console.error('Session video upload failed after retries — recording not stored.');
+    } finally {
+      setSavingVideo(false);
+    }
+  };
+
   // ------------------------------------------------------------------ Submit (§2/§3)
   const submitAnswer = async ({ timedOut = false } = {}) => {
     if (submittingRef.current) return;
@@ -911,6 +1000,9 @@ const InterviewSession = () => {
       });
 
       if (res.data.is_completed) {
+        // Store the session recording BEFORE tearing down the camera and leaving —
+        // navigating first would unmount the component and abort the upload (§2.2).
+        await uploadSessionVideo();
         stopCamera();
         navigate(`/interview/report/${id}`, { replace: true });
       } else {
@@ -1177,14 +1269,20 @@ const InterviewSession = () => {
         {/* Right Column */}
         <div className="lg:col-span-8">
           <Card className="min-h-[400px] flex flex-col justify-between relative overflow-hidden md:p-8">
-            {loading && (
+            {(loading || savingVideo) && (
               <div className="absolute inset-0 bg-white/90 dark:bg-slate-950/85 backdrop-blur-sm z-30 rounded-2xl flex flex-col items-center justify-center gap-4">
                 <div className="p-4 bg-gradient-to-tr from-primary-500 to-indigo-500 rounded-2xl animate-bounce shadow-xl">
                   <Sparkles className="text-white animate-pulse" size={32} />
                 </div>
                 <div className="text-center space-y-1">
-                  <h3 className="font-bold text-slate-900 dark:text-white text-base">Saving your answer...</h3>
-                  <p className="text-xs text-slate-500">Moving you to the next question — grading happens in the background.</p>
+                  <h3 className="font-bold text-slate-900 dark:text-white text-base">
+                    {savingVideo ? 'Finalizing your session...' : 'Saving your answer...'}
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    {savingVideo
+                      ? 'Securely storing the session recording — just a moment.'
+                      : 'Moving you to the next question — grading happens in the background.'}
+                  </p>
                 </div>
               </div>
             )}

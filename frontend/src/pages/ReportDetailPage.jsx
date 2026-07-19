@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import api from '../services/api';
+import { useAuth } from '../context/AuthContext';
 import PageHeader from '../components/ui/PageHeader';
 import Card, { CardTitle } from '../components/ui/Card';
 import Alert from '../components/ui/Alert';
@@ -26,11 +27,31 @@ import {
 
 const ReportDetailPage = () => {
   const { id } = useParams();
+  const { user } = useAuth();
 
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [activeTab, setActiveTab] = useState('overview'); // overview, transcript, compliance, feedback
+
+  // Session recording playback (DB Integration §2.2) — admin only, via a short-lived
+  // signed URL into the private interview-recordings bucket.
+  const [videoUrl, setVideoUrl] = useState('');
+  const [videoLoading, setVideoLoading] = useState(false);
+  const [videoError, setVideoError] = useState('');
+
+  const loadSessionVideo = async () => {
+    setVideoLoading(true);
+    setVideoError('');
+    try {
+      const res = await api.get(`/admin/interviews/${id}/video-url`);
+      setVideoUrl(res.data.video_url);
+    } catch (err) {
+      setVideoError(err.response?.data?.detail || 'Could not load the session recording.');
+    } finally {
+      setVideoLoading(false);
+    }
+  };
 
   const [rating, setRating] = useState(5);
   const [feedbackText, setFeedbackText] = useState('');
@@ -554,6 +575,29 @@ const ReportDetailPage = () => {
 
       {/* TAB 3: COMPLIANCE & AUDIT */}
       <div className={`space-y-6 ${activeTab === 'compliance' ? 'block' : 'hidden print:block'}`}>
+        {/* Session recording playback — admin only (§2.2). Rendered above the snapshot
+            grid; the recording lives in a PRIVATE bucket and streams via a signed URL. */}
+        {user?.role === 'admin' && interview.has_video && (
+          <Card className="space-y-4 no-print">
+            <h3 className="font-bold text-sm text-slate-800 dark:text-slate-200 border-b border-slate-200 dark:border-slate-800/80 pb-3">
+              Session Recording
+            </h3>
+            {videoUrl ? (
+              <video controls src={videoUrl} className="w-full rounded-xl bg-black max-h-[420px]" />
+            ) : (
+              <div className="p-8 text-center border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-xl space-y-3">
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  A full-session camera recording is stored for this interview.
+                </p>
+                {videoError && <Alert variant="error" className="text-xs">{videoError}</Alert>}
+                <Button size="sm" loading={videoLoading} onClick={loadSessionVideo}>
+                  {videoLoading ? 'Preparing secure link...' : 'Load Session Recording'}
+                </Button>
+              </div>
+            )}
+          </Card>
+        )}
+
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-start">
           {/* Violation Snapshots */}
           <Card className="md:col-span-2 space-y-4 print:shadow-none print:border-slate-300">
