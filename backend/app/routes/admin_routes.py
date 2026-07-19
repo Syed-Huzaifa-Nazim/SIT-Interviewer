@@ -667,6 +667,23 @@ async def delete_reinterview_request(request_id: int, user: User = Depends(admin
     return _delete_record(SecondInterviewRequest, request_id, user, 'Second-interview request', 'DELETE_REINTERVIEW_REQUEST')
 
 
+@admin_bp.get('/interviews/{interview_id}/video-url')
+async def get_interview_video_url(interview_id: int, user: User = Depends(admin_required)):
+    """Admin-only playback of a session recording (DB Integration §2.2): returns a
+    short-lived signed URL into the PRIVATE interview-recordings bucket. Recordings are
+    never publicly reachable — this is the only way they're served."""
+    from app.utils.supabase_service import SupabaseService
+    interview = Interview.query.get(interview_id)
+    if not interview:
+        raise HTTPException(status_code=404, detail="Interview not found")
+    if not interview.video_path:
+        raise HTTPException(status_code=404, detail="No recording exists for this session")
+    signed = SupabaseService.get_signed_url(interview.video_path, expires_in=600)
+    if not signed:
+        raise HTTPException(status_code=503, detail="Could not generate a playback link right now")
+    return {'video_url': signed, 'expires_in': 600}
+
+
 @admin_bp.get('/interviews')
 async def list_interviews(user: User = Depends(admin_required)):
     interviews = Interview.query.order_by(Interview.created_at.desc()).all()

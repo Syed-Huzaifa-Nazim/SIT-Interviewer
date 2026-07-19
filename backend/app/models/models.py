@@ -180,6 +180,11 @@ class Interview(db.Model):
     # moves it onto InterviewReport.snapshot_image when it builds the report.
     completion_snapshot = db.Column(db.Text, nullable=True)
 
+    # Full-session video recording (DB Integration §2): supabase://bucket/path reference
+    # into the PRIVATE interview-recordings bucket. NULL = no recording exists (e.g. the
+    # upload failed after retries), so the admin UI never implies a recording it can't play.
+    video_path = db.Column(db.String(255), nullable=True)
+
     # Relationships
     questions = db.relationship('InterviewQuestion', backref='interview', lazy=True, cascade="all, delete-orphan")
     responses = db.relationship('InterviewResponse', backref='interview', lazy=True, cascade="all, delete-orphan")
@@ -202,6 +207,7 @@ class Interview(db.Model):
             'proctor_logs': self.proctor_logs,
             'terminated_reason': self.terminated_reason,
             'scoring_status': self.scoring_status,
+            'has_video': bool(self.video_path),
             'created_at': self.created_at.isoformat() if self.created_at else None
         }
 

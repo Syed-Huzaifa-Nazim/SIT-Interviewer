@@ -93,6 +93,9 @@ class Config:
     # Separate bucket for recorded interview answer audio (create this bucket in the
     # Supabase project — it can be private; the backend uses the service key to write).
     SUPABASE_AUDIO_BUCKET = os.environ.get('SUPABASE_AUDIO_BUCKET', 'interview-audio')
+    # Private bucket for full-session interview video recordings (§2.2). Never public —
+    # admin playback uses short-lived signed URLs only.
+    SUPABASE_VIDEO_BUCKET = os.environ.get('SUPABASE_VIDEO_BUCKET', 'interview-recordings')
 
     # Email service (Python smtplib — no third-party provider required).
     # 'smtp' sends real mail; 'console' prints the rendered email to the server log

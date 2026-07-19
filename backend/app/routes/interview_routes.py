@@ -253,6 +253,52 @@ async def get_timer(interview_id: int, question_id: int, user_id: int = Depends(
     }
 
 
+@interview_bp.post('/{interview_id}/upload-video')
+async def upload_session_video(
+    interview_id: int,
+    video: UploadFile = File(...),
+    user_id: int = Depends(get_current_user_id)
+):
+    """Receives the full-session recording captured client-side from the proctoring
+    camera stream (DB Integration §2) and stores it in the PRIVATE interview-recordings
+    bucket. Called once when the session ends (normal completion, timer expiry, or
+    proctor termination). If storage is unreachable after retries, video_path stays NULL
+    — the admin UI then truthfully shows no recording instead of a broken link."""
+    interview = Interview.query.filter_by(id=interview_id, user_id=user_id).first()
+    if not interview:
+        raise HTTPException(status_code=404, detail="Interview session not found")
+    if interview.video_path:
+        return {'message': 'Recording already stored for this session', 'stored': True}
+
+    contents = await video.read()
+    if not contents:
+        raise HTTPException(status_code=400, detail="Empty video payload")
+    # Sanity cap: a 480p video-only WebM at ~0.6 Mbps stays far below this even for a
+    # very long session; anything bigger indicates a client bug, not a real recording.
+    if len(contents) > 300 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Recording exceeds the maximum accepted size")
+
+    storage_ref = SupabaseService.upload_interview_video(
+        user_id, interview_id, contents, content_type=video.content_type or 'video/webm'
+    )
+    if not storage_ref:
+        print(f"[upload-video] FAILED to store session recording for interview {interview_id} "
+              f"(user {user_id}, {len(contents)} bytes) — video_path left NULL.")
+        raise HTTPException(status_code=503, detail="Could not store the recording right now")
+
+    try:
+        interview.video_path = storage_ref
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        # The object is in storage but unreferenced; log enough detail to reconcile.
+        print(f"[upload-video] Stored {storage_ref} but failed to save reference on "
+              f"interview {interview_id} — manual reconciliation needed.")
+        raise HTTPException(status_code=500, detail="Failed to link the recording")
+
+    return {'message': 'Session recording stored', 'stored': True}
+
+
 @interview_bp.post('/transcribe')
 async def transcribe_audio(audio: UploadFile = File(...), user_id: int = Depends(get_current_user_id)):
     """API endpoint to receive raw audio and return transcription quickly."""
@@ -322,6 +368,10 @@ def _run_answer_scoring(interview_id, question_id, response_id, user_id,
                 except TranscriptionError as te:
                     answer_text = fallback_text if (fallback_text and fallback_text.strip()) else ''
                     print(f"[scoring] Whisper failed for response {response_id} ({te}); used live-transcript fallback.")
+            # No local persistence (DB Integration §3): the recording either lands in
+            # Supabase Storage (with retries inside _upload_raw) or is dropped with a loud
+            # log — the temp file is ALWAYS deleted. The transcript itself is already safe
+            # in the DB, so a lost audio file never loses the candidate's answer.
             try:
                 with open(local_audio_path, 'rb') as f:
                     contents = f.read()
@@ -331,15 +381,19 @@ def _run_answer_scoring(interview_id, question_id, response_id, user_id,
                 )
                 if storage_ref:
                     audio_ref = storage_ref
-                    try:
-                        os.remove(local_audio_path)
-                    except OSError:
-                        pass
                 else:
-                    audio_ref = local_audio_path
-                    print(f"[scoring] Supabase upload unavailable; keeping local file {local_audio_path}.")
+                    audio_ref = None
+                    print(f"[scoring] AUDIO UPLOAD FAILED for response {response_id} "
+                          f"(interview {interview_id}) — recording discarded after retries; "
+                          f"transcript preserved.")
             except OSError as oe:
-                print(f"[scoring] Could not read local audio {local_audio_path}: {oe}")
+                audio_ref = None
+                print(f"[scoring] Could not read temp audio {local_audio_path}: {oe}")
+            finally:
+                try:
+                    os.remove(local_audio_path)
+                except OSError:
+                    pass
 
         is_empty = not answer_text or not answer_text.strip()
         display_text = answer_text if not is_empty else '[No answer recorded — time expired]'
@@ -571,20 +625,21 @@ async def submit_answer(
     try:
         display_now = initial_text or ('[No answer recorded — time expired]' if timed_out else '')
 
+        # audio_path is NEVER a local filesystem path (§3): it stays NULL until the
+        # background worker uploads the recording to Supabase and writes the
+        # supabase:// reference (or leaves it NULL if the upload fails after retries).
         existing_resp = InterviewResponse.query.filter_by(interview_id=interview_id, question_id=question_id).first()
         if existing_resp:
             existing_resp.response_text = display_now
             existing_resp.duration = duration or existing_resp.duration
             existing_resp.scoring_status = 'pending'
-            if local_audio_path:
-                existing_resp.audio_path = local_audio_path
             resp_record = existing_resp
         else:
             resp_record = InterviewResponse(
                 interview_id=interview_id,
                 question_id=question_id,
                 response_text=display_now,
-                audio_path=local_audio_path,
+                audio_path=None,
                 duration=duration,
                 scoring_status='pending'
             )
