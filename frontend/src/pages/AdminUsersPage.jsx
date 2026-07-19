@@ -687,8 +687,9 @@ const AdminUsersPage = () => {
             <div className="p-3.5 bg-red-500/5 border border-red-500/20 rounded-xl text-xs text-slate-600 dark:text-slate-300 leading-relaxed space-y-2">
               <p>
                 This permanently deletes <b className="text-slate-900 dark:text-white">{deleteUser.name}</b>{' '}
-                ({deleteUser.email}) and <b>all of their data</b> — interviews, reports, tokens,
-                transactions, feedback, and notifications. This cannot be undone.
+                ({deleteUser.email}) and <b>all of their data</b> — interview history, reports,
+                transcripts, session recordings and answer audio, tokens, transactions, feedback,
+                and notifications. This cannot be undone.
               </p>
               <p>
                 Type <b className="font-mono text-red-600 dark:text-red-400">{deleteMatch}</b> below to confirm.
