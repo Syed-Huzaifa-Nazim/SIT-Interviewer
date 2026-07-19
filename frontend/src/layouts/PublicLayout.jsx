@@ -5,12 +5,12 @@ import ThemeToggle from '../components/layout/ThemeToggle';
 import { Menu, X } from 'lucide-react';
 
 export const PUBLIC_NAV_LINKS = [
-  { to: '/features', label: 'Program Features' },
-  { to: '/demo', label: 'Evaluation Demo' },
-  { to: '/technology', label: 'Technology Stack' },
+  { to: '/features', label: 'Features' },
+  { to: '/demo', label: 'Demo' },
+  { to: '/technology', label: 'Technology' },
   { to: '/about', label: 'About' },
-  { to: '/pricing', label: 'Student Pricing' },
-  { to: '/contact', label: 'Contact Helpdesk' },
+  { to: '/pricing', label: 'Pricing' },
+  { to: '/contact', label: 'Contact' },
 ];
 
 /**
@@ -22,7 +22,7 @@ const PublicLayout = ({ children }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const linkClass = ({ isActive }) =>
-    `transition cursor-pointer ${
+    `whitespace-nowrap transition cursor-pointer ${
       isActive
         ? 'text-primary-600 dark:text-primary-400'
         : 'hover:text-primary-600 dark:hover:text-primary-400'
@@ -37,7 +37,7 @@ const PublicLayout = ({ children }) => {
             <BrandLogo />
           </Link>
 
-          <div className="hidden lg:flex items-center gap-8 text-sm font-semibold text-slate-600 dark:text-slate-300">
+          <div className="hidden xl:flex items-center gap-6 text-sm font-semibold text-slate-600 dark:text-slate-300">
             {PUBLIC_NAV_LINKS.map((link) => (
               <NavLink key={link.to} to={link.to} className={linkClass}>
                 {link.label}
@@ -47,13 +47,13 @@ const PublicLayout = ({ children }) => {
 
           <div className="flex items-center gap-3">
             <ThemeToggle />
-            <Link to="/login" className="hidden sm:inline-flex text-sm font-semibold text-primary-600 hover:text-primary-700 dark:text-primary-400 transition">
+            <Link to="/login" className="hidden sm:inline-flex whitespace-nowrap text-sm font-semibold text-primary-600 hover:text-primary-700 dark:text-primary-400 transition">
               Student Login
             </Link>
-            <Link to="/register" className="hidden sm:inline-flex bg-primary-600 hover:bg-primary-700 text-white px-5 py-2.5 rounded-lg text-sm font-semibold shadow-sm transition">
+            <Link to="/register" className="hidden sm:inline-flex whitespace-nowrap bg-primary-600 hover:bg-primary-700 text-white px-5 py-2.5 rounded-lg text-sm font-semibold shadow-sm transition">
               Enroll Now
             </Link>
-            <button onClick={() => setMobileMenuOpen(!mobileMenuOpen)} className="lg:hidden p-2 text-slate-600 dark:text-slate-300">
+            <button onClick={() => setMobileMenuOpen(!mobileMenuOpen)} className="xl:hidden p-2 text-slate-600 dark:text-slate-300">
               {mobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
             </button>
           </div>
@@ -61,7 +61,7 @@ const PublicLayout = ({ children }) => {
 
         {/* Mobile menu */}
         {mobileMenuOpen && (
-          <div className="lg:hidden border-t border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-950 px-6 py-4 space-y-3">
+          <div className="xl:hidden border-t border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-950 px-6 py-4 space-y-3">
             {PUBLIC_NAV_LINKS.map((link) => (
               <NavLink
                 key={link.to}
