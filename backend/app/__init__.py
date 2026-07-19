@@ -53,9 +53,10 @@ def create_app(config_class=Config):
     app.include_router(coding_bp, prefix="/api/coding", tags=["Coding Sandbox"])
     app.include_router(candidate_bp, prefix="/api/candidate", tags=["Candidate"])
 
-    # Create storage folders
+    # Scratch folder for transient processing only (Whisper temp audio, resume parsing).
+    # Nothing is PERSISTED locally (DB Integration §3) — every file written here is
+    # deleted after processing; durable media lives in Supabase Storage.
     os.makedirs(config_class.UPLOAD_FOLDER, exist_ok=True)
-    os.makedirs(config_class.REPORTS_FOLDER, exist_ok=True)
 
     # Initialize tables + apply lightweight column migrations for pre-existing DBs
     from app.database.migrate import ensure_schema
