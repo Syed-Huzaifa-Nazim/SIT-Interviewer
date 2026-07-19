@@ -142,6 +142,27 @@ follow-up.</p>
     return subject, _base('You are invited to the HR assessment stage', body)
 
 
+def proctoring_termination_notice(name):
+    """Admin-triggered notice to a candidate whose interview was terminated for a
+    proctoring violation, with their camera snapshot attached as evidence. Explains
+    the 30-day account block."""
+    subject = 'Interview Terminated — Proctoring Violation Notice'
+    body = f"""
+<p>Dear {name},</p>
+<p>Your recent SMIT interview was <b style="color:#dc2626;">terminated</b> because our
+automated proctoring system detected a violation of the interview integrity rules
+(for example, a mobile phone, another person, or leaving the camera view).</p>
+<div style="margin:16px 0;padding:12px 16px;background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;color:#991b1b;font-size:13px;">
+<b>Your account has been blocked for 30 days.</b> It will automatically reopen after the
+block period ends, after which you may be eligible to attempt the interview again.
+</div>
+<p>A snapshot captured by the proctoring system at the time of the violation is attached
+to this email for your reference.</p>
+<p style="color:#64748b;font-size:12px;">If you believe this was a mistake, please contact the SMIT administration office.</p>
+"""
+    return subject, _base('Your interview was terminated', body)
+
+
 def reinterview_approved(name, cnic, otp):
     """3. Second-interview approval email (fresh one-time password) — §3.4."""
     subject = 'Second Interview Approved — Your One-Time Login Credentials'

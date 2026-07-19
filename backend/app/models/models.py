@@ -45,6 +45,10 @@ class User(db.Model):
     clearance_email_sent_at = db.Column(db.DateTime, nullable=True)
     hr_invite_sent_at = db.Column(db.DateTime, nullable=True)
 
+    # Free-form notes an admin writes about a candidate (e.g. after reviewing their
+    # proctoring snapshot / interview). Admin-only; never exposed to the candidate.
+    admin_remarks = db.Column(db.Text, nullable=True)
+
     # Relationships
     tokens = db.relationship('Token', backref='user', uselist=False, cascade="all, delete-orphan")
     interviews = db.relationship('Interview', backref='user', lazy=True, cascade="all, delete-orphan")
@@ -91,6 +95,7 @@ class User(db.Model):
             'last_seen_at': self.last_seen_at.isoformat() if self.last_seen_at else None,
             'clearance_email_sent_at': self.clearance_email_sent_at.isoformat() if self.clearance_email_sent_at else None,
             'hr_invite_sent_at': self.hr_invite_sent_at.isoformat() if self.hr_invite_sent_at else None,
+            'admin_remarks': self.admin_remarks,
             'banned_until': self.banned_until.isoformat() if self.banned_until else None,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None
@@ -169,6 +174,11 @@ class Interview(db.Model):
     # one background thread generates the final report. NULL on legacy rows (treated as
     # already-complete for old finished interviews).
     scoring_status = db.Column(db.String(20), default='pending')
+
+    # Base64 webcam frame captured by the client on the final answer submission. Held here
+    # because the report is generated later on a background thread; _finalize_report_if_ready
+    # moves it onto InterviewReport.snapshot_image when it builds the report.
+    completion_snapshot = db.Column(db.Text, nullable=True)
 
     # Relationships
     questions = db.relationship('InterviewQuestion', backref='interview', lazy=True, cascade="all, delete-orphan")

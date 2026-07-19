@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import api from '../services/api';
 import PageHeader from '../components/ui/PageHeader';
 import Card from '../components/ui/Card';
@@ -21,7 +22,9 @@ import {
   Award,
   Briefcase,
   Trash2,
-  AlertTriangle
+  AlertTriangle,
+  ScanFace,
+  MessageSquare
 } from 'lucide-react';
 
 const INTERVIEW_STATUS_VARIANTS = {
@@ -47,6 +50,9 @@ const AdminUsersPage = () => {
   // Full-profile editor modal (§4.1)
   const [editUser, setEditUser] = useState(null);
   const [editForm, setEditForm] = useState({});
+  // Proctoring review (snapshot + summary) for the edited candidate's latest interview
+  const [proctoring, setProctoring] = useState(null);
+  const [proctoringLoading, setProctoringLoading] = useState(false);
 
   // Type-to-confirm user deletion modal (irreversible)
   const [deleteUser, setDeleteUser] = useState(null);
@@ -112,7 +118,15 @@ const AdminUsersPage = () => {
       course_status: u.course_status || '',
       experience_level: u.experience_level || '',
       job_role: u.job_role || '',
+      admin_remarks: u.admin_remarks || '',
     });
+    // Load the candidate's latest-interview proctoring snapshot for admin review.
+    setProctoring(null);
+    setProctoringLoading(true);
+    api.get(`/admin/users/${u.id}/proctoring`)
+      .then((res) => setProctoring(res.data))
+      .catch(() => setProctoring(null))
+      .finally(() => setProctoringLoading(false));
   };
 
   const handleEditChange = (e) => setEditForm({ ...editForm, [e.target.id]: e.target.value });
@@ -175,6 +189,24 @@ const AdminUsersPage = () => {
       fetchUsers(true);
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to send the email.');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  // Email the candidate their proctoring snapshot + termination/30-day-block notice.
+  const handleSendProctorSnapshot = async (u) => {
+    if (!window.confirm(
+      `Email the proctoring snapshot and termination notice to ${u.name} (${u.email})?`
+    )) return;
+    setActionLoading(true);
+    setError('');
+    setNotice('');
+    try {
+      const res = await api.post(`/admin/users/${u.id}/send-proctor-snapshot`);
+      setNotice(res.data.message || 'Snapshot emailed to the candidate.');
+    } catch (err) {
+      setError(err.response?.data?.message || 'Failed to email the snapshot.');
     } finally {
       setActionLoading(false);
     }
@@ -433,14 +465,17 @@ const AdminUsersPage = () => {
         </div>
       )}
 
-      {/* Full profile editor modal (§4.1) */}
-      {editUser !== null && (
+      {/* Full profile editor modal (§4.1). Rendered through a portal to document.body so
+          it is positioned relative to the viewport, not the layout's animated (transformed)
+          content wrapper — a transformed ancestor would otherwise become the containing
+          block for `fixed`, clipping the modal under the header. */}
+      {editUser !== null && createPortal(
         <div className="fixed inset-0 z-50 bg-slate-950/60 dark:bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
           <form
             onSubmit={handleEditSubmit}
-            className="w-full max-w-lg glass-panel p-6 rounded-2xl border border-primary-500/30 space-y-4 shadow-2xl relative my-8"
+            className="w-full max-w-lg glass-panel rounded-2xl border border-primary-500/30 shadow-2xl relative flex flex-col max-h-[88vh]"
           >
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between p-6 pb-3 shrink-0 border-b border-slate-200 dark:border-slate-800">
               <h3 className="font-extrabold text-base text-slate-900 dark:text-white flex items-center gap-2">
                 <Pencil className="text-primary-400" size={17} />
                 <span>Edit Candidate Profile</span>
@@ -450,6 +485,9 @@ const AdminUsersPage = () => {
               </button>
             </div>
 
+            {/* Scrollable body — header and footer stay fixed so the Save button is
+                always reachable no matter how long the content gets. */}
+            <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <Input id="name" type="text" label="Full Name" value={editForm.name} onChange={handleEditChange} required />
               <Input id="email" type="email" label="Email Address" value={editForm.email} onChange={handleEditChange} required />
@@ -549,7 +587,83 @@ const AdminUsersPage = () => {
               </div>
             </div>
 
-            <div className="flex items-center justify-end gap-3 pt-2 border-t border-slate-200 dark:border-slate-800">
+            {/* Proctoring review (admin-only): the camera snapshot + summary from the
+                candidate's latest interview — captured on completion or auto-termination. */}
+            <div className="p-4 bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-800 rounded-xl space-y-3">
+              <div className="flex items-center gap-2">
+                <ScanFace size={14} className="text-slate-500 dark:text-slate-400" />
+                <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest">
+                  Proctoring Review
+                </span>
+                {proctoring?.is_proctor_failed && <Badge variant="error">Proctor Failed</Badge>}
+                {proctoring?.has_interview && !proctoring?.is_proctor_failed && proctoring?.status === 'completed' && (
+                  <Badge variant="success">Completed</Badge>
+                )}
+              </div>
+
+              {proctoringLoading ? (
+                <p className="text-[11px] text-slate-400 dark:text-slate-500 italic">Loading snapshot…</p>
+              ) : !proctoring?.has_interview ? (
+                <p className="text-[11px] text-slate-400 dark:text-slate-500 italic">
+                  No interview on record for this candidate yet.
+                </p>
+              ) : (
+                <div className="space-y-2.5">
+                  {proctoring.snapshot_image ? (
+                    <a href={proctoring.snapshot_image} target="_blank" rel="noopener noreferrer" className="inline-block" title="Click to view full size">
+                      <img
+                        src={proctoring.snapshot_image}
+                        alt="Interview proctoring snapshot"
+                        className="h-28 w-auto rounded-lg border border-slate-200 dark:border-slate-700 hover:opacity-90 transition"
+                      />
+                    </a>
+                  ) : (
+                    <p className="text-[11px] text-slate-400 dark:text-slate-500 italic">
+                      No camera snapshot was captured for this interview.
+                    </p>
+                  )}
+                  <div className="text-[11px] text-slate-500 dark:text-slate-400 space-y-0.5">
+                    {proctoring.snapshot_description && (
+                      <div><span className="font-semibold text-slate-600 dark:text-slate-300">System note:</span> {proctoring.snapshot_description}</div>
+                    )}
+                    <div>Violations recorded: <b className="text-slate-700 dark:text-slate-300">{proctoring.proctor_violations_count}</b></div>
+                  </div>
+
+                  {proctoring.snapshot_image && (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      icon={Send}
+                      onClick={() => handleSendProctorSnapshot(editUser)}
+                      disabled={actionLoading}
+                    >
+                      Email Snapshot to Candidate
+                    </Button>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Admin remarks (admin-only): free-form notes about the candidate. Saved with
+                the profile; never shown to the candidate. */}
+            <div className="space-y-1.5">
+              <label htmlFor="admin_remarks" className="flex items-center gap-1.5 text-xs font-semibold text-slate-700 dark:text-slate-300">
+                <MessageSquare size={13} /> Admin Remarks
+              </label>
+              <textarea
+                id="admin_remarks"
+                value={editForm.admin_remarks}
+                onChange={handleEditChange}
+                rows={3}
+                placeholder="Notes about this candidate (visible to admins only)…"
+                className="w-full glass-input text-sm resize-y"
+              />
+            </div>
+
+            </div>
+
+            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-slate-200 dark:border-slate-800 shrink-0">
               <Button type="button" variant="secondary" size="sm" onClick={() => setEditUser(null)}>
                 Cancel
               </Button>
@@ -558,11 +672,12 @@ const AdminUsersPage = () => {
               </Button>
             </div>
           </form>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* Type-to-confirm user deletion modal (irreversible, cascades all their data) */}
-      {deleteUser !== null && (
+      {deleteUser !== null && createPortal(
         <div className="fixed inset-0 z-50 bg-slate-950/60 dark:bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="w-full max-w-md glass-panel p-6 rounded-2xl border border-red-500/40 space-y-5 shadow-2xl">
             <h3 className="font-extrabold text-base text-slate-900 dark:text-white flex items-center gap-2">
@@ -610,7 +725,8 @@ const AdminUsersPage = () => {
               </Button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

@@ -302,7 +302,7 @@ async def login(request: Request):
             msg = 'This account has been suspended by the administrator'
             if user.banned_until:
                 local_time = user.banned_until + datetime.timedelta(hours=5)
-                msg = f"Your account has been temporarily blocked due to multiple proctoring violations. It will automatically reopen after {local_time.strftime('%Y-%m-%d %H:%M:%S')}."
+                msg = f"Your account has been blocked for 30 days due to a proctoring violation during your interview. It will automatically reopen after {local_time.strftime('%Y-%m-%d %H:%M:%S')}."
             raise HTTPException(status_code=403, detail=msg)
 
     one_time = bool(user.must_use_otp)

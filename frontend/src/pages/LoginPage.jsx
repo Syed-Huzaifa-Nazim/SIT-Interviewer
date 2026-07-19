@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import BrandLogo from '../components/layout/BrandLogo';
@@ -14,8 +14,15 @@ const LoginPage = () => {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
-  const { login, error } = useAuth();
+  const { login, error, clearError } = useAuth();
   const navigate = useNavigate();
+
+  // Clear any auth error left over from another page (e.g. a failed login) so a
+  // warning only ever shows on the page where it actually happened.
+  useEffect(() => {
+    clearError();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // This field accepts EITHER an email or a CNIC. If the user is typing something
   // that looks like a CNIC (only digits and dashes), auto-format it with dashes;
@@ -100,18 +107,23 @@ const LoginPage = () => {
           {error && <Alert variant="error">{error}</Alert>}
 
           <form onSubmit={handleSubmit} className="space-y-5">
-            <Input
-              id="email"
-              type="text"
-              label="Email Address or CNIC Number"
-              value={email}
-              onChange={handleIdentifierChange}
-              icon={Mail}
-              placeholder="email@example.com or 42101-1234567-1"
-              maxLength={254}
-              required
-            />
-            
+            <div className="space-y-1">
+              <Input
+                id="email"
+                type="text"
+                label="Email Address or CNIC Number"
+                value={email}
+                onChange={handleIdentifierChange}
+                icon={Mail}
+                placeholder="email@example.com or 42101-1234567-1"
+                maxLength={254}
+                required
+              />
+              <p className="text-[11px] text-slate-400 dark:text-slate-500 leading-snug px-1">
+                Log in with the email or CNIC you enrolled with. Only invited @gmail.com accounts have access.
+              </p>
+            </div>
+
             <div className="space-y-1">
               <Input
                 id="password"

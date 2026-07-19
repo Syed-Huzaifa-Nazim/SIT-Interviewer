@@ -1,11 +1,12 @@
 import re
+import base64
 import datetime
 from fastapi import APIRouter, Request, HTTPException, status, Depends
 from app.database.db import db
 from app.models import (
     User, Token, Transaction, Interview, Feedback, AdminLog,
     InterviewResponse, InterviewQuestion, SecondInterviewRequest, EmailLog,
-    Notification, CodeSubmission
+    Notification, CodeSubmission, InterviewReport
 )
 from app.utils.security import admin_required, get_current_user_id
 from app.utils.candidate import (
@@ -106,6 +107,39 @@ async def list_users(user: User = Depends(admin_required)):
     return users_list
 
 
+@admin_bp.get('/users/{target_user_id}/proctoring')
+async def get_user_proctoring(target_user_id: int, user: User = Depends(admin_required)):
+    """Admin-only: the proctoring snapshot + summary for a candidate's most recent
+    interview. A camera snapshot is captured both when an interview is completed and
+    when it is auto-terminated for a proctoring breach, so this drives the review panel
+    on the Manage Users profile. Returns nulls when there is no interview/snapshot yet."""
+    target = User.query.get(target_user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    interview = (
+        Interview.query.filter_by(user_id=target_user_id)
+        .order_by(Interview.created_at.desc())
+        .first()
+    )
+    if not interview:
+        return {'has_interview': False}
+
+    report = InterviewReport.query.filter_by(interview_id=interview.id).first()
+
+    return {
+        'has_interview': True,
+        'interview_id': interview.id,
+        'status': interview.status,
+        'is_proctor_failed': bool(interview.is_proctor_failed),
+        'terminated_reason': interview.terminated_reason,
+        'proctor_violations_count': interview.proctor_violations_count or 0,
+        'snapshot_image': report.snapshot_image if report else None,
+        'snapshot_description': report.snapshot_description if report else None,
+        'created_at': interview.created_at.isoformat() if interview.created_at else None,
+    }
+
+
 @admin_bp.put('/users/{target_user_id}/profile')
 async def update_user_profile(target_user_id: int, request: Request, user: User = Depends(admin_required)):
     """Full candidate profile editing (§4.1) — including course status, which only
@@ -168,6 +202,13 @@ async def update_user_profile(target_user_id: int, request: Request, user: User 
             if getattr(target, field) != data[field]:
                 changes.append(f"{field} → '{data[field]}'")
             setattr(target, field, data[field])
+
+    # Admin remarks: allow setting or clearing (empty string clears the note).
+    if 'admin_remarks' in data:
+        new_remarks = (data.get('admin_remarks') or '').strip() or None
+        if target.admin_remarks != new_remarks:
+            changes.append('admin remarks updated')
+        target.admin_remarks = new_remarks
 
     db.session.add(AdminLog(
         admin_id=user.id,
@@ -392,6 +433,70 @@ async def send_clearance_email(target_user_id: int, user: User = Depends(admin_r
 async def send_hr_invite_email(target_user_id: int, user: User = Depends(admin_required)):
     """'Send HR Assessment Invite' (Update §5): distinct next-stage HR invitation."""
     return _send_post_interview_email(target_user_id, user, 'hr_invite')
+
+
+@admin_bp.post('/users/{target_user_id}/send-proctor-snapshot')
+async def send_proctor_snapshot_email(target_user_id: int, user: User = Depends(admin_required)):
+    """Email the candidate their proctoring camera snapshot (attached) along with a
+    termination + 30-day-block notice. Uses the snapshot from the candidate's most
+    recent interview report."""
+    target = User.query.get(target_user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    if target.role == 'admin':
+        raise HTTPException(status_code=400, detail="This action does not apply to administrator accounts")
+
+    interview = (
+        Interview.query.filter_by(user_id=target_user_id)
+        .order_by(Interview.created_at.desc())
+        .first()
+    )
+    report = InterviewReport.query.filter_by(interview_id=interview.id).first() if interview else None
+    if not report or not report.snapshot_image:
+        raise HTTPException(status_code=400, detail="No proctoring snapshot is available for this candidate.")
+
+    # The snapshot is stored as a data URL ("data:image/jpeg;base64,...."). Strip the
+    # prefix and decode to raw bytes for the email attachment.
+    raw = report.snapshot_image
+    mimetype = 'image/jpeg'
+    if raw.startswith('data:'):
+        try:
+            header, raw = raw.split(',', 1)
+            mimetype = header.split(';')[0].replace('data:', '') or mimetype
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Stored snapshot is malformed.")
+    try:
+        image_bytes = base64.b64decode(raw)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Could not decode the stored snapshot.")
+
+    subject, html = email_templates.proctoring_termination_notice(target.name)
+
+    try:
+        db.session.add(AdminLog(
+            admin_id=user.id, action='SEND_PROCTOR_SNAPSHOT',
+            details=f"Emailed proctoring snapshot + termination notice to User ID {target.id} ({target.email})"
+        ))
+        db.session.add(Notification(
+            user_id=target.id, title='Interview Terminated',
+            message='Your interview was terminated for a proctoring violation. Please check your email.',
+            type='activity'
+        ))
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to record action: {str(e)}")
+
+    EmailService.send(
+        target.email, subject, html,
+        email_type='proctoring_termination', user_id=target.id,
+        attachments=[{
+            'filename': 'proctoring-snapshot.jpg',
+            'content': image_bytes,
+            'mimetype': mimetype,
+        }]
+    )
+    return {'message': f'Proctoring snapshot emailed to {target.email}'}
 
 @admin_bp.post('/users/{target_user_id}/ban')
 async def toggle_ban(target_user_id: int, user: User = Depends(admin_required)):

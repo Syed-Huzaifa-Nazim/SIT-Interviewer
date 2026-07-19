@@ -148,6 +148,27 @@ const InterviewSession = () => {
     }
   };
 
+  // Capture an un-mirrored JPEG frame from the live webcam as a base64 data URL.
+  // Returns null if the camera isn't ready or capture fails. Used both for the
+  // proctor-termination snapshot and the interview-completion snapshot (admin review).
+  const captureSnapshot = () => {
+    if (!videoRef.current) return null;
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = videoRef.current.videoWidth || 640;
+      canvas.height = videoRef.current.videoHeight || 480;
+      const ctx = canvas.getContext('2d');
+      // Un-mirror raw video frames
+      ctx.translate(canvas.width, 0);
+      ctx.scale(-1, 1);
+      ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+      return canvas.toDataURL('image/jpeg', 0.65);
+    } catch (err) {
+      console.warn('Snapshot capture failed:', err);
+      return null;
+    }
+  };
+
   // 3. Send Proctor Log payload to backend (hard violation — counts toward termination)
   const logProctorViolation = async (type, details) => {
     const now = Date.now();
@@ -162,23 +183,8 @@ const InterviewSession = () => {
     setViolationAlert(`PROCTOR WARNING: ${details}`);
     setTimeout(() => setViolationAlert(''), 4000);
 
-    let snapshot = null;
     // Capture snapshot if this is the terminating violation
-    if (violationsCountRef.current >= 2 && videoRef.current) {
-      try {
-        const canvas = document.createElement('canvas');
-        canvas.width = videoRef.current.videoWidth || 640;
-        canvas.height = videoRef.current.videoHeight || 480;
-        const ctx = canvas.getContext('2d');
-        // Un-mirror raw video frames
-        ctx.translate(canvas.width, 0);
-        ctx.scale(-1, 1);
-        ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
-        snapshot = canvas.toDataURL('image/jpeg', 0.65);
-      } catch (err) {
-        console.warn('Snapshot capture failed:', err);
-      }
-    }
+    const snapshot = violationsCountRef.current >= 2 ? captureSnapshot() : null;
 
     try {
       const res = await api.post(`/interviews/${id}/proctor-log`, {
@@ -353,8 +359,8 @@ const InterviewSession = () => {
               handsModel.setOptions({
                 maxNumHands: 2,
                 modelComplexity: 0,
-                minDetectionConfidence: 0.6,
-                minTrackingConfidence: 0.6
+                minDetectionConfidence: 0.5,
+                minTrackingConfidence: 0.5
               });
               handsModel.onResults((results) => {
                 if (!active) return;
@@ -410,15 +416,20 @@ const InterviewSession = () => {
                 if (!active) return;
                 if (cameraOn && videoRef.current && videoRef.current.readyState >= 2) {
                   try {
-                    const predictions = await phoneModel.detect(videoRef.current);
+                    // detect(img, maxNumBoxes, minScore): coco-ssd's default minScore is
+                    // 0.5, which hides a phone that's only partially/faintly visible. We
+                    // pass a low minScore (0.2) so those low-confidence detections are
+                    // returned, then apply our own threshold in handleObjectDetections —
+                    // this is what makes even a slightly-visible phone get flagged.
+                    const predictions = await phoneModel.detect(videoRef.current, 20, 0.2);
                     if (active) handleObjectDetections(predictions);
                   } catch (e) {
                     // Ignore transient inference failures
                   }
                 }
-                // Run about twice per second — fast enough to catch a phone within ~1s
-                // yet light enough to coexist with the face pipeline.
-                objectScanTimeoutId = setTimeout(scanForPhone, 450);
+                // Scan ~3–4x per second so a phone entering the frame is caught almost
+                // immediately, while still leaving the face pipeline plenty of headroom.
+                objectScanTimeoutId = setTimeout(scanForPhone, 280);
               };
               scanForPhone();
             } catch (e) {
@@ -616,23 +627,14 @@ const InterviewSession = () => {
     }
   };
 
-  // 7b. Process MediaPipe Hand Landmarks (hands raised in front of the screen/camera)
+  // 7b. Process MediaPipe Hand Landmarks (hands raised in front of the screen/camera).
+  // MediaPipe only reports a hand when its own confidence is met, so any detected hand
+  // is flagged immediately — no size gate — so a hand entering the frame is caught the
+  // moment it appears. The per-type throttle prevents repeated frames from stacking.
   const handleHandResults = (results) => {
     const hands = results.multiHandLandmarks || [];
-    if (hands.length === 0) return;
-
-    for (const landmarks of hands) {
-      let minX = 1, maxX = 0, minY = 1, maxY = 0;
-      for (const p of landmarks) {
-        if (p.x < minX) minX = p.x;
-        if (p.x > maxX) maxX = p.x;
-        if (p.y < minY) minY = p.y;
-        if (p.y > maxY) maxY = p.y;
-      }
-      if ((maxX - minX) > 0.28 || (maxY - minY) > 0.28) {
-        logProctorViolation('HAND_DETECTED', 'Hand raised in front of the screen. Keep your hands down.');
-        return;
-      }
+    if (hands.length > 0) {
+      logProctorViolation('HAND_DETECTED', 'Hand detected in front of the camera. Keep your hands out of view.');
     }
   };
 
@@ -643,7 +645,7 @@ const InterviewSession = () => {
   // an occasional noisy frame cannot pile up violations.
   const handleObjectDetections = (predictions) => {
     const phone = (predictions || []).find(
-      (p) => p.class === 'cell phone' && p.score >= 0.4
+      (p) => p.class === 'cell phone' && p.score >= 0.3
     );
     if (phone) {
       logProctorViolation('PHONE_DETECTED', 'Mobile phone detected in the camera view. Please remove all devices.');
@@ -883,6 +885,13 @@ const InterviewSession = () => {
     const formData = new FormData();
     formData.append('question_id', question.id);
     formData.append('timed_out', timedOut ? 'true' : 'false');
+
+    // On the final question, attach a webcam snapshot so completed interviews carry a
+    // completion photo for admin review (parallel to the auto-terminate snapshot).
+    if (currentIdx + 1 >= questions.length) {
+      const finalSnapshot = captureSnapshot();
+      if (finalSnapshot) formData.append('snapshot_image', finalSnapshot);
+    }
 
     if (inputMode === 'voice') {
       if (audioBlob && audioBlob.size > 0) {

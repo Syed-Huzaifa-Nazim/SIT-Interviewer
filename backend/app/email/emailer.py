@@ -24,6 +24,7 @@ import ssl
 import threading
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email.mime.image import MIMEImage
 from email.utils import formataddr, formatdate, make_msgid
 
 from app.config.config import Config
@@ -51,22 +52,25 @@ class EmailService:
     retries, logging, and a persistent EmailLog audit row per message."""
 
     @classmethod
-    def send(cls, to_email, subject, html, email_type='general', user_id=None, background=True):
+    def send(cls, to_email, subject, html, email_type='general', user_id=None, background=True, attachments=None):
         """Send an email. With ``background=True`` (default) delivery happens on a
-        daemon thread so API responses are never blocked by SMTP latency."""
+        daemon thread so API responses are never blocked by SMTP latency.
+
+        ``attachments`` is an optional list of dicts with keys ``filename``,
+        ``content`` (raw bytes) and ``mimetype`` (e.g. 'image/jpeg')."""
         if background:
             threading.Thread(
                 target=cls._deliver_and_log,
-                args=(to_email, subject, html, email_type, user_id),
+                args=(to_email, subject, html, email_type, user_id, attachments),
                 daemon=True
             ).start()
         else:
-            cls._deliver_and_log(to_email, subject, html, email_type, user_id)
+            cls._deliver_and_log(to_email, subject, html, email_type, user_id, attachments)
 
     # ------------------------------------------------------------------ internals
 
     @classmethod
-    def _deliver_and_log(cls, to_email, subject, html, email_type, user_id):
+    def _deliver_and_log(cls, to_email, subject, html, email_type, user_id, attachments=None):
         attempts = 0
         last_error = None
         max_attempts = 1 + max(0, Config.EMAIL_MAX_RETRIES)
@@ -74,7 +78,7 @@ class EmailService:
         while attempts < max_attempts:
             attempts += 1
             try:
-                cls._deliver(to_email, subject, html)
+                cls._deliver(to_email, subject, html, attachments)
                 cls._log(to_email, subject, email_type, user_id, 'sent', None, attempts)
                 logger.info(f"Email '{email_type}' sent to {to_email} (attempt {attempts}).")
                 return True
@@ -91,21 +95,42 @@ class EmailService:
         return False
 
     @classmethod
-    def _deliver(cls, to_email, subject, html):
+    def _deliver(cls, to_email, subject, html, attachments=None):
         if Config.EMAIL_MODE != 'smtp':
             # Console mode: render to the server log so the flow is fully testable
             # without SMTP credentials.
+            attach_note = ''
+            if attachments:
+                names = ', '.join(a.get('filename', 'attachment') for a in attachments)
+                attach_note = f"Attachments: {names}\n"
             print(
                 f"\n===== [EMAIL:console] =====\n"
                 f"To:      {to_email}\n"
                 f"From:    {Config.EMAIL_FROM_NAME} <{Config.EMAIL_FROM}>\n"
                 f"Subject: {subject}\n"
+                f"{attach_note}"
                 f"--- text body ---\n{_html_to_text(html)}\n"
                 f"===== [/EMAIL] =====\n"
             )
             return
 
-        msg = MIMEMultipart('alternative')
+        # A body-only message is multipart/alternative (text + html). When there are
+        # attachments the whole thing is wrapped in a multipart/mixed container.
+        body = MIMEMultipart('alternative')
+        body.attach(MIMEText(_html_to_text(html), 'plain', 'utf-8'))
+        body.attach(MIMEText(html, 'html', 'utf-8'))
+
+        if attachments:
+            msg = MIMEMultipart('mixed')
+            msg.attach(body)
+            for att in attachments:
+                subtype = (att.get('mimetype') or 'image/jpeg').split('/')[-1]
+                part = MIMEImage(att['content'], _subtype=subtype)
+                part.add_header('Content-Disposition', 'attachment', filename=att.get('filename', 'attachment'))
+                msg.attach(part)
+        else:
+            msg = body
+
         msg['Subject'] = subject
         msg['From'] = formataddr((Config.EMAIL_FROM_NAME, Config.EMAIL_FROM))
         msg['To'] = to_email
@@ -116,8 +141,6 @@ class EmailService:
         msg['Date'] = formatdate(localtime=True)
         domain = Config.EMAIL_FROM.split('@')[-1] if '@' in Config.EMAIL_FROM else None
         msg['Message-ID'] = make_msgid(domain=domain)
-        msg.attach(MIMEText(_html_to_text(html), 'plain', 'utf-8'))
-        msg.attach(MIMEText(html, 'html', 'utf-8'))
 
         if Config.SMTP_USE_SSL:
             with smtplib.SMTP_SSL(Config.SMTP_HOST, Config.SMTP_PORT,
