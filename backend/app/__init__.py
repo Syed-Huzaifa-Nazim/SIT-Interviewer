@@ -2,7 +2,7 @@ import os
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from app.config.config import Config
-from app.database.db import db, Base, engine
+from app.database.db import db, Base, engine, new_request_scope, reset_request_scope
 
 # Import routers
 from app.routes.auth_routes import auth_bp
@@ -35,11 +35,16 @@ def create_app(config_class=Config):
     # Scoped database session cleanup middleware
     @app.middleware("http")
     async def db_session_middleware(request: Request, call_next):
+        # Stamp a per-request session identity BEFORE call_next so it propagates into the
+        # worker thread that runs the sync endpoint; remove() then closes that same session
+        # and returns its connection to the pool (see db.py for the full rationale).
+        token = new_request_scope()
         try:
             response = await call_next(request)
             return response
         finally:
             db.session.remove()
+            reset_request_scope(token)
 
     # Register Routers
     app.include_router(auth_bp, prefix="/api/auth", tags=["Auth"])
