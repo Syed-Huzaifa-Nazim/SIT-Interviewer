@@ -16,8 +16,10 @@ class Config:
     FLASK_ENV = os.environ.get('FLASK_ENV', 'development')
     DEBUG = os.environ.get('FLASK_DEBUG', 'True').lower() == 'true'
 
-    # Database Settings
-    SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL', f"sqlite:///{os.path.join(BASE_DIR, 'interviewer.db')}")
+    # Database Settings (DB Integration §3): PostgreSQL/Supabase ONLY — there is no
+    # SQLite fallback, in any environment including local development. DATABASE_URL must
+    # be set explicitly; db.py fails fast with a clear message if it is missing.
+    SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL', '')
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 
     # JWT Settings
@@ -25,9 +27,9 @@ class Config:
     JWT_ACCESS_TOKEN_EXPIRES = timedelta(hours=1)
     JWT_REFRESH_TOKEN_EXPIRES = timedelta(days=7)
 
-    # Directories
+    # Scratch directory for TRANSIENT processing files only (Whisper temp audio, resume
+    # parsing). Files here are always deleted after use — no persistence (§3).
     UPLOAD_FOLDER = os.environ.get('UPLOAD_FOLDER', os.path.join(BASE_DIR, 'uploads'))
-    REPORTS_FOLDER = os.environ.get('REPORTS_FOLDER', os.path.join(BASE_DIR, 'reports'))
 
     # Feature flags
     # Temporarily disables the "Ongoing" course-status option for NEW signups
@@ -91,6 +93,9 @@ class Config:
     # Separate bucket for recorded interview answer audio (create this bucket in the
     # Supabase project — it can be private; the backend uses the service key to write).
     SUPABASE_AUDIO_BUCKET = os.environ.get('SUPABASE_AUDIO_BUCKET', 'interview-audio')
+    # Private bucket for full-session interview video recordings (§2.2). Never public —
+    # admin playback uses short-lived signed URLs only.
+    SUPABASE_VIDEO_BUCKET = os.environ.get('SUPABASE_VIDEO_BUCKET', 'interview-recordings')
 
     # Email service (Python smtplib — no third-party provider required).
     # 'smtp' sends real mail; 'console' prints the rendered email to the server log

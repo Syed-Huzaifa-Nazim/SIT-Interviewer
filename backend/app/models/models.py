@@ -175,11 +175,15 @@ class Interview(db.Model):
     # already-complete for old finished interviews).
     scoring_status = db.Column(db.String(20), default='pending')
 
-    # Base64 webcam frame captured by the client on the final submission. Stashed here
-    # (rather than written straight to InterviewReport) because report generation now
-    # happens asynchronously in the background scoring worker (Perf §1) — whichever
-    # thread finalizes the report reads this column and copies it onto InterviewReport.
-    completion_snapshot_image = db.Column(db.Text, nullable=True)
+    # Base64 webcam frame captured by the client on the final answer submission. Held here
+    # because the report is generated later on a background thread; _finalize_report_if_ready
+    # moves it onto InterviewReport.snapshot_image when it builds the report.
+    completion_snapshot = db.Column(db.Text, nullable=True)
+
+    # Full-session video recording (DB Integration §2): supabase://bucket/path reference
+    # into the PRIVATE interview-recordings bucket. NULL = no recording exists (e.g. the
+    # upload failed after retries), so the admin UI never implies a recording it can't play.
+    video_path = db.Column(db.String(255), nullable=True)
 
     # Relationships
     questions = db.relationship('InterviewQuestion', backref='interview', lazy=True, cascade="all, delete-orphan")
@@ -203,6 +207,7 @@ class Interview(db.Model):
             'proctor_logs': self.proctor_logs,
             'terminated_reason': self.terminated_reason,
             'scoring_status': self.scoring_status,
+            'has_video': bool(self.video_path),
             'created_at': self.created_at.isoformat() if self.created_at else None
         }
 

@@ -582,28 +582,106 @@ async def override_tokens(target_user_id: int, request: Request, user: User = De
 # but ADMIN ACCOUNTS CAN NEVER BE DELETED. Every deletion is written to the audit log.
 # ---------------------------------------------------------------------------
 
+def _collect_user_storage_refs(uid, target):
+    """Every Supabase Storage object belonging to a user, gathered BEFORE the DB rows
+    disappear (Cascade §4.2): per-answer audio, full-session videos, profile picture.
+    Returns a list of (bucket, path) tuples."""
+    from app.utils.supabase_service import SupabaseService
+    refs = []
+    interview_ids = [i.id for i in Interview.query.filter_by(user_id=uid).all()]
+    if interview_ids:
+        for resp in InterviewResponse.query.filter(
+                InterviewResponse.interview_id.in_(interview_ids)).all():
+            parsed = SupabaseService.parse_storage_ref(resp.audio_path)
+            if parsed:
+                refs.append(parsed)
+        for iv in Interview.query.filter(Interview.id.in_(interview_ids)).all():
+            parsed = SupabaseService.parse_storage_ref(iv.video_path)
+            if parsed:
+                refs.append(parsed)
+    parsed = SupabaseService.parse_storage_ref(target.profile_pic_url)
+    if parsed:
+        refs.append(parsed)
+    return refs
+
+
+def _delete_storage_refs(refs, context_label, admin_id=None):
+    """Best-effort removal of Supabase Storage objects AFTER the DB transaction commits
+    (§4.3 — Postgres cascades can't touch object storage). Any failure is logged loudly,
+    and recorded as an AdminLog row when an admin id is available, so orphans are
+    traceable and manually cleanable instead of silently accumulating."""
+    from app.utils.supabase_service import SupabaseService
+    failed = []
+    for bucket, path in refs:
+        if not SupabaseService.delete_object(bucket, path):
+            failed.append(f"{bucket}/{path}")
+    if failed:
+        print(f"[cascade-delete] STORAGE CLEANUP INCOMPLETE for {context_label}: "
+              f"{len(failed)} object(s) need manual removal: {', '.join(failed[:10])}")
+        if admin_id:
+            try:
+                db.session.add(AdminLog(
+                    admin_id=admin_id, action='STORAGE_CLEANUP_NEEDED',
+                    details=f"While deleting {context_label}, these storage objects could not "
+                            f"be removed and must be cleaned up manually: {', '.join(failed)}"
+                ))
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+    return len(refs) - len(failed), len(failed)
+
+
+def _anonymize_user_in_logs(target):
+    """Retain-but-anonymize policy (confirmed §4.2): audit rows survive, but every
+    identifying detail of the deleted user is scrubbed from them."""
+    uid = target.id
+    # Email delivery audit: detach + redact the recipient address.
+    EmailLog.query.filter_by(user_id=uid).update(
+        {'user_id': None, 'to_email': '[deleted-user]'}, synchronize_session=False)
+    EmailLog.query.filter_by(to_email=target.email).update(
+        {'to_email': '[deleted-user]'}, synchronize_session=False)
+    # Admin action log: free-text details may embed the user's email/CNIC/name — find
+    # affected rows with targeted LIKE queries, then scrub each match in place.
+    needles = [n for n in (target.email, target.cnic, target.name) if n and len(n) >= 4]
+    seen = {}
+    for n in needles:
+        for log in AdminLog.query.filter(AdminLog.details.like(f'%{n}%')).all():
+            seen[log.id] = log
+    for log in seen.values():
+        scrubbed = log.details
+        for n in needles:
+            scrubbed = scrubbed.replace(n, '[deleted user]')
+        log.details = scrubbed
+
+
 @admin_bp.delete('/users/{target_user_id}')
 async def delete_user(target_user_id: int, user: User = Depends(admin_required)):
-    """Permanently delete a candidate/instructor account and ALL their data.
+    """Permanently delete a candidate/instructor account and ALL their data — database
+    rows AND Supabase Storage files (Cascade §4). Admin accounts are hard-blocked.
 
-    Admin accounts are hard-blocked. Dependent rows that aren't covered by an ORM
-    delete-orphan cascade are removed explicitly first, so the delete is consistent
-    on both SQLite (FK enforcement often off) and PostgreSQL."""
+    Order matters: storage refs are collected first, the whole database removal commits
+    as one transaction (so a partial failure rolls back cleanly), and only then are the
+    storage objects deleted — a failed object delete can never leave the DB half-done,
+    and every storage failure is logged for manual cleanup. Audit logs are retained but
+    anonymized per the confirmed policy."""
     target = User.query.get(target_user_id)
     if not target:
         raise HTTPException(status_code=404, detail="User not found")
     if target.role == 'admin':
         raise HTTPException(status_code=403, detail="Administrator accounts cannot be deleted.")
 
-    label = f"User ID {target.id} ({target.email}, CNIC {target.cnic or 'N/A'})"
+    uid = target.id
+    target_name = target.name
+    storage_refs = _collect_user_storage_refs(uid, target)
+
     try:
-        uid = target.id
         # Explicitly clear rows not handled by the User relationship cascades.
         Transaction.query.filter_by(user_id=uid).delete(synchronize_session=False)
         CodeSubmission.query.filter_by(user_id=uid).delete(synchronize_session=False)
         SecondInterviewRequest.query.filter_by(user_id=uid).delete(synchronize_session=False)
-        # Preserve the outbound-email audit trail but detach it from the deleted user.
-        EmailLog.query.filter_by(user_id=uid).update({'user_id': None}, synchronize_session=False)
+
+        # Retain-but-anonymize the audit trail (confirmed §4.2 policy).
+        _anonymize_user_in_logs(target)
 
         # ORM cascade handles tokens, interviews (+questions/responses/report),
         # resume/JD analyses, notifications, and feedback.
@@ -611,13 +689,21 @@ async def delete_user(target_user_id: int, user: User = Depends(admin_required))
 
         db.session.add(AdminLog(
             admin_id=user.id, action='DELETE_USER',
-            details=f"Permanently deleted {label} and all associated data."
+            details=f"Permanently deleted user ID {uid} and all associated data "
+                    f"({len(storage_refs)} stored media file(s) queued for removal)."
         ))
         db.session.commit()
-        return {'message': f'{target.name} and all their data have been permanently deleted.'}
     except Exception as e:
         db.session.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to delete user: {str(e)}")
+
+    # DB is consistent; now remove the media files from Supabase Storage.
+    ok, failed = _delete_storage_refs(storage_refs, f"user {uid}", admin_id=user.id)
+
+    msg = f'{target_name} and all their data have been permanently deleted.'
+    if failed:
+        msg += f' Warning: {failed} stored media file(s) could not be removed and were logged for manual cleanup.'
+    return {'message': msg}
 
 
 def _delete_record(model, record_id, admin, label, action, pre_delete=None):
@@ -642,12 +728,29 @@ def _delete_record(model, record_id, admin, label, action, pre_delete=None):
 
 @admin_bp.delete('/interviews/{interview_id}')
 async def delete_interview(interview_id: int, user: User = Depends(admin_required)):
-    """Delete an interview and its questions/responses/report (ORM cascade). Detaches
-    any feedback / code submissions that referenced it so they aren't orphaned."""
+    """Delete an interview and its questions/responses/report (ORM cascade), plus its
+    stored media — answer audio and session video — from Supabase Storage (Cascade §4).
+    Detaches any feedback / code submissions that referenced it so they aren't orphaned."""
+    from app.utils.supabase_service import SupabaseService
+    # Collect storage refs before the rows vanish.
+    refs = []
+    itv = Interview.query.get(interview_id)
+    if itv:
+        for resp in InterviewResponse.query.filter_by(interview_id=interview_id).all():
+            parsed = SupabaseService.parse_storage_ref(resp.audio_path)
+            if parsed:
+                refs.append(parsed)
+        parsed = SupabaseService.parse_storage_ref(itv.video_path)
+        if parsed:
+            refs.append(parsed)
+
     def _detach(_itv):
         Feedback.query.filter_by(interview_id=interview_id).update({'interview_id': None}, synchronize_session=False)
         CodeSubmission.query.filter_by(interview_id=interview_id).update({'interview_id': None}, synchronize_session=False)
-    return _delete_record(Interview, interview_id, user, 'Interview', 'DELETE_INTERVIEW', pre_delete=_detach)
+
+    result = _delete_record(Interview, interview_id, user, 'Interview', 'DELETE_INTERVIEW', pre_delete=_detach)
+    _delete_storage_refs(refs, f"interview {interview_id}", admin_id=user.id)
+    return result
 
 
 @admin_bp.delete('/feedback/{feedback_id}')
@@ -678,6 +781,23 @@ async def delete_recording_log(log_id: int, user: User = Depends(admin_required)
 @admin_bp.delete('/reinterview-requests/{request_id}')
 async def delete_reinterview_request(request_id: int, user: User = Depends(admin_required)):
     return _delete_record(SecondInterviewRequest, request_id, user, 'Second-interview request', 'DELETE_REINTERVIEW_REQUEST')
+
+
+@admin_bp.get('/interviews/{interview_id}/video-url')
+async def get_interview_video_url(interview_id: int, user: User = Depends(admin_required)):
+    """Admin-only playback of a session recording (DB Integration §2.2): returns a
+    short-lived signed URL into the PRIVATE interview-recordings bucket. Recordings are
+    never publicly reachable — this is the only way they're served."""
+    from app.utils.supabase_service import SupabaseService
+    interview = Interview.query.get(interview_id)
+    if not interview:
+        raise HTTPException(status_code=404, detail="Interview not found")
+    if not interview.video_path:
+        raise HTTPException(status_code=404, detail="No recording exists for this session")
+    signed = SupabaseService.get_signed_url(interview.video_path, expires_in=600)
+    if not signed:
+        raise HTTPException(status_code=503, detail="Could not generate a playback link right now")
+    return {'video_url': signed, 'expires_in': 600}
 
 
 @admin_bp.get('/interviews')
