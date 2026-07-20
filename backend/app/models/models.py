@@ -519,6 +519,38 @@ class EmailLog(db.Model):
             'created_at': self.created_at.isoformat() if self.created_at else None
         }
 
+class RecordingLog(db.Model):
+    """Lifecycle record for every interview answer recording (voice .webm), so the admin
+    can audit when a recording was created and when it was auto-deleted. Recordings are
+    automatically purged after a retention window; deletion stamps ``deleted_at``/``status``
+    here rather than removing the row, so the audit trail survives the file."""
+    __tablename__ = 'recording_logs'
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    # Denormalized so the log stays readable even after the candidate is deleted.
+    candidate_email = db.Column(db.String(120), nullable=True)
+    interview_id = db.Column(db.Integer, nullable=True)
+    question_id = db.Column(db.Integer, nullable=True)
+    # Where the recording lives: a 'supabase://bucket/path' ref or a local upload path.
+    storage_ref = db.Column(db.Text, nullable=True)
+    status = db.Column(db.String(20), default='active')  # active, deleted
+    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+    deleted_at = db.Column(db.DateTime, nullable=True)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'user_id': self.user_id,
+            'candidate_email': self.candidate_email,
+            'interview_id': self.interview_id,
+            'question_id': self.question_id,
+            'storage_ref': self.storage_ref,
+            'status': self.status,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'deleted_at': self.deleted_at.isoformat() if self.deleted_at else None
+        }
+
 class AdminLog(db.Model):
     __tablename__ = 'admin_logs'
     

@@ -7,25 +7,28 @@ import Badge from '../components/ui/Badge';
 import SearchBar from '../components/ui/SearchBar';
 import Spinner from '../components/ui/Spinner';
 import DeleteButton from '../components/ui/DeleteButton';
-import { Activity, MailWarning } from 'lucide-react';
+import { Activity, MailWarning, Video } from 'lucide-react';
 
 const AdminLogsPage = () => {
   const [logs, setLogs] = useState([]);
   const [emailLogs, setEmailLogs] = useState([]);
+  const [recordingLogs, setRecordingLogs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
-  const [activeTab, setActiveTab] = useState('admin'); // 'admin' | 'email'
+  const [activeTab, setActiveTab] = useState('admin'); // 'admin' | 'email' | 'recordings'
 
   useEffect(() => {
     const fetchLogs = async () => {
       try {
-        const [adminRes, emailRes] = await Promise.all([
+        const [adminRes, emailRes, recRes] = await Promise.all([
           api.get('/admin/logs'),
           api.get('/admin/email-logs'),
+          api.get('/admin/recording-logs'),
         ]);
         setLogs(adminRes.data);
         setEmailLogs(emailRes.data);
+        setRecordingLogs(recRes.data);
       } catch (err) {
         console.error(err);
         setError('Failed to fetch system audit logs.');
@@ -56,6 +59,16 @@ const AdminLogsPage = () => {
     }
   };
 
+  const handleDeleteRecordingLog = async (id) => {
+    setError('');
+    try {
+      await api.delete(`/admin/recording-logs/${id}`);
+      setRecordingLogs((prev) => prev.filter((l) => l.id !== id));
+    } catch (err) {
+      setError(err.response?.data?.message || 'Failed to delete the recording log.');
+    }
+  };
+
   const filteredLogs = logs.filter((l) => {
     return (
       l.action.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -74,7 +87,17 @@ const AdminLogsPage = () => {
     );
   });
 
+  const filteredRecordings = recordingLogs.filter((l) => {
+    const q = searchTerm.toLowerCase();
+    return (
+      (l.candidate_email || '').toLowerCase().includes(q) ||
+      (l.status || '').toLowerCase().includes(q) ||
+      String(l.interview_id || '').includes(q)
+    );
+  });
+
   const failedCount = emailLogs.filter((l) => l.status === 'failed').length;
+  const activeRecordings = recordingLogs.filter((l) => l.status === 'active').length;
 
   if (loading) {
     return (
@@ -113,6 +136,14 @@ const AdminLogsPage = () => {
             )}
           </span>
         </button>
+        <button className={tabClass('recordings')} onClick={() => setActiveTab('recordings')}>
+          <span className="inline-flex items-center gap-1.5">
+            Recordings
+            {activeRecordings > 0 && (
+              <Badge variant="info" className="!normal-case">{activeRecordings} active</Badge>
+            )}
+          </span>
+        </button>
       </div>
 
       <Card padding={false} className="p-4">
@@ -121,7 +152,9 @@ const AdminLogsPage = () => {
           onChange={(e) => setSearchTerm(e.target.value)}
           placeholder={activeTab === 'admin'
             ? 'Search by action type, administrator name, or keywords...'
-            : 'Search by recipient, email type, subject, or status...'}
+            : activeTab === 'email'
+            ? 'Search by recipient, email type, subject, or status...'
+            : 'Search by candidate email, status, or interview ID...'}
         />
       </Card>
 
@@ -181,7 +214,7 @@ const AdminLogsPage = () => {
             </table>
           </div>
         </Card>
-      ) : (
+      ) : activeTab === 'email' ? (
         <Card>
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs border-collapse">
@@ -231,6 +264,64 @@ const AdminLogsPage = () => {
                             onConfirm={() => handleDeleteEmailLog(item.id)}
                             confirmMessage="Delete this email log entry permanently?"
                             title="Delete Email Log"
+                          />
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      ) : (
+        <Card>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr className="text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800">
+                  <th className="py-3 font-bold">Created</th>
+                  <th className="py-3 font-bold">Candidate</th>
+                  <th className="py-3 font-bold text-center">Interview</th>
+                  <th className="py-3 font-bold">Status</th>
+                  <th className="py-3 font-bold">Deleted</th>
+                  <th className="py-3 font-bold text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                {filteredRecordings.length === 0 ? (
+                  <tr>
+                    <td colSpan="6" className="py-8 text-center text-slate-500 dark:text-slate-400 text-xs">
+                      <Video className="mx-auto mb-2 text-slate-400" size={22} />
+                      No interview recordings logged yet. Recordings are auto-deleted 20 days after they are created.
+                    </td>
+                  </tr>
+                ) : (
+                  filteredRecordings.map((item) => (
+                    <tr key={item.id} className="text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-900/40 transition-colors">
+                      <td className="py-4 text-slate-500 dark:text-slate-400 font-mono text-[10px]">
+                        {new Date(item.created_at).toLocaleString()}
+                      </td>
+                      <td className="py-4 font-semibold text-slate-800 dark:text-slate-200">
+                        {item.candidate_email || '—'}
+                      </td>
+                      <td className="py-4 text-center font-mono text-[10px]">
+                        #{item.interview_id ?? '—'} / Q{item.question_id ?? '—'}
+                      </td>
+                      <td className="py-4">
+                        <Badge variant={item.status === 'active' ? 'success' : 'neutral'}>
+                          {item.status === 'active' ? 'Active' : 'Deleted'}
+                        </Badge>
+                      </td>
+                      <td className="py-4 text-slate-500 dark:text-slate-400 font-mono text-[10px]">
+                        {item.deleted_at ? new Date(item.deleted_at).toLocaleString() : '—'}
+                      </td>
+                      <td className="py-4">
+                        <div className="flex justify-end">
+                          <DeleteButton
+                            onConfirm={() => handleDeleteRecordingLog(item.id)}
+                            confirmMessage="Delete this recording log entry permanently?"
+                            title="Delete Recording Log"
                           />
                         </div>
                       </td>

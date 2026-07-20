@@ -13,5 +13,6 @@ from app.models.models import (
     AdminLog,
     CodeSubmission,
     SecondInterviewRequest,
-    EmailLog
+    EmailLog,
+    RecordingLog
 )

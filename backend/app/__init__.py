@@ -90,6 +90,14 @@ def create_app(config_class=Config):
         db.session.rollback()
         print(f"Failed to seed admin on startup: {str(e)}")
 
+    # Start the background retention worker that auto-deletes interview recordings older
+    # than the retention window (RECORDING_RETENTION_DAYS) and audits each deletion.
+    try:
+        from app.routes.interview_routes import start_recording_cleanup_worker
+        start_recording_cleanup_worker()
+    except Exception as e:
+        print(f"Failed to start recording-cleanup worker: {str(e)}")
+
     @app.get("/health")
     def health():
         return {'status': 'healthy', 'mode': config_class.AI_MODE}

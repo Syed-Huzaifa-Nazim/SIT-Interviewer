@@ -66,6 +66,35 @@ class SupabaseService:
         return None
 
     @staticmethod
+    def delete_interview_audio(storage_ref: str) -> bool:
+        """Permanently deletes a recorded interview answer identified by a
+        ``supabase://bucket/path`` reference. Returns True on success (or if it was
+        already gone), False if Supabase is unconfigured or the request fails. Local-disk
+        references are handled by the caller, not here."""
+        if not storage_ref or not storage_ref.startswith('supabase://'):
+            return False
+        url = Config.SUPABASE_URL
+        key = Config.SUPABASE_KEY
+        if not url or not key:
+            return False
+
+        bucket_and_path = storage_ref[len('supabase://'):]
+        bucket, _, storage_path = bucket_and_path.partition('/')
+        url = url.rstrip('/')
+        delete_url = f"{url}/storage/v1/object/{bucket}/{storage_path}"
+        headers = {"Authorization": f"Bearer {key}", "ApiKey": key}
+        try:
+            response = requests.delete(delete_url, headers=headers, timeout=20)
+            # 200 = deleted; 404 = already gone (treat as success so we don't retry forever).
+            if response.status_code in (200, 404):
+                return True
+            print(f"Supabase delete responded with code {response.status_code}: {response.text}")
+            return False
+        except Exception as e:
+            print(f"Supabase delete exception: {str(e)}")
+            return False
+
+    @staticmethod
     def get_interview_audio_signed_url(storage_ref: str, expires_in: int = 3600):
         """Generates a short-lived signed URL for a private ``supabase://bucket/path``
         audio reference, for authorized (e.g. admin) playback. Returns None if the
