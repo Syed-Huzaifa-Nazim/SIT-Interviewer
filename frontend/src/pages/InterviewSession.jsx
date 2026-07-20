@@ -65,6 +65,11 @@ const InterviewSession = () => {
   const streamRef = useRef(null);
   const lastViolationTimeRef = useRef({});
   const faceBadSinceRef = useRef(null);
+  // Eye/gaze proctoring (§1): when gaze first went off-screen, when the eyes first
+  // appeared closed, and the last time the gaze math actually ran (throttled).
+  const gazeAwaySinceRef = useRef(null);
+  const eyesClosedSinceRef = useRef(null);
+  const lastGazeCheckRef = useRef(0);
 
   // Voice capture refs
   const [isRecording, setIsRecording] = useState(false);
@@ -327,7 +332,11 @@ const InterviewSession = () => {
 
           faceMesh.setOptions({
             maxNumFaces: 2,
-            refineLandmarks: false,
+            // Iris refinement adds landmarks 468-477 (both irises), which is what makes
+            // eye/gaze tracking possible (§1.2). It costs extra inference per frame, so the
+            // gaze evaluation itself is throttled below and degrades gracefully to the
+            // existing checks if these landmarks are ever unavailable.
+            refineLandmarks: true,
             minDetectionConfidence: 0.5,
             minTrackingConfidence: 0.5
           });
@@ -508,8 +517,8 @@ const InterviewSession = () => {
         faceBadSinceRef.current = Date.now();
       } else if (Date.now() - faceBadSinceRef.current > 2000) {
         const reason = tooSmall
-          ? 'Please move closer — your full face must be clearly visible in the frame.'
-          : 'Please center your full face in the camera frame.';
+          ? 'Please look into your camera and move closer — your face needs to be clearly visible.'
+          : 'Please look into your camera — your full face needs to be clearly visible and centered.';
         logSoftViolation('FULL_FACE', reason);
       }
     } else {
@@ -531,6 +540,90 @@ const InterviewSession = () => {
           logProctorViolation('LOOK_AWAY', 'Turned head or looked away from the monitor.');
         }
       }
+    }
+
+    // Eye / gaze tracking (§1) — runs last so the LOOK_AWAY suppression below sees any
+    // head-turn already logged for this frame.
+    checkEyeGaze(landmarks);
+  };
+
+  // 7a-bis. Eye/gaze proctoring (§1.3, soft): uses the iris landmarks added by
+  // refineLandmarks to estimate where the eyes are looking and whether they're open.
+  // Deliberately tolerant — a candidate glancing down to think is normal and must not be
+  // flagged, so a warning needs GAZE_AWAY_MS of *continuous* off-screen gaze.
+  const GAZE_AWAY_MS = 5000;      // confirmed threshold: 5s continuous
+  const EYES_CLOSED_MS = 5000;    // eyes closed/undetectable for this long
+  const GAZE_CHECK_INTERVAL_MS = 150;  // throttle: gaze math ~6-7x/sec, not every frame
+
+  const checkEyeGaze = (landmarks) => {
+    // Iris landmarks (468-477) only exist when refineLandmarks is on. If they're missing
+    // for any reason, skip gaze entirely — every existing check keeps working.
+    if (!landmarks || landmarks.length < 478) return;
+
+    const now = Date.now();
+    if (now - lastGazeCheckRef.current < GAZE_CHECK_INTERVAL_MS) return;
+    lastGazeCheckRef.current = now;
+
+    // Don't double-flag a head turn: if LOOK_AWAY just fired, that behaviour is already
+    // reported as a hard violation, so stay quiet and reset the gaze clock.
+    const lastLookAway = lastViolationTimeRef.current['LOOK_AWAY'] || 0;
+    if (now - lastLookAway < 5000) {
+      gazeAwaySinceRef.current = null;
+      return;
+    }
+
+    // Eye openness via a vertical/horizontal ratio (eye-aspect-ratio style). Averaged
+    // across both eyes so one partially occluded eye doesn't trip it.
+    const eyeOpenRatio = (topIdx, bottomIdx, leftIdx, rightIdx) => {
+      const h = Math.abs(landmarks[bottomIdx].y - landmarks[topIdx].y);
+      const w = Math.abs(landmarks[rightIdx].x - landmarks[leftIdx].x);
+      return w > 0 ? h / w : 1;
+    };
+    const openness = (eyeOpenRatio(159, 145, 33, 133) + eyeOpenRatio(386, 374, 362, 263)) / 2;
+
+    if (openness < 0.12) {
+      if (!eyesClosedSinceRef.current) {
+        eyesClosedSinceRef.current = now;
+      } else if (now - eyesClosedSinceRef.current > EYES_CLOSED_MS) {
+        logSoftViolation('EYES_NOT_VISIBLE', 'Please look into your camera — your eyes need to be clearly visible.');
+        eyesClosedSinceRef.current = now; // re-arm rather than repeating every frame
+      }
+      gazeAwaySinceRef.current = null;  // can't judge gaze with closed eyes
+      return;
+    }
+    eyesClosedSinceRef.current = null;
+
+    // Gaze position: where each iris centre sits inside its own eye opening. ~0.5 on both
+    // axes means looking straight at the camera/screen.
+    const gazeRatio = (irisIdx, leftIdx, rightIdx, topIdx, bottomIdx) => {
+      const iris = landmarks[irisIdx];
+      const l = landmarks[leftIdx], r = landmarks[rightIdx];
+      const t = landmarks[topIdx], b = landmarks[bottomIdx];
+      const w = r.x - l.x;
+      const h = b.y - t.y;
+      return {
+        h: w !== 0 ? (iris.x - l.x) / w : 0.5,
+        v: h !== 0 ? (iris.y - t.y) / h : 0.5,
+      };
+    };
+    const left = gazeRatio(468, 33, 133, 159, 145);
+    const right = gazeRatio(473, 362, 263, 386, 374);
+    const hAvg = (left.h + right.h) / 2;
+    const vAvg = (left.v + right.v) / 2;
+
+    // Generous bounds: only a clear, sustained look away from the screen counts. Vertical
+    // is looser than horizontal because eyelid geometry makes the vertical ratio noisier.
+    const lookingAway = hAvg < 0.32 || hAvg > 0.68 || vAvg < 0.18 || vAvg > 0.85;
+
+    if (lookingAway) {
+      if (!gazeAwaySinceRef.current) {
+        gazeAwaySinceRef.current = now;
+      } else if (now - gazeAwaySinceRef.current > GAZE_AWAY_MS) {
+        logSoftViolation('GAZE_AWAY', 'Please keep your eyes on the screen during the interview.');
+        gazeAwaySinceRef.current = now; // re-arm for the next continuous 5s window
+      }
+    } else {
+      gazeAwaySinceRef.current = null;
     }
   };
 
@@ -558,6 +651,17 @@ const InterviewSession = () => {
       logProctorViolation('PHONE_DETECTED', 'Mobile phone detected in the camera view. Please remove all devices.');
     }
   };
+
+  // Human-readable badge for each question type, including the four coding formats
+  // (Coding Formats §2.2) which would otherwise render as raw snake_case.
+  const QUESTION_TYPE_LABELS = {
+    coding_scenario: 'Coding Scenario',
+    coding_logic: 'Logic & Approach',
+    coding_concept: 'Technical Concept',
+    coding_debug: 'Debugging',
+  };
+  const questionTypeLabel = (type) =>
+    QUESTION_TYPE_LABELS[type] || `${type || 'Interview'} Question`;
 
   const formatTime = (secs) => {
     const s = Math.max(0, secs || 0);
@@ -620,6 +724,9 @@ const InterviewSession = () => {
     audioChunksRef.current = [];
     setHasRecorded(false);
     faceBadSinceRef.current = null;
+    // Reset eye/gaze state too, so a warning can't carry over between questions (§1).
+    gazeAwaySinceRef.current = null;
+    eyesClosedSinceRef.current = null;
     startQuestionTimer(activeQuestion);
 
     return () => clearCountdown();
@@ -1076,8 +1183,8 @@ const InterviewSession = () => {
                   <Sparkles className="text-white animate-pulse" size={32} />
                 </div>
                 <div className="text-center space-y-1">
-                  <h3 className="font-bold text-slate-900 dark:text-white text-base">Processing Response...</h3>
-                  <p className="text-xs text-slate-500">Whisper & the evaluator are analyzing your answer.</p>
+                  <h3 className="font-bold text-slate-900 dark:text-white text-base">Saving your answer...</h3>
+                  <p className="text-xs text-slate-500">Moving you to the next question — grading happens in the background.</p>
                 </div>
               </div>
             )}
@@ -1085,7 +1192,7 @@ const InterviewSession = () => {
             <div className="space-y-4">
               <div className="flex items-center gap-2">
                 <Badge variant="primary" size="lg" className="capitalize !normal-case">
-                  {activeQuestion?.question_type} Question
+                  {questionTypeLabel(activeQuestion?.question_type)}
                 </Badge>
                 <button
                   onClick={() => {
@@ -1118,6 +1225,20 @@ const InterviewSession = () => {
               <h1 className="text-xl md:text-2xl font-extrabold text-slate-900 dark:text-white leading-relaxed">
                 {activeQuestion?.question_text}
               </h1>
+
+              {/* Debugging questions ship a code snippet (Coding Formats §2.2). It is a
+                  separate field from question_text specifically so it renders as code and
+                  is never read aloud by the question voice. */}
+              {activeQuestion?.code_snippet && (
+                <div className="space-y-1.5">
+                  <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest">
+                    Review this code
+                  </span>
+                  <pre className="w-full overflow-x-auto p-4 bg-slate-900 dark:bg-slate-950 border border-slate-700 dark:border-slate-800 rounded-xl text-[12px] leading-relaxed text-slate-100 font-mono">
+                    <code>{activeQuestion.code_snippet}</code>
+                  </pre>
+                </div>
+              )}
             </div>
 
             <div className="mt-10 pt-8 border-t border-slate-200 dark:border-slate-800 flex flex-col items-center">

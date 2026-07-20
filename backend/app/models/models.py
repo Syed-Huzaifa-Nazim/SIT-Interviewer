@@ -167,6 +167,20 @@ class Interview(db.Model):
     # e.g. 'time_expired'. NULL for normally-completed / proctor-failed sessions.
     terminated_reason = db.Column(db.String(40), nullable=True)
 
+    # Background scoring state (Perf §1): answer scoring + report generation run
+    # asynchronously so the candidate advances instantly. 'pending' while any answer is
+    # still being scored / the report isn't generated, 'complete' once the report exists,
+    # 'failed' if finalization gave up. Also used as an atomic single-winner claim so only
+    # one background thread generates the final report. NULL on legacy rows (treated as
+    # already-complete for old finished interviews).
+    scoring_status = db.Column(db.String(20), default='pending')
+
+    # Base64 webcam frame captured by the client on the final submission. Stashed here
+    # (rather than written straight to InterviewReport) because report generation now
+    # happens asynchronously in the background scoring worker (Perf §1) — whichever
+    # thread finalizes the report reads this column and copies it onto InterviewReport.
+    completion_snapshot_image = db.Column(db.Text, nullable=True)
+
     # Relationships
     questions = db.relationship('InterviewQuestion', backref='interview', lazy=True, cascade="all, delete-orphan")
     responses = db.relationship('InterviewResponse', backref='interview', lazy=True, cascade="all, delete-orphan")
@@ -188,6 +202,7 @@ class Interview(db.Model):
             'proctor_violations_count': self.proctor_violations_count,
             'proctor_logs': self.proctor_logs,
             'terminated_reason': self.terminated_reason,
+            'scoring_status': self.scoring_status,
             'created_at': self.created_at.isoformat() if self.created_at else None
         }
 
@@ -197,7 +212,13 @@ class InterviewQuestion(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     interview_id = db.Column(db.Integer, db.ForeignKey('interviews.id', ondelete='CASCADE'), nullable=False)
     question_text = db.Column(db.Text, nullable=False)
-    question_type = db.Column(db.String(50), default='conceptual')  # conceptual, scenario, coding, hr, behavioral
+    # conceptual, scenario, coding, hr, behavioral, plus the four coding formats:
+    # coding_scenario, coding_logic, coding_concept, coding_debug (Coding Formats §2.2)
+    question_type = db.Column(db.String(50), default='conceptual')
+    # Code shown alongside the question (Format 4 / debugging questions). Kept separate
+    # from question_text so it renders as a monospace block and is NEVER read aloud by the
+    # question read-aloud voice.
+    code_snippet = db.Column(db.Text, nullable=True)
     order_num = db.Column(db.Integer, nullable=False)
 
     # Per-question timer (§2). ``time_limit_seconds`` is set at creation from the
@@ -223,6 +244,7 @@ class InterviewQuestion(db.Model):
             'interview_id': self.interview_id,
             'question_text': self.question_text,
             'question_type': self.question_type,
+            'code_snippet': self.code_snippet,
             'order_num': self.order_num,
             'time_limit_seconds': self.time_limit_seconds or 120,
             'started_at': self.started_at.isoformat() if self.started_at else None,
@@ -243,6 +265,11 @@ class InterviewResponse(db.Model):
     communication_score = db.Column(db.Float, nullable=True)
     confidence_score = db.Column(db.Float, nullable=True)
     feedback = db.Column(db.Text, nullable=True)
+    # Background scoring state (Perf §1): 'pending' the instant the answer is saved (the
+    # candidate has already advanced), 'scored' once the LLM evaluation lands, 'failed' if
+    # scoring gave up (feedback is flagged for manual review in that case). Defaults to
+    # 'scored' so legacy rows written by the old synchronous path read as complete.
+    scoring_status = db.Column(db.String(20), default='scored')
     created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
 
     def to_dict(self):
@@ -258,6 +285,7 @@ class InterviewResponse(db.Model):
             'communication_score': self.communication_score,
             'confidence_score': self.confidence_score,
             'feedback': self.feedback,
+            'scoring_status': self.scoring_status,
             'created_at': self.created_at.isoformat() if self.created_at else None
         }
 

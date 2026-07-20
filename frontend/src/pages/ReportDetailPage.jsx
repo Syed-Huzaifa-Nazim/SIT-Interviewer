@@ -39,17 +39,36 @@ const ReportDetailPage = () => {
   const [feedbackLoading, setFeedbackLoading] = useState(false);
 
   useEffect(() => {
+    let cancelled = false;
+    let pollId = null;
+
     const fetchReport = async () => {
       try {
         const res = await api.get(`/interviews/${id}/report`);
+        if (cancelled) return;
         setData(res.data);
+        setError('');
+        // Scoring now runs in the background (Perf §1.6): if the report isn't ready yet,
+        // keep polling until it lands, then stop.
+        if (!res.data.report && res.data.scoring_status === 'in_progress') {
+          if (!pollId) pollId = setInterval(fetchReport, 3000);
+        } else if (pollId) {
+          clearInterval(pollId);
+          pollId = null;
+        }
       } catch (err) {
+        if (cancelled) return;
         setError(err.response?.data?.message || 'Failed to retrieve assessment scorecard.');
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
     fetchReport();
+
+    return () => {
+      cancelled = true;
+      if (pollId) clearInterval(pollId);
+    };
   }, [id]);
 
   const handleSubmitFeedback = async (e) => {
@@ -82,7 +101,7 @@ const ReportDetailPage = () => {
     );
   }
 
-  if (error || !data) {
+  if (!data) {
     return (
       <Card className="text-center max-w-md mx-auto space-y-4 my-10">
         <AlertCircle className="mx-auto text-red-500" size={32} />
@@ -91,6 +110,28 @@ const ReportDetailPage = () => {
         <Link to="/dashboard">
           <Button size="sm">Back to Dashboard</Button>
         </Link>
+      </Card>
+    );
+  }
+
+  // Scoring in progress (Perf §1.6): the interview is finished but the AI is still grading
+  // the answers and assembling the report in the background. The effect above polls until
+  // this resolves, so this view swaps itself for the full scorecard automatically.
+  if (!data.report) {
+    return (
+      <Card className="text-center max-w-md mx-auto space-y-4 my-10">
+        <div className="p-4 bg-gradient-to-tr from-primary-500 to-indigo-500 rounded-2xl w-fit mx-auto shadow-lg">
+          <Activity className="text-white animate-pulse" size={28} />
+        </div>
+        <h3 className="font-bold text-lg text-slate-900 dark:text-white">Scoring in progress</h3>
+        <p className="text-slate-500 dark:text-slate-400 text-sm leading-relaxed">
+          Your interview is complete. Our AI is grading each answer and assembling your
+          detailed scorecard now — this page will update automatically in a few moments.
+        </p>
+        <div className="flex items-center justify-center gap-2 text-xs font-semibold text-primary-600 dark:text-primary-400">
+          <Spinner size="sm" />
+          <span>Evaluating responses…</span>
+        </div>
       </Card>
     );
   }

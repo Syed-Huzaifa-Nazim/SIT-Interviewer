@@ -3,6 +3,7 @@ import datetime
 import json
 import tempfile
 import subprocess
+import threading
 from fastapi import APIRouter, Request, HTTPException, status, Depends, UploadFile, File, Form
 from app.database.db import db
 from app.models import (
@@ -152,6 +153,8 @@ async def start_interview(request: Request, user_id: int = Depends(get_current_u
                 interview_id=interview.id,
                 question_text=q_text,
                 question_type=q_type,
+                # Only debugging-format questions carry one (Coding Formats §2.2).
+                code_snippet=q_data.get('code_snippet'),
                 order_num=idx + 1,
                 time_limit_seconds=question_time_limit(q_type)  # per-question timer (§2)
             )
@@ -284,6 +287,218 @@ async def transcribe_audio(audio: UploadFile = File(...), user_id: int = Depends
             os.remove(save_path)
         raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
 
+def _run_answer_scoring(interview_id, question_id, response_id, user_id,
+                        local_audio_path, audio_content_type, fallback_text, timed_out):
+    """Background worker (Perf §1.3): transcribe (if audio) + LLM-evaluate ONE answer, then
+    finalize the report if this was the last outstanding answer. Runs on its own daemon
+    thread with its own thread-local scoped session (mirrors EmailService) — the candidate's
+    submit request already returned and they've advanced to the next question, so nothing
+    here is on the critical path. The session is always removed at the end so no connection
+    leaks."""
+    try:
+        response = InterviewResponse.query.get(response_id)
+        if not response:
+            return
+        question = InterviewQuestion.query.get(question_id)
+        interview = Interview.query.get(interview_id)
+        if not question or not interview:
+            return
+
+        answer_text = (response.response_text or '')
+        # The fast path stored a display placeholder for empty timed-out skips; treat that
+        # as "no text yet" so a real transcript can still fill it in.
+        if answer_text.strip() == '[No answer recorded — time expired]':
+            answer_text = ''
+        audio_ref = response.audio_path
+
+        # 1. Authoritative transcription (Whisper) from the recording, when there's audio and
+        #    no typed/authoritative text was supplied. On failure fall back to the live
+        #    browser transcript so an answer is never lost (§3). Then push the recording to
+        #    the PRIVATE Supabase bucket and drop the local temp file.
+        if local_audio_path and os.path.exists(local_audio_path):
+            if not answer_text.strip():
+                try:
+                    answer_text = WhisperService.transcribe(local_audio_path, question_text=question.question_text)
+                except TranscriptionError as te:
+                    answer_text = fallback_text if (fallback_text and fallback_text.strip()) else ''
+                    print(f"[scoring] Whisper failed for response {response_id} ({te}); used live-transcript fallback.")
+            try:
+                with open(local_audio_path, 'rb') as f:
+                    contents = f.read()
+                storage_ref = SupabaseService.upload_interview_audio(
+                    user_id, interview_id, question_id, contents,
+                    content_type=audio_content_type or 'audio/webm'
+                )
+                if storage_ref:
+                    audio_ref = storage_ref
+                    try:
+                        os.remove(local_audio_path)
+                    except OSError:
+                        pass
+                else:
+                    audio_ref = local_audio_path
+                    print(f"[scoring] Supabase upload unavailable; keeping local file {local_audio_path}.")
+            except OSError as oe:
+                print(f"[scoring] Could not read local audio {local_audio_path}: {oe}")
+
+        is_empty = not answer_text or not answer_text.strip()
+        display_text = answer_text if not is_empty else '[No answer recorded — time expired]'
+
+        # 2. LLM evaluation. All coding formats are verbal, so they route through this same
+        #    transcript -> LLM pipeline (Coding Formats §2.4); the format-specific rubric is
+        #    applied inside evaluate_response. It never raises — it returns a neutral,
+        #    manual-review fallback if the model is unavailable, so a transient outage can't
+        #    zero a candidate unfairly.
+        eval_data = MixtralService.evaluate_response(
+            question.question_text,
+            answer_text or '',
+            job_role=interview.job_role,
+            difficulty=interview.difficulty,
+            question_type=question.question_type,
+            code_snippet=question.code_snippet
+        )
+        stored_feedback = eval_data.get('feedback', '')
+        if eval_data.get('needs_manual_review'):
+            stored_feedback = f"[FLAGGED FOR MANUAL REVIEW] {stored_feedback}"
+
+        response.response_text = display_text
+        response.audio_path = audio_ref
+        response.score = eval_data.get('score', 0)
+        response.technical_score = eval_data.get('technical_score', 0)
+        response.communication_score = eval_data.get('communication_score', 0)
+        response.confidence_score = eval_data.get('confidence_score', 0)
+        response.feedback = stored_feedback
+        response.scoring_status = 'scored'
+        db.session.commit()
+
+        # 3. If every answer is now scored, generate the final report — guarded so exactly
+        #    one thread does it even when answers finish scoring out of order.
+        _finalize_report_if_ready(interview_id)
+
+    except Exception as e:
+        db.session.rollback()
+        # Never lose the answer: flag it for manual review instead of crashing the thread.
+        try:
+            response = InterviewResponse.query.get(response_id)
+            if response:
+                response.scoring_status = 'failed'
+                if not response.feedback:
+                    response.feedback = "[FLAGGED FOR MANUAL REVIEW] Automated scoring failed unexpectedly."
+                db.session.commit()
+                _finalize_report_if_ready(interview_id)
+        except Exception:
+            db.session.rollback()
+        print(f"[scoring] Unexpected error scoring response {response_id}: {e}")
+    finally:
+        db.session.remove()
+
+
+def _finalize_report_if_ready(interview_id):
+    """Generate the interview report once ALL answers are scored — exactly once. A failed
+    answer counts as resolved so one bad answer can't stall the whole report. Uses an atomic
+    single-row UPDATE ('pending' -> 'finalizing') as a claim, so concurrent scoring threads
+    can never double-generate the report."""
+    interview = Interview.query.get(interview_id)
+    if not interview or interview.status != 'completed':
+        return
+    if interview.scoring_status != 'pending':
+        return  # already finalized / claimed / not applicable (e.g. proctor-terminated)
+
+    total_questions = InterviewQuestion.query.filter_by(interview_id=interview_id).count()
+    total_responses = InterviewResponse.query.filter_by(interview_id=interview_id).count()
+    resolved = InterviewResponse.query.filter(
+        InterviewResponse.interview_id == interview_id,
+        InterviewResponse.scoring_status.in_(('scored', 'failed'))
+    ).count()
+    if total_responses < total_questions or resolved < total_questions:
+        return  # some answers are still being scored
+
+    # Atomic claim: only the thread that flips 'pending' -> 'finalizing' proceeds.
+    claimed = db.session.query(Interview).filter(
+        Interview.id == interview_id,
+        Interview.scoring_status == 'pending'
+    ).update({Interview.scoring_status: 'finalizing'}, synchronize_session=False)
+    db.session.commit()
+    if not claimed:
+        return  # another thread won the claim
+
+    try:
+        if InterviewReport.query.filter_by(interview_id=interview_id).first():
+            interview.scoring_status = 'complete'
+            db.session.commit()
+            return
+
+        qas = []
+        saved_q = InterviewQuestion.query.filter_by(interview_id=interview_id).order_by(InterviewQuestion.order_num).all()
+        for q in saved_q:
+            r = InterviewResponse.query.filter_by(interview_id=interview_id, question_id=q.id).first()
+            if r:
+                qas.append({
+                    'question': q.question_text,
+                    'answer': r.response_text,
+                    'evaluation': {
+                        'score': r.score or 0,
+                        'technical_score': r.technical_score or 0,
+                        'communication_score': r.communication_score or 0,
+                        'confidence_score': r.confidence_score or 0,
+                    }
+                })
+
+        report_data = MixtralService.generate_report(interview.type, interview.job_role, qas)
+
+        # The LLM path returns real lists; the mock path returns JSON strings. Serialize any
+        # list/dict so the stored value is always valid JSON the frontend can parse.
+        def _as_text(value, empty='[]'):
+            if value is None:
+                return empty
+            if isinstance(value, (list, dict)):
+                return json.dumps(value)
+            return value
+
+        report = InterviewReport(
+            interview_id=interview_id,
+            overall_score=report_data.get('overall_score', 0),
+            technical_score=report_data.get('technical_score', 0),
+            communication_score=report_data.get('communication_score', 0),
+            confidence_score=report_data.get('confidence_score', 0),
+            problem_solving_score=report_data.get('problem_solving_score', 0),
+            strengths=_as_text(report_data.get('strengths'), '[]'),
+            weaknesses=_as_text(report_data.get('weaknesses'), '[]'),
+            missing_concepts=_as_text(report_data.get('missing_concepts'), ''),
+            recommendations=_as_text(report_data.get('recommendations'), ''),
+            # Completion snapshot captured by the client on the final submission and
+            # stashed on the interview row (see submit_answer), for admin review.
+            snapshot_image=interview.completion_snapshot_image,
+            snapshot_description='Camera snapshot captured at interview completion.' if interview.completion_snapshot_image else None
+        )
+        db.session.add(report)
+
+        interview.overall_score = report_data.get('overall_score')
+        interview.feedback_summary = f"Completed interview with score of {report_data.get('overall_score', 0)}%."
+
+        notification = Notification(
+            user_id=interview.user_id,
+            title='Interview Evaluation Ready!',
+            message=f"Your interview report for {interview.job_role} is complete. Overall Score: {report_data.get('overall_score', 0)}%!",
+            type='interview'
+        )
+        db.session.add(notification)
+
+        interview.scoring_status = 'complete'
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        # Release the claim so a later trigger can retry instead of getting stuck 'finalizing'.
+        try:
+            interview = Interview.query.get(interview_id)
+            if interview and interview.scoring_status == 'finalizing':
+                interview.scoring_status = 'pending'
+                db.session.commit()
+        except Exception:
+            db.session.rollback()
+        print(f"[scoring] Report finalization failed for interview {interview_id}: {e}")
+
+
 @interview_bp.post('/{interview_id}/submit-answer')
 async def submit_answer(
     interview_id: int,
@@ -302,6 +517,10 @@ async def submit_answer(
     audio: UploadFile = File(None),
     user_id: int = Depends(get_current_user_id)
 ):
+    """Fast path (Perf §1.3): persist the answer and let the candidate advance IMMEDIATELY.
+    Transcription, LLM scoring, Supabase audio upload, and report generation all happen on a
+    background thread so there is no idle gap between questions for a candidate to exploit —
+    proctoring/termination now reacts in real time instead of waiting on the LLM."""
     interview = Interview.query.filter_by(id=interview_id, user_id=user_id).first()
 
     if not interview:
@@ -315,114 +534,56 @@ async def submit_answer(
         raise HTTPException(status_code=400, detail="Question does not belong to this interview")
 
     os.makedirs(Config.UPLOAD_FOLDER, exist_ok=True)
-    audio_path = None
+    local_audio_path = None
+    audio_content_type = None
 
+    # Write any recording to a local temp file quickly (fast local IO only). Whisper needs a
+    # local file to read, and the background worker both transcribes it and uploads it to
+    # Supabase — keeping both off the request path.
     if audio:
         filename = audio.filename
         if filename and allowed_file(filename):
             safe_name = f"user_{user_id}_int_{interview_id}_q_{question_id}_{int(datetime.datetime.utcnow().timestamp())}.webm"
             save_path = os.path.join(Config.UPLOAD_FOLDER, safe_name)
-
             contents = await audio.read()
             with open(save_path, "wb") as f:
                 f.write(contents)
+            local_audio_path = save_path
+            audio_content_type = audio.content_type or 'audio/webm'
 
-            # Whisper needs a local file to read/convert, so the temp file above is
-            # written first regardless of storage destination.
-            audio_path = save_path
+    # Best-available text to store immediately (typed answer is authoritative; otherwise the
+    # live browser transcript). The authoritative Whisper transcript replaces this in the
+    # background for voice answers.
+    initial_text = ''
+    if response_text and response_text.strip():
+        initial_text = response_text.strip()
+    elif fallback_text and fallback_text.strip():
+        initial_text = fallback_text.strip()
 
-            # Whisper stays authoritative for scoring (§3). If the client didn't already
-            # supply reviewed text, transcribe the audio; if Whisper fails, fall back to the
-            # live browser transcript rather than discarding the candidate's answer.
-            if not response_text or not response_text.strip():
-                try:
-                    response_text = WhisperService.transcribe(audio_path, question_text=question.question_text)
-                except TranscriptionError as te:
-                    if fallback_text and fallback_text.strip():
-                        print(f"[submit-answer] Whisper failed ({te}); using live browser transcript fallback.")
-                        response_text = fallback_text
-                    elif timed_out:
-                        response_text = ''  # a timed-out skip with no usable transcript
-                    else:
-                        raise HTTPException(
-                            status_code=503,
-                            detail=(
-                                "We couldn't transcribe your audio right now. Please type your answer "
-                                f"or try again. ({te})"
-                            )
-                        )
-
-            # Persist the recorded audio directly to a PRIVATE Supabase Storage bucket
-            # rather than keeping it on local disk — candidate voice recordings are
-            # sensitive personal data, so this is never made public (unlike profile
-            # pictures). On success the local temp copy is removed; if Supabase is
-            # unconfigured or the upload fails, the local file is kept as a fallback so
-            # no recording is ever silently lost.
-            storage_ref = SupabaseService.upload_interview_audio(
-                user_id, interview_id, question_id, contents, content_type=audio.content_type or 'audio/webm'
-            )
-            if storage_ref:
-                audio_path = storage_ref
-                try:
-                    os.remove(save_path)
-                except OSError:
-                    pass
-            else:
-                print(f"[submit-answer] Supabase audio upload unavailable; keeping local file at {save_path}.")
-
-    # Use the live browser transcript when no other text is available.
-    if (not response_text or not response_text.strip()) and fallback_text and fallback_text.strip():
-        response_text = fallback_text
-
-    # A normal (non-timeout) submission still requires content. A timed-out question may
-    # be an empty skip — record it as an unanswered question scored 0 (§2.2).
-    is_empty = not response_text or not response_text.strip()
-    if is_empty and not timed_out:
+    # A normal (non-timeout) submission must carry SOMETHING (text or audio). A timed-out
+    # question may legitimately be an empty skip (§2.2).
+    if not timed_out and not initial_text and not local_audio_path:
         raise HTTPException(status_code=400, detail="Response content is empty. Please type or record your answer.")
 
-    # Text actually scored (empty for a skip) vs the text stored for display.
-    answer_for_eval = response_text or ''
-    display_text = response_text if not is_empty else '[No answer recorded — time expired]'
-
     try:
+        display_now = initial_text or ('[No answer recorded — time expired]' if timed_out else '')
+
         existing_resp = InterviewResponse.query.filter_by(interview_id=interview_id, question_id=question_id).first()
-        eval_data = MixtralService.evaluate_response(
-            question.question_text,
-            answer_for_eval,
-            job_role=interview.job_role,
-            difficulty=interview.difficulty,
-            question_type=question.question_type
-        )
-        response_text = display_text
-
-        # Persist the LLM rationale together with the transcript (§2.4). Low-confidence
-        # evaluations are prefixed so they surface as needing manual review.
-        stored_feedback = eval_data.get('feedback', '')
-        if eval_data.get('needs_manual_review'):
-            stored_feedback = f"[FLAGGED FOR MANUAL REVIEW] {stored_feedback}"
-
         if existing_resp:
-            existing_resp.response_text = response_text
-            existing_resp.audio_path = audio_path or existing_resp.audio_path
+            existing_resp.response_text = display_now
             existing_resp.duration = duration or existing_resp.duration
-            existing_resp.score = eval_data.get('score', 0)
-            existing_resp.technical_score = eval_data.get('technical_score', 0)
-            existing_resp.communication_score = eval_data.get('communication_score', 0)
-            existing_resp.confidence_score = eval_data.get('confidence_score', 0)
-            existing_resp.feedback = stored_feedback
+            existing_resp.scoring_status = 'pending'
+            if local_audio_path:
+                existing_resp.audio_path = local_audio_path
             resp_record = existing_resp
         else:
             resp_record = InterviewResponse(
                 interview_id=interview_id,
                 question_id=question_id,
-                response_text=response_text,
-                audio_path=audio_path,
+                response_text=display_now,
+                audio_path=local_audio_path,
                 duration=duration,
-                score=eval_data.get('score', 0),
-                technical_score=eval_data.get('technical_score', 0),
-                communication_score=eval_data.get('communication_score', 0),
-                confidence_score=eval_data.get('confidence_score', 0),
-                feedback=stored_feedback
+                scoring_status='pending'
             )
             db.session.add(resp_record)
 
@@ -434,86 +595,48 @@ async def submit_answer(
         is_completed = total_responses >= total_questions
 
         if is_completed:
+            # Mark the session finished right away so routing / forced-logout / re-signup
+            # detection don't wait on background scoring. The report is produced by the
+            # background worker; scoring_status stays 'pending' until it lands (§1.6).
             interview.status = 'completed'
+            interview.scoring_status = 'pending'
             # When the final question is submitted because its timer ran out, record that
             # the session ended on time expiry for admin visibility (§2.2).
             if timed_out and not interview.terminated_reason:
                 interview.terminated_reason = 'time_expired'
-            db.session.commit()
-
-            qas = []
-            saved_q = InterviewQuestion.query.filter_by(interview_id=interview_id).order_by(InterviewQuestion.order_num).all()
-            for q in saved_q:
-                r = InterviewResponse.query.filter_by(interview_id=interview_id, question_id=q.id).first()
-                if r:
-                    qas.append({
-                        'question': q.question_text,
-                        'answer': r.response_text,
-                        'evaluation': {
-                            'score': r.score,
-                            'technical_score': r.technical_score,
-                            'communication_score': r.communication_score,
-                            'confidence_score': r.confidence_score,
-                        }
-                    })
-
-            report_data = MixtralService.generate_report(interview.type, interview.job_role, qas)
-
-            # The LLM path returns real lists; the mock path returns JSON strings. Serialize
-            # any list/dict so the stored value is always valid JSON the frontend can parse.
-            def _as_text(value, empty='[]'):
-                if value is None:
-                    return empty
-                if isinstance(value, (list, dict)):
-                    return json.dumps(value)
-                return value
-
-            report = InterviewReport(
-                interview_id=interview_id,
-                overall_score=report_data.get('overall_score', 0),
-                technical_score=report_data.get('technical_score', 0),
-                communication_score=report_data.get('communication_score', 0),
-                confidence_score=report_data.get('confidence_score', 0),
-                problem_solving_score=report_data.get('problem_solving_score', 0),
-                strengths=_as_text(report_data.get('strengths'), '[]'),
-                weaknesses=_as_text(report_data.get('weaknesses'), '[]'),
-                missing_concepts=_as_text(report_data.get('missing_concepts'), ''),
-                recommendations=_as_text(report_data.get('recommendations'), ''),
-                # Completion snapshot for admin review (only if the client sent one).
-                snapshot_image=snapshot_image or None,
-                snapshot_description='Camera snapshot captured at interview completion.' if snapshot_image else None
-            )
-            
-            interview.overall_score = report_data.get('overall_score')
-            interview.feedback_summary = f"Completed mock interview with score of {report.overall_score}%."
-            
-            db.session.add(report)
-
-            notification = Notification(
-                user_id=user_id,
-                title='Interview Evaluation Ready!',
-                message=f'Your mock interview report for {interview.job_role} is complete. Overall Score: {report.overall_score}%!',
-                type='interview'
-            )
-            db.session.add(notification)
-
+            # Stash the completion snapshot on the interview; the background worker's
+            # report finalizer (_finalize_report_if_ready) picks it up when it builds the
+            # InterviewReport, since report generation no longer happens synchronously here.
+            if snapshot_image:
+                interview.completion_snapshot_image = snapshot_image
             # One-time candidates: record that their single official interview is done
             # (drives §3.4 re-signup detection even if the thank-you screen never loads).
             completing_user = User.query.get(user_id)
             if completing_user and completing_user.must_use_otp:
                 completing_user.interview_status = 'interview_completed'
-
             db.session.commit()
+
+        response_id = resp_record.id
+
+        # Kick off async scoring — the candidate does NOT wait for this.
+        threading.Thread(
+            target=_run_answer_scoring,
+            args=(interview_id, question_id, response_id, user_id,
+                  local_audio_path, audio_content_type, fallback_text, bool(timed_out)),
+            daemon=True
+        ).start()
 
         return {
             'message': 'Answer submitted successfully',
-            'evaluation': eval_data,
-            'is_completed': is_completed
+            'is_completed': is_completed,
+            'scoring_status': 'processing'
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         db.session.rollback()
-        raise HTTPException(status_code=500, detail=f"Failed to evaluate response: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to submit response: {str(e)}")
 
 @interview_bp.get('/{interview_id}/report')
 async def get_report(interview_id: int, user_id: int = Depends(get_current_user_id)):
@@ -527,25 +650,38 @@ async def get_report(interview_id: int, user_id: int = Depends(get_current_user_
         raise HTTPException(status_code=404, detail="Interview session not found")
 
     report = InterviewReport.query.filter_by(interview_id=interview_id).first()
-    if not report:
-        raise HTTPException(status_code=404, detail="Report not generated yet")
 
     questions = InterviewQuestion.query.filter_by(interview_id=interview_id).order_by(InterviewQuestion.order_num).all()
     responses = InterviewResponse.query.filter_by(interview_id=interview_id).all()
-    
+
     responses_map = {r.question_id: r.to_dict() for r in responses}
     qna_list = []
-    
+
     for q in questions:
         qna_list.append({
             'question': q.to_dict(),
             'response': responses_map.get(q.id, None)
         })
 
+    if not report:
+        # Perf §1.6: distinguish "background scoring still running" from a genuine error so
+        # the UI can show a 'Scoring in progress' state and poll, instead of erroring. A
+        # freshly-completed interview whose report hasn't been generated yet has
+        # scoring_status pending/finalizing.
+        if interview.status == 'completed' and interview.scoring_status in ('pending', 'finalizing'):
+            return {
+                'interview': interview.to_dict(),
+                'report': None,
+                'qna': qna_list,
+                'scoring_status': 'in_progress'
+            }
+        raise HTTPException(status_code=404, detail="Report not generated yet")
+
     return {
         'interview': interview.to_dict(),
         'report': report.to_dict(),
-        'qna': qna_list
+        'qna': qna_list,
+        'scoring_status': 'complete'
     }
 
 @interview_bp.post('/evaluate-code')
@@ -679,6 +815,10 @@ def mark_interview_as_failed_proctoring(interview, snapshot_image=None, snapshot
     interview.status = 'completed'
     interview.overall_score = 0.0
     interview.feedback_summary = "Session automatically terminated due to multiple proctoring integrity violations."
+    # A proctor termination writes its own zero-score report below, so mark scoring as done
+    # (Perf §1): this prevents any still-pending background answer-scoring thread from later
+    # claiming report finalization and overwriting the termination result.
+    interview.scoring_status = 'complete'
     
     report = InterviewReport.query.filter_by(interview_id=interview.id).first()
     if not report:
