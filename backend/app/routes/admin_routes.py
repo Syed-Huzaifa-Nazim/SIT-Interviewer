@@ -6,7 +6,7 @@ from app.database.db import db
 from app.models import (
     User, Token, Transaction, Interview, Feedback, AdminLog,
     InterviewResponse, InterviewQuestion, SecondInterviewRequest, EmailLog,
-    Notification, CodeSubmission, InterviewReport
+    Notification, CodeSubmission, InterviewReport, RecordingLog
 )
 from app.utils.security import admin_required, get_current_user_id
 from app.utils.candidate import (
@@ -366,6 +366,14 @@ async def decide_reinterview_request(request_id: int, request: Request, user: Us
 async def list_email_logs(user: User = Depends(admin_required)):
     """Outbound email audit (§1): failed sends surface here instead of dying silently."""
     logs = EmailLog.query.order_by(EmailLog.created_at.desc()).limit(200).all()
+    return [l.to_dict() for l in logs]
+
+
+@admin_bp.get('/recording-logs')
+async def list_recording_logs(user: User = Depends(admin_required)):
+    """Interview-recording lifecycle audit: when each answer recording was created and,
+    once the retention window elapses, when it was automatically deleted."""
+    logs = RecordingLog.query.order_by(RecordingLog.created_at.desc()).limit(300).all()
     return [l.to_dict() for l in logs]
 
 
@@ -763,6 +771,11 @@ async def delete_admin_log(log_id: int, user: User = Depends(admin_required)):
 @admin_bp.delete('/email-logs/{log_id}')
 async def delete_email_log(log_id: int, user: User = Depends(admin_required)):
     return _delete_record(EmailLog, log_id, user, 'Email log', 'DELETE_EMAIL_LOG')
+
+
+@admin_bp.delete('/recording-logs/{log_id}')
+async def delete_recording_log(log_id: int, user: User = Depends(admin_required)):
+    return _delete_record(RecordingLog, log_id, user, 'Recording log', 'DELETE_RECORDING_LOG')
 
 
 @admin_bp.delete('/reinterview-requests/{request_id}')

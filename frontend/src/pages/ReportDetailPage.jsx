@@ -575,29 +575,6 @@ const ReportDetailPage = () => {
 
       {/* TAB 3: COMPLIANCE & AUDIT */}
       <div className={`space-y-6 ${activeTab === 'compliance' ? 'block' : 'hidden print:block'}`}>
-        {/* Session recording playback — admin only (§2.2). Rendered above the snapshot
-            grid; the recording lives in a PRIVATE bucket and streams via a signed URL. */}
-        {user?.role === 'admin' && interview.has_video && (
-          <Card className="space-y-4 no-print">
-            <h3 className="font-bold text-sm text-slate-800 dark:text-slate-200 border-b border-slate-200 dark:border-slate-800/80 pb-3">
-              Session Recording
-            </h3>
-            {videoUrl ? (
-              <video controls src={videoUrl} className="w-full rounded-xl bg-black max-h-[420px]" />
-            ) : (
-              <div className="p-8 text-center border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-xl space-y-3">
-                <p className="text-xs text-slate-500 dark:text-slate-400">
-                  A full-session camera recording is stored for this interview.
-                </p>
-                {videoError && <Alert variant="error" className="text-xs">{videoError}</Alert>}
-                <Button size="sm" loading={videoLoading} onClick={loadSessionVideo}>
-                  {videoLoading ? 'Preparing secure link...' : 'Load Session Recording'}
-                </Button>
-              </div>
-            )}
-          </Card>
-        )}
-
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-start">
           {/* Violation Snapshots */}
           <Card className="md:col-span-2 space-y-4 print:shadow-none print:border-slate-300">
@@ -630,6 +607,28 @@ const ReportDetailPage = () => {
                 <p className="text-xs text-slate-500 dark:text-slate-500 max-w-[260px] mx-auto leading-normal">
                   No visual integrity flags or snap captures were logged by the system proctoring engine.
                 </p>
+              </div>
+            )}
+
+            {/* Full-session recording — admin only (§2.2). Rendered directly below the
+                snapshot: click to fetch a short-lived signed URL from the PRIVATE
+                interview-recordings bucket, then play inline. */}
+            {user?.role === 'admin' && interview.has_video && (
+              <div className="space-y-3 pt-4 border-t border-slate-200 dark:border-slate-800/80 no-print">
+                <h4 className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider font-sans">Session Recording</h4>
+                {videoUrl ? (
+                  <video controls src={videoUrl} className="w-full rounded-xl bg-black max-h-[420px]" />
+                ) : (
+                  <div className="p-6 text-center border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-xl space-y-3">
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                      A full-session camera recording is stored for this interview.
+                    </p>
+                    {videoError && <Alert variant="error" className="text-xs">{videoError}</Alert>}
+                    <Button size="sm" loading={videoLoading} onClick={loadSessionVideo}>
+                      {videoLoading ? 'Preparing secure link...' : 'Play Session Recording'}
+                    </Button>
+                  </div>
+                )}
               </div>
             )}
           </Card>

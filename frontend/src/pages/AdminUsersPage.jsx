@@ -9,7 +9,7 @@ import Button from '../components/ui/Button';
 import SearchBar from '../components/ui/SearchBar';
 import Spinner from '../components/ui/Spinner';
 import Input from '../components/ui/Input';
-import { SIGNUP_CATEGORIES, INTERVIEW_STATUS_LABELS, isInstructorCategory } from '../utils/constants';
+import { SIGNUP_CATEGORIES, INTERVIEW_STATUS_LABELS, isInstructorCategory, formatCnic } from '../utils/constants';
 import {
   Users,
   Ban,
@@ -701,7 +701,11 @@ const AdminUsersPage = () => {
               className="w-full glass-input text-sm font-mono"
               placeholder={deleteMatch}
               value={deleteConfirmText}
-              onChange={(e) => setDeleteConfirmText(e.target.value)}
+              onChange={(e) =>
+                // Only auto-dash when confirming by CNIC (deleteMatch falls back to the
+                // candidate's name when they have no CNIC — that must stay untouched).
+                setDeleteConfirmText(deleteUser?.cnic ? formatCnic(e.target.value) : e.target.value)
+              }
               autoFocus
             />
 

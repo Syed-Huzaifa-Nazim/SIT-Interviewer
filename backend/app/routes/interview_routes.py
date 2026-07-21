@@ -1,4 +1,5 @@
 import os
+import time
 import datetime
 import json
 import tempfile
@@ -8,7 +9,7 @@ from fastapi import APIRouter, Request, HTTPException, status, Depends, UploadFi
 from app.database.db import db
 from app.models import (
     User, Token, Transaction, Interview, InterviewQuestion,
-    InterviewResponse, InterviewReport, Notification, AdminLog
+    InterviewResponse, InterviewReport, Notification, AdminLog, RecordingLog
 )
 from app.ai.mixtral.mixtral_service import MixtralService
 from app.ai.whisper.whisper_service import WhisperService, TranscriptionError
@@ -18,6 +19,73 @@ from app.utils.candidate import question_time_limit
 from app.utils.supabase_service import SupabaseService
 
 interview_bp = APIRouter()
+
+# Interview answer recordings are automatically purged this many days after they are
+# created. Each deletion is stamped on the RecordingLog audit trail.
+RECORDING_RETENTION_DAYS = 20
+# How often the background retention worker scans for expired recordings.
+RECORDING_CLEANUP_INTERVAL_SECONDS = 6 * 60 * 60  # every 6 hours
+
+
+def cleanup_expired_recordings():
+    """Delete interview recordings older than the retention window and stamp each one as
+    deleted on its RecordingLog row. Safe to call repeatedly: it only touches rows still
+    marked 'active'. Runs on a background thread with its own scoped session."""
+    cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=RECORDING_RETENTION_DAYS)
+    try:
+        expired = RecordingLog.query.filter(
+            RecordingLog.status == 'active',
+            RecordingLog.created_at < cutoff
+        ).all()
+        for rec in expired:
+            ref = rec.storage_ref or ''
+            deleted_ok = True
+            if ref.startswith('supabase://'):
+                deleted_ok = SupabaseService.delete_interview_audio(ref)
+            elif ref:
+                # Local upload path — remove the file if it's still on disk.
+                try:
+                    if os.path.exists(ref):
+                        os.remove(ref)
+                except OSError as oe:
+                    print(f"[recording-cleanup] Could not remove local file {ref}: {oe}")
+                    deleted_ok = False
+
+            if deleted_ok:
+                rec.status = 'deleted'
+                rec.deleted_at = datetime.datetime.utcnow()
+                # Detach the pointer so the UI no longer offers playback of a purged file.
+                if rec.question_id is None:
+                    # Full-session video: clear it off the interview so has_video turns false.
+                    itv = Interview.query.get(rec.interview_id)
+                    if itv and itv.video_path == rec.storage_ref:
+                        itv.video_path = None
+                else:
+                    resp = InterviewResponse.query.filter_by(
+                        interview_id=rec.interview_id, question_id=rec.question_id
+                    ).first()
+                    if resp and resp.audio_path == rec.storage_ref:
+                        resp.audio_path = None
+        db.session.commit()
+        if expired:
+            print(f"[recording-cleanup] Purged {len(expired)} recording(s) older than {RECORDING_RETENTION_DAYS} days.")
+    except Exception as e:
+        db.session.rollback()
+        print(f"[recording-cleanup] Cleanup pass failed: {e}")
+    finally:
+        db.session.remove()
+
+
+def start_recording_cleanup_worker():
+    """Start a daemon thread that periodically purges expired recordings while the app is
+    running. Idempotent-ish: intended to be called once at startup."""
+    def _loop():
+        while True:
+            cleanup_expired_recordings()
+            time.sleep(RECORDING_CLEANUP_INTERVAL_SECONDS)
+
+    threading.Thread(target=_loop, daemon=True).start()
+
 
 def allowed_file(filename: str) -> bool:
     return '.' in filename and filename.rsplit('.', 1)[-1].lower() in Config.ALLOWED_EXTENSIONS
@@ -288,6 +356,18 @@ async def upload_session_video(
 
     try:
         interview.video_path = storage_ref
+        # Audit the recording's creation so it appears in the admin Recordings log and the
+        # retention job knows what to purge. question_id stays NULL — this is a full-session
+        # video, not a per-answer clip.
+        candidate = User.query.get(user_id)
+        db.session.add(RecordingLog(
+            user_id=user_id,
+            candidate_email=candidate.email if candidate else None,
+            interview_id=interview_id,
+            question_id=None,
+            storage_ref=storage_ref,
+            status='active'
+        ))
         db.session.commit()
     except Exception:
         db.session.rollback()
@@ -423,6 +503,20 @@ def _run_answer_scoring(interview_id, question_id, response_id, user_id,
         response.confidence_score = eval_data.get('confidence_score', 0)
         response.feedback = stored_feedback
         response.scoring_status = 'scored'
+
+        # Audit the recording's creation so the admin can see its lifecycle (and so the
+        # retention job knows what to purge). Only when a recording actually exists.
+        if audio_ref:
+            candidate = User.query.get(user_id)
+            db.session.add(RecordingLog(
+                user_id=user_id,
+                candidate_email=candidate.email if candidate else None,
+                interview_id=interview_id,
+                question_id=question_id,
+                storage_ref=audio_ref,
+                status='active'
+            ))
+
         db.session.commit()
 
         # 3. If every answer is now scored, generate the final report — guarded so exactly
