@@ -7,28 +7,32 @@ import Badge from '../components/ui/Badge';
 import SearchBar from '../components/ui/SearchBar';
 import Spinner from '../components/ui/Spinner';
 import DeleteButton from '../components/ui/DeleteButton';
-import { Activity, MailWarning, Video } from 'lucide-react';
+import { Activity, MailWarning, Video, Image as ImageIcon, ExternalLink } from 'lucide-react';
 
 const AdminLogsPage = () => {
   const [logs, setLogs] = useState([]);
   const [emailLogs, setEmailLogs] = useState([]);
   const [recordingLogs, setRecordingLogs] = useState([]);
+  const [snapshots, setSnapshots] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
-  const [activeTab, setActiveTab] = useState('admin'); // 'admin' | 'email' | 'recordings'
+  const [viewingId, setViewingId] = useState(null);
+  const [activeTab, setActiveTab] = useState('admin'); // 'admin' | 'email' | 'recordings' | 'snapshots'
 
   useEffect(() => {
     const fetchLogs = async () => {
       try {
-        const [adminRes, emailRes, recRes] = await Promise.all([
+        const [adminRes, emailRes, recRes, snapRes] = await Promise.all([
           api.get('/admin/logs'),
           api.get('/admin/email-logs'),
           api.get('/admin/recording-logs'),
+          api.get('/admin/proctor-snapshots'),
         ]);
         setLogs(adminRes.data);
         setEmailLogs(emailRes.data);
         setRecordingLogs(recRes.data);
+        setSnapshots(snapRes.data);
       } catch (err) {
         console.error(err);
         setError('Failed to fetch system audit logs.');
@@ -69,6 +73,30 @@ const AdminLogsPage = () => {
     }
   };
 
+  const handleViewSnapshot = async (id) => {
+    setError('');
+    setViewingId(id);
+    try {
+      const res = await api.get(`/admin/proctor-snapshots/${id}/url`);
+      // Open the short-lived signed image URL in a new tab for review.
+      window.open(res.data.image_url, '_blank', 'noopener');
+    } catch (err) {
+      setError(err.response?.data?.message || 'Could not open this snapshot.');
+    } finally {
+      setViewingId(null);
+    }
+  };
+
+  const handleDeleteSnapshot = async (id) => {
+    setError('');
+    try {
+      await api.delete(`/admin/proctor-snapshots/${id}`);
+      setSnapshots((prev) => prev.filter((s) => s.id !== id));
+    } catch (err) {
+      setError(err.response?.data?.message || 'Failed to delete the snapshot.');
+    }
+  };
+
   const filteredLogs = logs.filter((l) => {
     return (
       l.action.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -93,6 +121,16 @@ const AdminLogsPage = () => {
       (l.candidate_email || '').toLowerCase().includes(q) ||
       (l.status || '').toLowerCase().includes(q) ||
       String(l.interview_id || '').includes(q)
+    );
+  });
+
+  const filteredSnapshots = snapshots.filter((s) => {
+    const q = searchTerm.toLowerCase();
+    return (
+      (s.candidate_email || '').toLowerCase().includes(q) ||
+      (s.kind || '').toLowerCase().includes(q) ||
+      (s.label || '').toLowerCase().includes(q) ||
+      String(s.interview_id || '').includes(q)
     );
   });
 
@@ -144,6 +182,14 @@ const AdminLogsPage = () => {
             )}
           </span>
         </button>
+        <button className={tabClass('snapshots')} onClick={() => setActiveTab('snapshots')}>
+          <span className="inline-flex items-center gap-1.5">
+            Proctor Snapshots
+            {snapshots.length > 0 && (
+              <Badge variant="info" className="!normal-case">{snapshots.length}</Badge>
+            )}
+          </span>
+        </button>
       </div>
 
       <Card padding={false} className="p-4">
@@ -154,7 +200,9 @@ const AdminLogsPage = () => {
             ? 'Search by action type, administrator name, or keywords...'
             : activeTab === 'email'
             ? 'Search by recipient, email type, subject, or status...'
-            : 'Search by candidate email, status, or interview ID...'}
+            : activeTab === 'recordings'
+            ? 'Search by candidate email, status, or interview ID...'
+            : 'Search by candidate email, kind, label, or interview ID...'}
         />
       </Card>
 
@@ -274,7 +322,7 @@ const AdminLogsPage = () => {
             </table>
           </div>
         </Card>
-      ) : (
+      ) : activeTab === 'recordings' ? (
         <Card>
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs border-collapse">
@@ -322,6 +370,72 @@ const AdminLogsPage = () => {
                             onConfirm={() => handleDeleteRecordingLog(item.id)}
                             confirmMessage="Delete this recording log entry permanently?"
                             title="Delete Recording Log"
+                          />
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      ) : (
+        <Card>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr className="text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800">
+                  <th className="py-3 font-bold">Captured</th>
+                  <th className="py-3 font-bold">Candidate</th>
+                  <th className="py-3 font-bold text-center">Interview</th>
+                  <th className="py-3 font-bold">Type</th>
+                  <th className="py-3 font-bold">Context</th>
+                  <th className="py-3 font-bold text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                {filteredSnapshots.length === 0 ? (
+                  <tr>
+                    <td colSpan="6" className="py-8 text-center text-slate-500 dark:text-slate-400 text-xs">
+                      <ImageIcon className="mx-auto mb-2 text-slate-400" size={22} />
+                      No proctoring snapshots captured yet. Termination frames and monitored screenshots appear here.
+                    </td>
+                  </tr>
+                ) : (
+                  filteredSnapshots.map((item) => (
+                    <tr key={item.id} className="text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-900/40 transition-colors">
+                      <td className="py-4 text-slate-500 dark:text-slate-400 font-mono text-[10px]">
+                        {new Date(item.captured_at).toLocaleString()}
+                      </td>
+                      <td className="py-4 font-semibold text-slate-800 dark:text-slate-200">
+                        {item.candidate_email || '—'}
+                      </td>
+                      <td className="py-4 text-center font-mono text-[10px]">
+                        #{item.interview_id ?? '—'}
+                      </td>
+                      <td className="py-4">
+                        <Badge variant={item.kind === 'termination' ? 'error' : 'info'} className="!normal-case">
+                          {item.kind === 'termination' ? 'Termination' : 'Screen'}
+                        </Badge>
+                      </td>
+                      <td className="py-4 max-w-xs truncate font-sans" title={item.label || ''}>
+                        {item.label || '—'}
+                      </td>
+                      <td className="py-4">
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            onClick={() => handleViewSnapshot(item.id)}
+                            disabled={viewingId === item.id}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 text-[10px] font-bold rounded-lg bg-primary-600 text-white hover:bg-primary-700 disabled:opacity-60 transition"
+                            title="Open the image in a new tab"
+                          >
+                            <ExternalLink size={12} /> {viewingId === item.id ? 'Opening…' : 'View'}
+                          </button>
+                          <DeleteButton
+                            onConfirm={() => handleDeleteSnapshot(item.id)}
+                            confirmMessage="Delete this proctoring snapshot permanently (image and record)?"
+                            title="Delete Snapshot"
                           />
                         </div>
                       </td>
