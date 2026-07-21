@@ -40,6 +40,20 @@ const OfficialThankYou = () => {
     }
   }, []);
 
+  // Trap the browser Back button: this is a terminal page — the session is closed and
+  // credentials are wiped, so going "back" must never re-render the interview or rules
+  // page. Push a sentinel history entry and, on Back, hard-redirect to /login. A full
+  // location.replace (not SPA navigate) reloads the app so any stale in-memory auth
+  // state is discarded and there is no way to resume the one-time interview.
+  useEffect(() => {
+    window.history.pushState(null, '', window.location.href);
+    const onPopState = () => {
+      window.location.replace('/login');
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
+
   return (
     <div className="min-h-screen bg-slate-100 dark:bg-slate-950 flex flex-col font-sans">
       <header className="px-6 py-4 border-b border-slate-200 dark:border-slate-800">
