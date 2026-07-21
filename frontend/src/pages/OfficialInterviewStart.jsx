@@ -10,8 +10,9 @@ import Spinner from '../components/ui/Spinner';
 import Badge from '../components/ui/Badge';
 import {
   ShieldCheck, Camera, Mic, Maximize, EyeOff, Clock, AlertTriangle,
-  PlayCircle, LogOut, CheckCircle2, ChevronLeft, CameraOff
+  PlayCircle, LogOut, CheckCircle2, ChevronLeft, CameraOff, Monitor
 } from 'lucide-react';
+import { setScreenStream, clearScreenStream } from '../services/proctorScreen';
 
 /**
  * Pre-interview gate for one-time (completed-course) candidates — §3.3 steps 1–5.
@@ -30,9 +31,12 @@ const OfficialInterviewStart = () => {
 
   const [cameraGranted, setCameraGranted] = useState(false);
   const [micGranted, setMicGranted] = useState(false);
+  const [screenGranted, setScreenGranted] = useState(false);
   const [checkingDevices, setCheckingDevices] = useState(false);
+  const [checkingScreen, setCheckingScreen] = useState(false);
   const videoRef = useRef(null);
   const streamRef = useRef(null);
+  const screenStreamRef = useRef(null);
 
   const alreadyDone = user?.interview_status === 'interview_completed';
 
@@ -47,8 +51,39 @@ const OfficialInterviewStart = () => {
 
   const handleExit = async () => {
     stopDeviceStream();
+    clearScreenStream();
     await logout();
     navigate('/login');
+  };
+
+  // §New: request permission to monitor the candidate's actual computer screen. Kept as a
+  // separate gesture from the camera/mic grant so each getDisplayMedia call has its own
+  // user activation. The stream is handed to the InterviewSession via a module singleton
+  // (it can't ride through router navigation) and periodic screenshots are taken there.
+  const requestScreenAccess = async () => {
+    setCheckingScreen(true);
+    setError('');
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({
+        video: { frameRate: 3 },
+        audio: false,
+      });
+      screenStreamRef.current = stream;
+      setScreenStream(stream);
+      setScreenGranted(true);
+      // If the candidate stops sharing via the browser's own control, reflect it so they
+      // must re-share before the interview can begin.
+      const [track] = stream.getVideoTracks();
+      if (track) {
+        track.addEventListener('ended', () => setScreenGranted(false));
+      }
+    } catch (err) {
+      console.error('Screen share error:', err);
+      setError('Screen sharing is required for this proctored interview. Click "Share Screen" and choose your entire screen to continue.');
+      setScreenGranted(false);
+    } finally {
+      setCheckingScreen(false);
+    }
   };
 
   // §New: request camera + microphone permission with a live preview before the
@@ -128,11 +163,12 @@ const OfficialInterviewStart = () => {
     { icon: Mic, text: 'A working microphone is required — you will answer the questions by voice (typed answers are also accepted).' },
     { icon: Maximize, text: 'The interview runs in full-screen. Do not exit full-screen, switch tabs, or minimize the window.' },
     { icon: EyeOff, text: 'Stay alone, keep your face visible, and look at the screen. Multiple faces, looking away, or leaving the frame are flagged as violations.' },
+    { icon: Monitor, text: 'Your screen is monitored — you must share your entire screen, and periodic screenshots are recorded for the proctoring audit.' },
     { icon: AlertTriangle, text: 'Three integrity violations automatically terminate the interview.' },
     { icon: Clock, text: 'You have exactly ONE attempt with this login. Once the interview ends you will be signed out automatically.' },
   ];
 
-  const devicesReady = cameraGranted && micGranted;
+  const devicesReady = cameraGranted && micGranted && screenGranted;
 
   return (
     <div className="min-h-screen bg-slate-100 dark:bg-slate-950 text-slate-800 dark:text-slate-100 font-sans">
@@ -219,6 +255,22 @@ const OfficialInterviewStart = () => {
                   </span>
                   <Badge variant={micGranted ? 'success' : 'neutral'}>{micGranted ? 'Granted' : 'Pending'}</Badge>
                 </div>
+              </div>
+
+              {/* Screen monitoring grant — its own gesture (getDisplayMedia). Required before
+                  the interview can begin so the proctoring audit can record the screen. */}
+              <div className="flex items-center justify-between gap-3 p-3 bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 rounded-xl text-xs">
+                <span className="flex items-center gap-2 font-semibold text-slate-700 dark:text-slate-300">
+                  <Monitor size={15} className={screenGranted ? 'text-primary-500' : 'text-slate-400'} />
+                  Screen sharing
+                </span>
+                {screenGranted ? (
+                  <Badge variant="success">Sharing</Badge>
+                ) : (
+                  <Button variant="secondary" size="sm" onClick={requestScreenAccess} loading={checkingScreen}>
+                    Share Screen
+                  </Button>
+                )}
               </div>
 
               <div className="flex items-center justify-between gap-3 pt-2 border-t border-slate-200 dark:border-slate-800">

@@ -556,6 +556,41 @@ class RecordingLog(db.Model):
             'deleted_at': self.deleted_at.isoformat() if self.deleted_at else None
         }
 
+
+class ProctorSnapshot(db.Model):
+    """Archive of proctoring images captured during a proctored interview — both the
+    candidate's webcam frame at the moment of a termination and periodic/suspicious
+    screenshots of their actual computer screen. Each image is stored as a file in a
+    PRIVATE Supabase bucket under a ``user_<id>/<date>/`` folder tree, not inline in the
+    DB; this row is the index the admin browses, holding only the storage reference."""
+    __tablename__ = 'proctor_snapshots'
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    # Denormalized so the archive stays readable even after the candidate is deleted.
+    candidate_email = db.Column(db.String(120), nullable=True)
+    interview_id = db.Column(db.Integer, nullable=True)
+    # 'termination' = webcam frame at auto-termination; 'screen' = a monitored screenshot.
+    kind = db.Column(db.String(20), default='termination')
+    # Short human label, e.g. the violation reason or 'periodic'.
+    label = db.Column(db.String(255), nullable=True)
+    # 'supabase://bucket/user_<id>/<date>/<file>' reference to the stored image.
+    storage_ref = db.Column(db.Text, nullable=True)
+    captured_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'user_id': self.user_id,
+            'candidate_email': self.candidate_email,
+            'interview_id': self.interview_id,
+            'kind': self.kind,
+            'label': self.label,
+            'storage_ref': self.storage_ref,
+            'captured_at': self.captured_at.isoformat() if self.captured_at else None
+        }
+
+
 class AdminLog(db.Model):
     __tablename__ = 'admin_logs'
     

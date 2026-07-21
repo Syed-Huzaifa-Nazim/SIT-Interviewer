@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import api from '../services/api';
+import { getScreenStream, hasScreenStream, clearScreenStream } from '../services/proctorScreen';
 import Card from '../components/ui/Card';
 import Alert from '../components/ui/Alert';
 import Badge from '../components/ui/Badge';
@@ -64,7 +65,15 @@ const InterviewSession = () => {
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const lastViolationTimeRef = useRef({});
+  // When ANY hard violation was last counted (across all types). Guards against a lag
+  // spike tripping several checks at once and instantly terminating the interview.
+  const lastAnyViolationRef = useRef(0);
   const faceBadSinceRef = useRef(null);
+  // Screen monitoring (§ screen-tracking): the hidden <video> that plays the shared-screen
+  // stream so frames can be grabbed, plus the periodic-capture timer.
+  const screenVideoRef = useRef(null);
+  const screenTimerRef = useRef(null);
+  const lastScreenShotRef = useRef(0);
   // Eye/gaze proctoring (§1): when gaze first went off-screen, when the eyes first
   // appeared closed, and the last time the gaze math actually ran (throttled).
   const gazeAwaySinceRef = useRef(null);
@@ -179,13 +188,64 @@ const InterviewSession = () => {
     }
   };
 
+  // Grab a JPEG frame of the candidate's shared screen and file it in the proctoring
+  // archive (Supabase folder tree, admin-only). No-op when screen sharing isn't active or
+  // the interview is a regular mock. Rate-limited so overlapping events can't spam uploads.
+  const captureAndUploadScreen = async (label = 'periodic') => {
+    const vid = screenVideoRef.current;
+    if (!vid || !vid.videoWidth || !hasScreenStream()) return;
+    const now = Date.now();
+    if (now - lastScreenShotRef.current < 1500) return; // min 1.5s between screenshots
+    lastScreenShotRef.current = now;
+    try {
+      const canvas = document.createElement('canvas');
+      // Cap width at 1280 to keep uploads light while staying legible.
+      const scale = vid.videoWidth > 1280 ? 1280 / vid.videoWidth : 1;
+      canvas.width = Math.round(vid.videoWidth * scale);
+      canvas.height = Math.round(vid.videoHeight * scale);
+      canvas.getContext('2d').drawImage(vid, 0, 0, canvas.width, canvas.height);
+      const image = canvas.toDataURL('image/jpeg', 0.6);
+      await api.post(`/interviews/${id}/proctor-snapshot`, { image, kind: 'screen', label });
+    } catch (err) {
+      console.warn('Screen snapshot failed:', err);
+    }
+  };
+
+  // Start screen monitoring when the session opens: play the shared-screen stream into a
+  // hidden video, grab an initial frame, then a periodic screenshot every 25s. Suspicious
+  // events (tab switch, violations) grab extra frames via captureAndUploadScreen. No-op for
+  // regular mock interviews where no screen was shared.
+  useEffect(() => {
+    const stream = getScreenStream();
+    // Attach the shared-screen stream to the hidden video so a frame can be grabbed later.
+    // No periodic capture: a screenshot is taken only at the moment of termination (below),
+    // so the archive stays simple — one snapshot per terminated session, not one per event.
+    // Re-runs when questions finish loading (the <video> isn't in the DOM during the spinner).
+    if (!stream || !screenVideoRef.current || screenVideoRef.current.srcObject) return;
+    const vid = screenVideoRef.current;
+    vid.srcObject = stream;
+    vid.play().catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [questions.length]);
+
   // 3. Send Proctor Log payload to backend (hard violation — counts toward termination)
+  // No two hard violations may be counted closer together than this — a single lag spike
+  // can make several independent checks (no-face, gaze, look-away) trip within the same
+  // instant, and without this global gate they would stack into an immediate termination.
+  const VIOLATION_COOLDOWN_MS = 3000;
+
   const logProctorViolation = async (type, details) => {
     const now = Date.now();
+    // Global cooldown across ALL violation types (prevents batched detections after a
+    // freeze from counting 2–3 strikes at once and terminating the session instantly).
+    if (now - lastAnyViolationRef.current < VIOLATION_COOLDOWN_MS) {
+      return;
+    }
     // Throttle reporting of same violation types to once every 5 seconds
     if (lastViolationTimeRef.current[type] && now - lastViolationTimeRef.current[type] < 5000) {
       return;
     }
+    lastAnyViolationRef.current = now;
     lastViolationTimeRef.current[type] = now;
 
     // Local warnings
@@ -193,8 +253,18 @@ const InterviewSession = () => {
     setViolationAlert(`PROCTOR WARNING: ${details}`);
     setTimeout(() => setViolationAlert(''), 4000);
 
-    // Capture snapshot if this is the terminating violation
-    const snapshot = violationsCountRef.current >= 2 ? captureSnapshot() : null;
+    // Capture the webcam frame for THIS violation. Archived per-violation below (every
+    // violation — 1, 2, 3, 4 — gets its own snapshot saved to the proctoring DB), and also
+    // passed to the proctor-log so the terminating violation still records it on the report.
+    const snapshot = captureSnapshot();
+
+    // Archive a snapshot for every violation (not just the terminating one): the webcam
+    // frame plus the shared screen at this moment. Fire-and-forget so it never delays the
+    // violation flow. The 4th (terminating) violation is additionally archived server-side.
+    if (snapshot) {
+      api.post(`/interviews/${id}/proctor-snapshot`, { image: snapshot, kind: 'webcam', label: type }).catch(() => {});
+    }
+    captureAndUploadScreen(`violation-${type}`);
 
     try {
       const res = await api.post(`/interviews/${id}/proctor-log`, {
@@ -209,6 +279,11 @@ const InterviewSession = () => {
       }
 
       if (res.data.auto_terminate) {
+        // The 4th violation's webcam + screen frames were already archived just above (every
+        // violation is), and the backend also files the terminating webcam frame from this
+        // request. Give those fire-and-forget uploads a brief moment to reach the server
+        // before we tear the session down and navigate away.
+        await new Promise((r) => setTimeout(r, 400));
         // A terminated session's recording matters MOST for admin review — store it
         // before leaving (§2.2 covers auto-termination scenarios explicitly).
         await uploadSessionVideo();
@@ -411,22 +486,30 @@ const InterviewSession = () => {
             console.warn('MediaPipe Hands unavailable; face proctoring continues.', e);
           }
 
-          // Custom frame loop using requestAnimationFrame at ~16 FPS to optimize CPU
+          // Custom frame loop. Proctoring does NOT need a high frame rate — face/gaze
+          // checks at ~6 FPS are more than enough, and running the heavy FaceMesh (with
+          // iris refinement) + Hands models any faster pegs the CPU and makes the whole
+          // interview UI hang. So: FaceMesh runs every ~160ms, and the (also heavy) Hands
+          // model runs at HALF that rate, on alternating cycles — this keeps a hand raised
+          // in view still caught quickly while roughly halving the per-cycle cost.
+          let frameTick = 0;
           const processFrame = async () => {
             if (!active) return;
             if (cameraOn && videoRef.current && videoRef.current.readyState >= 2) {
               try {
                 await faceMesh.send({ image: videoRef.current });
-                if (handsModel) {
+                // Hands is heavy and only needs an occasional look — run it every 3rd cycle.
+                if (handsModel && frameTick % 3 === 0) {
                   await handsModel.send({ image: videoRef.current });
                 }
               } catch (e) {
                 // Ignore transient frame send failures
               }
             }
+            frameTick += 1;
             setTimeout(() => {
               animationFrameId = requestAnimationFrame(processFrame);
-            }, 60); // ~16 FPS
+            }, 200); // ~5 FPS — plenty for proctoring, keeps the CPU free so the UI never hangs
           };
 
           animationFrameId = requestAnimationFrame(processFrame);
@@ -445,11 +528,11 @@ const InterviewSession = () => {
               await loadScript('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js');
               await loadScript('https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js');
               if (!active || !window.cocoSsd) return;
-              // Use the full mobilenet_v2 base (not the "lite" one): it is noticeably
-              // more accurate at spotting a phone held straight toward the camera, which
-              // the lite base often misses. It runs in its own loop so the extra cost
-              // does not affect face tracking.
-              const phoneModel = await window.cocoSsd.load({ base: 'mobilenet_v2' });
+              // Use the LITE base: it is ~4x lighter than full mobilenet_v2 and, running on
+              // its own loop, keeps the CPU free so the interview UI never hangs. (Full
+              // mobilenet_v2 was accurate but, alongside FaceMesh+Hands, overloaded weaker
+              // machines and caused the whole session to freeze.)
+              const phoneModel = await window.cocoSsd.load({ base: 'lite_mobilenet_v2' });
               if (!active) return;
 
               const scanForPhone = async () => {
@@ -467,9 +550,9 @@ const InterviewSession = () => {
                     // Ignore transient inference failures
                   }
                 }
-                // Scan ~3–4x per second so a phone entering the frame is caught almost
-                // immediately, while still leaving the face pipeline plenty of headroom.
-                objectScanTimeoutId = setTimeout(scanForPhone, 280);
+                // Scan ~1.5x per second — a phone in view is still caught within ~1s, while
+                // leaving the CPU almost entirely free for the face pipeline and the UI.
+                objectScanTimeoutId = setTimeout(scanForPhone, 700);
               };
               scanForPhone();
             } catch (e) {
@@ -516,6 +599,16 @@ const InterviewSession = () => {
     if (videoRef.current) {
       videoRef.current.srcObject = null;
     }
+    // The interview is ending — stop screen monitoring too so the browser's "sharing your
+    // screen" indicator clears and no further screenshots are taken.
+    if (screenTimerRef.current) {
+      clearInterval(screenTimerRef.current);
+      screenTimerRef.current = null;
+    }
+    if (screenVideoRef.current) {
+      screenVideoRef.current.srcObject = null;
+    }
+    clearScreenStream();
   };
 
   // 7. Process MediaPipe Face Landmarks (Face counts / gaze / full-face framing)
@@ -591,9 +684,9 @@ const InterviewSession = () => {
   // refineLandmarks to estimate where the eyes are looking and whether they're open.
   // Deliberately tolerant — a candidate glancing down to think is normal and must not be
   // flagged, so a warning needs GAZE_AWAY_MS of *continuous* off-screen gaze.
-  const GAZE_AWAY_MS = 5000;      // confirmed threshold: 5s continuous
-  const EYES_CLOSED_MS = 5000;    // eyes closed/undetectable for this long
-  const GAZE_CHECK_INTERVAL_MS = 150;  // throttle: gaze math ~6-7x/sec, not every frame
+  const GAZE_AWAY_MS = 1000;      // near-direct: ~1s off-screen counts (short enough to feel instant, long enough to ignore a blink)
+  const EYES_CLOSED_MS = 4000;    // eyes closed/undetectable for this long
+  const GAZE_CHECK_INTERVAL_MS = 120;  // throttle: gaze math ~8x/sec, not every frame
 
   const checkEyeGaze = (landmarks) => {
     // Iris landmarks (468-477) only exist when refineLandmarks is on. If they're missing
@@ -651,16 +744,21 @@ const InterviewSession = () => {
     const hAvg = (left.h + right.h) / 2;
     const vAvg = (left.v + right.v) / 2;
 
-    // Generous bounds: only a clear, sustained look away from the screen counts. Vertical
-    // is looser than horizontal because eyelid geometry makes the vertical ratio noisier.
-    const lookingAway = hAvg < 0.32 || hAvg > 0.68 || vAvg < 0.18 || vAvg > 0.85;
+    // Bounds: a clear look to the side/up/down off the screen counts. Horizontal is made
+    // fairly sensitive so a sideways glance at notes/another screen is caught; vertical is
+    // looser because eyelid geometry makes the vertical ratio noisier.
+    const lookingAway = hAvg < 0.36 || hAvg > 0.64 || vAvg < 0.20 || vAvg > 0.82;
 
     if (lookingAway) {
       if (!gazeAwaySinceRef.current) {
         gazeAwaySinceRef.current = now;
       } else if (now - gazeAwaySinceRef.current > GAZE_AWAY_MS) {
-        logSoftViolation('GAZE_AWAY', 'Please keep your eyes on the screen during the interview.');
-        gazeAwaySinceRef.current = now; // re-arm for the next continuous 5s window
+        // Sustained (GAZE_AWAY_MS) look off the screen — counted directly as an integrity
+        // violation (1 strike toward the 3-strike auto-termination) and logged for admin
+        // review, exactly like the other hard violations. The GAZE_AWAY_MS window keeps a
+        // blink or micro-glance from tripping it.
+        logProctorViolation('GAZE_AWAY', 'Looked away from the screen during the interview.');
+        gazeAwaySinceRef.current = now; // re-arm for the next continuous window
       }
     } else {
       gazeAwaySinceRef.current = null;
@@ -1083,6 +1181,10 @@ const InterviewSession = () => {
 
   return (
     <div className="max-w-6xl mx-auto space-y-6 animate-fade-in">
+      {/* Hidden sink for the shared-screen stream — frames are grabbed from here for the
+          proctoring screenshot archive. Never shown to the candidate. */}
+      <video ref={screenVideoRef} autoPlay playsInline muted className="hidden" aria-hidden="true" />
+
       {/* Session Header */}
       <Card padding={false} className="px-5 py-4 md:px-6">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -1154,16 +1256,20 @@ const InterviewSession = () => {
         </div>
       </Card>
 
+      {/* Hard violation warning — a fixed, prominent banner pinned to the top-center of the
+          viewport so it's impossible to miss during the interview (it used to sit inline and
+          scroll out of view). Sits above everything, including full-screen mode. */}
       {violationAlert && (
-        <div className="p-4 bg-red-600 border border-red-500 text-white rounded-xl text-sm font-bold flex items-center gap-2.5 animate-bounce shadow-xl shadow-red-950/20">
-          <AlertTriangle className="shrink-0" size={20} />
+        <div className="fixed top-5 left-1/2 -translate-x-1/2 z-[80] px-6 py-4 bg-red-600 border-2 border-red-300 text-white rounded-xl text-sm md:text-base font-bold flex items-center gap-3 animate-bounce shadow-2xl shadow-red-950/50 max-w-[92vw]">
+          <AlertTriangle className="shrink-0" size={22} />
           <span>{violationAlert}</span>
         </div>
       )}
 
-      {/* Soft (non-terminating) full-face warning (§4) */}
+      {/* Soft (non-terminating) full-face warning (§4) — also pinned near the top, just
+          below the hard-warning slot, in a calmer amber style. */}
       {softAlert && (
-        <div className="p-3.5 bg-amber-500/10 border border-amber-500/40 text-amber-700 dark:text-amber-400 rounded-xl text-sm font-semibold flex items-center gap-2.5">
+        <div className="fixed top-24 left-1/2 -translate-x-1/2 z-[75] px-5 py-3.5 bg-amber-500 border-2 border-amber-300 text-white rounded-xl text-sm font-bold flex items-center gap-2.5 shadow-2xl shadow-amber-950/40 max-w-[92vw]">
           <ScanFace className="shrink-0" size={18} />
           <span>{softAlert}</span>
         </div>

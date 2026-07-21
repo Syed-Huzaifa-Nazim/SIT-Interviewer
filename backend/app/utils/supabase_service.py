@@ -161,6 +161,23 @@ class SupabaseService:
         return None
 
     @staticmethod
+    def upload_proctor_image(user_id: int, interview_id: int, kind: str, file_bytes: bytes,
+                             content_type: str = 'image/jpeg') -> str:
+        """Uploads a proctoring image (termination webcam frame or monitored screenshot) to
+        the PRIVATE proctor-snapshots bucket, filed under a ``user_<id>/<date>/`` folder tree
+        so the admin archive stays organized by candidate and day. Returns a
+        ``supabase://bucket/path`` reference, or None if Supabase is unreachable."""
+        import datetime as _dt
+        bucket = Config.SUPABASE_SNAPSHOT_BUCKET or 'proctor-snapshots'
+        safe_kind = (kind or 'snapshot').replace('/', '_')
+        date_folder = _dt.datetime.utcnow().strftime('%Y-%m-%d')
+        storage_path = (f"user_{user_id}/{date_folder}/"
+                        f"{safe_kind}_int_{interview_id}_{int(time.time() * 1000)}.jpg")
+        if SupabaseService._upload_raw(bucket, storage_path, file_bytes, content_type):
+            return f"supabase://{bucket}/{storage_path}"
+        return None
+
+    @staticmethod
     def get_signed_url(storage_ref: str, expires_in: int = 3600):
         """Generates a short-lived signed URL for any private ``supabase://bucket/path``
         media reference (answer audio, session video), for authorized (admin) playback.

@@ -96,6 +96,9 @@ class Config:
     # Private bucket for full-session interview video recordings (§2.2). Never public —
     # admin playback uses short-lived signed URLs only.
     SUPABASE_VIDEO_BUCKET = os.environ.get('SUPABASE_VIDEO_BUCKET', 'interview-recordings')
+    # Private bucket for proctoring images: termination webcam frames and monitored screen
+    # screenshots, filed under user_<id>/<date>/. Admin viewing uses signed URLs only.
+    SUPABASE_SNAPSHOT_BUCKET = os.environ.get('SUPABASE_SNAPSHOT_BUCKET', 'proctor-snapshots')
 
     # Email service (Python smtplib — no third-party provider required).
     # 'smtp' sends real mail; 'console' prints the rendered email to the server log
