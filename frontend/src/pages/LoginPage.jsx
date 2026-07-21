@@ -24,12 +24,20 @@ const LoginPage = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // This field accepts EITHER an email or a CNIC. If the user is typing something
-  // that looks like a CNIC (only digits and dashes), auto-format it with dashes;
-  // otherwise it's an email, so leave it exactly as typed.
+  // This field accepts EITHER an email or a CNIC. Spaces are stripped outright —
+  // neither an email nor a CNIC ever contains one, and a stray space (often pasted
+  // in from the credentials email) is the most common cause of a false "invalid
+  // credentials" failure. If what remains looks like a CNIC (only digits and dashes),
+  // auto-format it with dashes; otherwise it's an email, so leave it as typed.
   const handleIdentifierChange = (e) => {
-    const val = e.target.value;
+    const val = e.target.value.replace(/\s/g, '');
     setEmail(/^[\d-]*$/.test(val) ? formatCnic(val) : val);
+  };
+
+  // Passwords / one-time codes issued by this system never contain spaces, so strip
+  // them here too — this prevents a trailing space from a copy-paste breaking login.
+  const handlePasswordChange = (e) => {
+    setPassword(e.target.value.replace(/\s/g, ''));
   };
 
   const handleSubmit = async (e) => {
@@ -130,7 +138,7 @@ const LoginPage = () => {
                 type="password"
                 label="Account Password"
                 value={password}
-                onChange={(e) => setPassword(e.target.value)}
+                onChange={handlePasswordChange}
                 icon={Lock}
                 placeholder="••••••••"
                 required
