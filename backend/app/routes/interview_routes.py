@@ -54,12 +54,18 @@ def cleanup_expired_recordings():
             if deleted_ok:
                 rec.status = 'deleted'
                 rec.deleted_at = datetime.datetime.utcnow()
-                # Detach the pointer from the answer so the UI no longer offers playback.
-                resp = InterviewResponse.query.filter_by(
-                    interview_id=rec.interview_id, question_id=rec.question_id
-                ).first()
-                if resp and resp.audio_path == rec.storage_ref:
-                    resp.audio_path = None
+                # Detach the pointer so the UI no longer offers playback of a purged file.
+                if rec.question_id is None:
+                    # Full-session video: clear it off the interview so has_video turns false.
+                    itv = Interview.query.get(rec.interview_id)
+                    if itv and itv.video_path == rec.storage_ref:
+                        itv.video_path = None
+                else:
+                    resp = InterviewResponse.query.filter_by(
+                        interview_id=rec.interview_id, question_id=rec.question_id
+                    ).first()
+                    if resp and resp.audio_path == rec.storage_ref:
+                        resp.audio_path = None
         db.session.commit()
         if expired:
             print(f"[recording-cleanup] Purged {len(expired)} recording(s) older than {RECORDING_RETENTION_DAYS} days.")
@@ -350,6 +356,18 @@ async def upload_session_video(
 
     try:
         interview.video_path = storage_ref
+        # Audit the recording's creation so it appears in the admin Recordings log and the
+        # retention job knows what to purge. question_id stays NULL — this is a full-session
+        # video, not a per-answer clip.
+        candidate = User.query.get(user_id)
+        db.session.add(RecordingLog(
+            user_id=user_id,
+            candidate_email=candidate.email if candidate else None,
+            interview_id=interview_id,
+            question_id=None,
+            storage_ref=storage_ref,
+            status='active'
+        ))
         db.session.commit()
     except Exception:
         db.session.rollback()
