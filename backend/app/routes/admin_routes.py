@@ -6,7 +6,7 @@ from app.database.db import db
 from app.models import (
     User, Token, Transaction, Interview, Feedback, AdminLog,
     InterviewResponse, InterviewQuestion, SecondInterviewRequest, EmailLog,
-    Notification, CodeSubmission, InterviewReport, RecordingLog
+    Notification, CodeSubmission, InterviewReport, RecordingLog, ProctorSnapshot
 )
 from app.utils.security import admin_required, get_current_user_id
 from app.utils.candidate import (
@@ -781,6 +781,51 @@ async def delete_recording_log(log_id: int, user: User = Depends(admin_required)
 @admin_bp.delete('/reinterview-requests/{request_id}')
 async def delete_reinterview_request(request_id: int, user: User = Depends(admin_required)):
     return _delete_record(SecondInterviewRequest, request_id, user, 'Second-interview request', 'DELETE_REINTERVIEW_REQUEST')
+
+
+@admin_bp.get('/proctor-snapshots')
+async def list_proctor_snapshots(user: User = Depends(admin_required)):
+    """Proctoring image archive index (newest first): termination webcam frames and
+    monitored screen screenshots. Images live in a PRIVATE Supabase bucket under
+    user_<id>/<date>/ — this returns only the metadata rows; view URLs are fetched
+    on demand per image via the /url endpoint below."""
+    snaps = ProctorSnapshot.query.order_by(ProctorSnapshot.captured_at.desc()).limit(400).all()
+    return [s.to_dict() for s in snaps]
+
+
+@admin_bp.get('/proctor-snapshots/{snapshot_id}/url')
+async def get_proctor_snapshot_url(snapshot_id: int, user: User = Depends(admin_required)):
+    """Short-lived signed URL to view one archived proctoring image. These are sensitive
+    (a candidate's camera/screen), so they are never public — this is the only way in."""
+    from app.utils.supabase_service import SupabaseService
+    snap = ProctorSnapshot.query.get(snapshot_id)
+    if not snap or not snap.storage_ref:
+        raise HTTPException(status_code=404, detail="Snapshot not found")
+    signed = SupabaseService.get_signed_url(snap.storage_ref, expires_in=600)
+    if not signed:
+        raise HTTPException(status_code=503, detail="Could not generate a view link right now")
+    return {'image_url': signed, 'expires_in': 600}
+
+
+@admin_bp.delete('/proctor-snapshots/{snapshot_id}')
+async def delete_proctor_snapshot(snapshot_id: int, user: User = Depends(admin_required)):
+    """Permanently remove one archived proctoring image — both the stored file and its
+    index row (Cascade §4: a DB delete can't reach Supabase Storage, so do it here)."""
+    from app.utils.supabase_service import SupabaseService
+    snap = ProctorSnapshot.query.get(snapshot_id)
+    if not snap:
+        raise HTTPException(status_code=404, detail="Snapshot not found")
+    parsed = SupabaseService.parse_storage_ref(snap.storage_ref)
+    if parsed:
+        SupabaseService.delete_object(parsed[0], parsed[1])
+    db.session.delete(snap)
+    db.session.add(AdminLog(
+        admin_id=user.id,
+        action='DELETE_PROCTOR_SNAPSHOT',
+        details=f"Deleted proctoring snapshot #{snapshot_id} ({snap.kind}) for interview {snap.interview_id}"
+    ))
+    db.session.commit()
+    return {'message': 'Proctoring snapshot deleted'}
 
 
 @admin_bp.get('/interviews/{interview_id}/video-url')

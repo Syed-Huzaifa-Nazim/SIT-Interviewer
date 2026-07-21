@@ -2,6 +2,7 @@ import os
 import time
 import datetime
 import json
+import base64
 import tempfile
 import subprocess
 import threading
@@ -9,7 +10,8 @@ from fastapi import APIRouter, Request, HTTPException, status, Depends, UploadFi
 from app.database.db import db
 from app.models import (
     User, Token, Transaction, Interview, InterviewQuestion,
-    InterviewResponse, InterviewReport, Notification, AdminLog, RecordingLog
+    InterviewResponse, InterviewReport, Notification, AdminLog, RecordingLog,
+    ProctorSnapshot
 )
 from app.ai.mixtral.mixtral_service import MixtralService
 from app.ai.whisper.whisper_service import WhisperService, TranscriptionError
@@ -964,7 +966,54 @@ async def evaluate_code(request: Request, user_id: int = Depends(get_current_use
         'ai_review': ai_review
     }
 
+def archive_proctor_snapshot(interview, kind, image_data_url, label=None):
+    """Decode a base64 data-URL proctoring image and file it in the PRIVATE Supabase
+    proctor-snapshots bucket under user_<id>/<date>/, recording a ProctorSnapshot index
+    row the admin can browse. Best-effort: any failure is logged and swallowed so it never
+    disrupts the interview flow (the snapshot is a supplementary audit artifact). Returns
+    the created ProctorSnapshot or None."""
+    if not interview or not image_data_url:
+        return None
+    try:
+        raw = image_data_url
+        if ',' in raw and raw.strip().startswith('data:'):
+            raw = raw.split(',', 1)[1]
+        image_bytes = base64.b64decode(raw)
+        if not image_bytes:
+            return None
+
+        storage_ref = SupabaseService.upload_proctor_image(
+            interview.user_id, interview.id, kind, image_bytes
+        )
+        if not storage_ref:
+            print(f"[proctor-snapshot] Supabase upload failed for interview {interview.id} "
+                  f"(kind={kind}) — snapshot not archived.")
+            return None
+
+        candidate = User.query.get(interview.user_id)
+        snap = ProctorSnapshot(
+            user_id=interview.user_id,
+            candidate_email=candidate.email if candidate else None,
+            interview_id=interview.id,
+            kind=kind,
+            label=(label or '')[:255],
+            storage_ref=storage_ref
+        )
+        db.session.add(snap)
+        return snap
+    except Exception as e:
+        print(f"[proctor-snapshot] Could not archive {kind} snapshot for interview "
+              f"{getattr(interview, 'id', '?')}: {e}")
+        return None
+
+
 def mark_interview_as_failed_proctoring(interview, snapshot_image=None, snapshot_description=None):
+    # Archive the termination webcam frame as an organized file in Supabase (folder tree
+    # user_<id>/<date>/) in addition to the inline copy kept on the report for quick view.
+    if snapshot_image:
+        archive_proctor_snapshot(interview, 'termination', snapshot_image,
+                                 label=snapshot_description)
+
     interview.is_proctor_failed = True
     interview.status = 'completed'
     interview.overall_score = 0.0
@@ -1124,6 +1173,39 @@ async def log_proctoring_violation(interview_id: int, request: Request, user_id:
     except Exception as e:
         db.session.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to record violation: {str(e)}")
+
+
+@interview_bp.post('/{interview_id}/proctor-snapshot')
+async def upload_proctor_snapshot(interview_id: int, request: Request, user_id: int = Depends(get_current_user_id)):
+    """Receive a proctoring screenshot of the candidate's actual computer screen (periodic
+    monitoring or captured on a suspicious event) and file it in the PRIVATE Supabase
+    proctor-snapshots archive. Best-effort and non-blocking: a storage hiccup returns a
+    soft failure rather than interrupting the interview."""
+    interview = Interview.query.filter_by(id=interview_id, user_id=user_id).first()
+    if not interview:
+        raise HTTPException(status_code=404, detail="Interview session not found")
+    # NOTE: we intentionally do NOT reject a just-completed interview here. The 4th
+    # (terminating) violation marks the interview completed almost simultaneously with the
+    # client firing its snapshot for that same violation — rejecting on 'completed' would
+    # drop the terminating violation's frame. Archiving it is exactly what we want.
+
+    data = await request.json() or {}
+    image = data.get('image')
+    kind = data.get('kind', 'screen')
+    label = data.get('label', 'periodic')
+    if not image:
+        raise HTTPException(status_code=400, detail="Snapshot image is required")
+
+    # Only screen/webcam monitoring kinds are accepted here; termination frames are
+    # archived server-side when the session is actually terminated.
+    if kind not in ('screen', 'webcam'):
+        kind = 'screen'
+
+    snap = archive_proctor_snapshot(interview, kind, image, label=label)
+    if not snap:
+        return {'stored': False, 'message': 'Snapshot could not be stored right now'}
+    db.session.commit()
+    return {'stored': True, 'id': snap.id}
 
 @interview_bp.post('/{interview_id}/fail-proctoring')
 async def force_fail_proctoring(interview_id: int, request: Request, user_id: int = Depends(get_current_user_id)):

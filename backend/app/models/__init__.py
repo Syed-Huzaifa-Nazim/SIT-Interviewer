@@ -14,5 +14,6 @@ from app.models.models import (
     CodeSubmission,
     SecondInterviewRequest,
     EmailLog,
-    RecordingLog
+    RecordingLog,
+    ProctorSnapshot
 )
