@@ -8,6 +8,9 @@ import Alert from '../components/ui/Alert';
 import Badge from '../components/ui/Badge';
 import Button from '../components/ui/Button';
 import Spinner from '../components/ui/Spinner';
+import Pagination from '../components/ui/Pagination';
+
+const PAGE_SIZE = 10;
 import {
   Users,
   Video,
@@ -30,6 +33,7 @@ const AdminDashboard = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [page, setPage] = useState(1);
 
   const loadDashboardData = async () => {
     try {
@@ -82,6 +86,7 @@ const AdminDashboard = () => {
   }
 
   const flaggedUsers = users.filter(u => u.status === 'banned');
+  const pagedFlagged = flaggedUsers.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   return (
     <div className="space-y-8">
@@ -174,7 +179,7 @@ const AdminDashboard = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                {flaggedUsers.map(student => (
+                {pagedFlagged.map(student => (
                   <tr key={student.id} className="hover:bg-slate-50 dark:hover:bg-slate-900/40 transition-colors">
                     <td className="py-3.5">
                       <span className="font-bold text-slate-900 dark:text-slate-200 block">{student.name}</span>
@@ -202,6 +207,7 @@ const AdminDashboard = () => {
             </table>
           </div>
         )}
+        <Pagination page={page} total={flaggedUsers.length} onChange={setPage} />
       </Card>
 
       {stats && (

@@ -8,6 +8,9 @@ import Badge from '../components/ui/Badge';
 import SearchBar from '../components/ui/SearchBar';
 import Spinner from '../components/ui/Spinner';
 import DeleteButton from '../components/ui/DeleteButton';
+import Pagination from '../components/ui/Pagination';
+
+const PAGE_SIZE = 10;
 import {
   Video,
   ArrowRight,
@@ -20,6 +23,8 @@ const AdminInterviewsPage = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
+  const [page, setPage] = useState(1);
+  useEffect(() => { setPage(1); }, [searchTerm]);
 
   const fetchInterviews = async () => {
     try {
@@ -54,6 +59,8 @@ const AdminInterviewsPage = () => {
       i.type.toLowerCase().includes(searchTerm.toLowerCase())
     );
   });
+
+  const pagedInterviews = filteredInterviews.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   if (loading) {
     return (
@@ -101,7 +108,7 @@ const AdminInterviewsPage = () => {
                   </td>
                 </tr>
               ) : (
-                filteredInterviews.map((item) => (
+                pagedInterviews.map((item) => (
                   <tr key={item.id} className="text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-900/40 transition-colors">
                     <td className="py-4">
                       <div className="font-bold text-slate-900 dark:text-slate-200">{item.user_name}</div>
@@ -174,6 +181,7 @@ const AdminInterviewsPage = () => {
             </tbody>
           </table>
         </div>
+        <Pagination page={page} total={filteredInterviews.length} onChange={setPage} />
       </Card>
     </div>
   );

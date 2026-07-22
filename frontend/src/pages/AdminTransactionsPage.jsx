@@ -7,6 +7,7 @@ import Badge from '../components/ui/Badge';
 import SearchBar from '../components/ui/SearchBar';
 import Spinner from '../components/ui/Spinner';
 import DeleteButton from '../components/ui/DeleteButton';
+import Pagination from '../components/ui/Pagination';
 import {
   Coins,
   TrendingUp,
@@ -15,11 +16,16 @@ import {
   AlertTriangle
 } from 'lucide-react';
 
+const PAGE_SIZE = 10;
+
 const AdminTransactionsPage = () => {
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
+  const [page, setPage] = useState(1);
+  useEffect(() => { setPage(1); }, [searchTerm]);
+  const paged = (arr) => arr.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   useEffect(() => {
     const fetchTransactions = async () => {
@@ -114,7 +120,7 @@ const AdminTransactionsPage = () => {
                   </td>
                 </tr>
               ) : (
-                filteredTransactions.map((item) => {
+                paged(filteredTransactions).map((item) => {
                   const { variant, Icon: TypeIcon } = getTypeConfig(item.transaction_type);
                   const isAddition = item.tokens_added > 0;
 
@@ -162,6 +168,7 @@ const AdminTransactionsPage = () => {
             </tbody>
           </table>
         </div>
+        <Pagination page={page} total={filteredTransactions.length} onChange={setPage} />
       </Card>
     </div>
   );

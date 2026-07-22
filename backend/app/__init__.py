@@ -1,6 +1,8 @@
 import os
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from sqlalchemy import text
 from app.config.config import Config
 from app.database.db import db, Base, engine, new_request_scope, reset_request_scope
 
@@ -64,9 +66,14 @@ def create_app(config_class=Config):
     os.makedirs(config_class.UPLOAD_FOLDER, exist_ok=True)
 
     # Initialize tables + apply lightweight column migrations for pre-existing DBs
-    from app.database.migrate import ensure_schema
+    from app.database.migrate import ensure_schema, ensure_indexes
     ensure_schema()
     Base.metadata.create_all(bind=engine)
+    # Add indexes on hot columns (idempotent, additive) so queries stay fast at scale.
+    try:
+        ensure_indexes()
+    except Exception as e:
+        print(f"[index] ensure_indexes skipped: {e}")
 
     # Seed Admin User
     try:
@@ -104,8 +111,42 @@ def create_app(config_class=Config):
     except Exception as e:
         print(f"Failed to start recording-cleanup worker: {str(e)}")
 
+    # Global catch-all: any error not already handled (FastAPI still handles HTTPException
+    # and validation errors itself, which take precedence) returns a clean JSON body
+    # instead of leaking a stack trace, and rolls back so a broken transaction can't poison
+    # the pooled connection. Purely a safety net — it never changes successful responses.
+    @app.exception_handler(Exception)
+    async def unhandled_exception_handler(request: Request, exc: Exception):
+        print(f"[error] Unhandled exception on {request.method} {request.url.path}: {exc}")
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
+        return JSONResponse(
+            status_code=500,
+            content={'detail': 'An internal error occurred. Please try again in a moment.'},
+        )
+
+    # Health/diagnostics: reports whether the app can actually reach the database, so an
+    # uptime monitor or load balancer can tell a live-but-degraded instance from a healthy
+    # one. Returns 503 when the DB is unreachable.
     @app.get("/health")
     def health():
-        return {'status': 'healthy', 'mode': config_class.AI_MODE}
+        db_ok = True
+        try:
+            db.session.execute(text("SELECT 1"))
+        except Exception as e:
+            db_ok = False
+            print(f"[health] Database check failed: {e}")
+        finally:
+            db.session.remove()
+        return JSONResponse(
+            status_code=200 if db_ok else 503,
+            content={
+                'status': 'healthy' if db_ok else 'degraded',
+                'database': 'up' if db_ok else 'down',
+                'mode': config_class.AI_MODE,
+            },
+        )
 
     return app

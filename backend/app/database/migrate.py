@@ -34,3 +34,50 @@ def ensure_schema():
                 ddl_type = col.type.compile(engine.dialect)
                 conn.execute(text(f'ALTER TABLE {table_name} ADD COLUMN {col.name} {ddl_type}'))
                 print(f"[migrate] Added {table_name}.{col.name} ({ddl_type})")
+
+
+# Hot columns that get filtered/sorted on frequently. Unique columns (users.email/cnic,
+# tokens.user_id, interview_reports.interview_id) already have implicit indexes, so they
+# are omitted here. Composite entries create a multi-column index in that order.
+_HOT_INDEXES = {
+    'interviews': ['user_id', 'status', 'created_at'],
+    'interview_questions': ['interview_id'],
+    'interview_responses': ['interview_id', ('interview_id', 'question_id')],
+    'recording_logs': ['status', 'created_at', 'user_id', 'interview_id'],
+    'proctor_snapshots': ['user_id', 'interview_id', 'captured_at'],
+    'notifications': ['user_id', 'is_read'],
+    'admin_logs': ['created_at'],
+    'email_logs': ['created_at', 'to_email'],
+    'transactions': ['user_id'],
+    'second_interview_requests': ['status'],
+    'code_submissions': ['user_id', 'interview_id'],
+    'users': ['status', 'banned_until'],
+}
+
+
+def ensure_indexes():
+    """Create btree indexes on frequently filtered/sorted columns (Postgres
+    ``CREATE INDEX IF NOT EXISTS`` — idempotent and additive only, never touching data).
+    This keeps the hottest lookups and ORDER BYs fast as the tables grow. Each index runs
+    in its own autocommit statement so one failure can never abort the others, and every
+    table/column is checked to exist first so a partial schema can't raise."""
+    inspector = inspect(engine)
+    existing_tables = set(inspector.get_table_names())
+
+    for table, specs in _HOT_INDEXES.items():
+        if table not in existing_tables:
+            continue
+        existing_cols = {c['name'] for c in inspector.get_columns(table)}
+        for spec in specs:
+            cols = (spec,) if isinstance(spec, str) else tuple(spec)
+            if any(c not in existing_cols for c in cols):
+                continue
+            idx_name = f"idx_{table}_{'_'.join(cols)}"
+            col_list = ', '.join(cols)
+            try:
+                with engine.begin() as conn:
+                    conn.execute(text(
+                        f'CREATE INDEX IF NOT EXISTS {idx_name} ON {table} ({col_list})'
+                    ))
+            except Exception as e:
+                print(f"[index] Could not create {idx_name}: {e}")

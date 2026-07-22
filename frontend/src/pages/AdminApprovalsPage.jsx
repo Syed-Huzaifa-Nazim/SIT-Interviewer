@@ -6,6 +6,9 @@ import Alert from '../components/ui/Alert';
 import Badge from '../components/ui/Badge';
 import Button from '../components/ui/Button';
 import Spinner from '../components/ui/Spinner';
+import Pagination from '../components/ui/Pagination';
+
+const PAGE_SIZE = 10;
 import EmptyState from '../components/ui/EmptyState';
 import { ClipboardCheck, CheckCircle2, XCircle, ShieldAlert } from 'lucide-react';
 
@@ -21,6 +24,7 @@ const AdminApprovalsPage = () => {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [actingId, setActingId] = useState(null);
+  const [page, setPage] = useState(1);
 
   const fetchRequests = async () => {
     try {
@@ -175,7 +179,7 @@ const AdminApprovalsPage = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                {decided.map((req) => (
+                {decided.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map((req) => (
                   <tr key={req.id} className="text-slate-600 dark:text-slate-300">
                     <td className="py-3">
                       <div className="font-bold text-slate-900 dark:text-slate-200">{req.name}</div>
@@ -193,6 +197,7 @@ const AdminApprovalsPage = () => {
             </table>
           </div>
         )}
+        <Pagination page={page} total={decided.length} onChange={setPage} />
       </Card>
     </div>
   );

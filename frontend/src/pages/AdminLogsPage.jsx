@@ -7,7 +7,10 @@ import Badge from '../components/ui/Badge';
 import SearchBar from '../components/ui/SearchBar';
 import Spinner from '../components/ui/Spinner';
 import DeleteButton from '../components/ui/DeleteButton';
+import Pagination from '../components/ui/Pagination';
 import { Activity, MailWarning, Video, Image as ImageIcon, ExternalLink } from 'lucide-react';
+
+const PAGE_SIZE = 10;
 
 const AdminLogsPage = () => {
   const [logs, setLogs] = useState([]);
@@ -18,7 +21,14 @@ const AdminLogsPage = () => {
   const [error, setError] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [viewingId, setViewingId] = useState(null);
+  const [page, setPage] = useState(1);
   const [activeTab, setActiveTab] = useState('admin'); // 'admin' | 'email' | 'recordings' | 'snapshots'
+
+  // Reset to the first page whenever the tab or the search filter changes.
+  useEffect(() => { setPage(1); }, [activeTab, searchTerm]);
+
+  // Slice a filtered list down to the current page of PAGE_SIZE rows.
+  const paged = (arr) => arr.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   useEffect(() => {
     const fetchLogs = async () => {
@@ -227,7 +237,7 @@ const AdminLogsPage = () => {
                     </td>
                   </tr>
                 ) : (
-                  filteredLogs.map((item) => (
+                  paged(filteredLogs).map((item) => (
                     <tr key={item.id} className="text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-900/40 transition-colors">
                       <td className="py-4 text-slate-500 dark:text-slate-400">
                         {new Date(item.created_at).toLocaleString()}
@@ -261,6 +271,7 @@ const AdminLogsPage = () => {
               </tbody>
             </table>
           </div>
+          <Pagination page={page} total={filteredLogs.length} onChange={setPage} />
         </Card>
       ) : activeTab === 'email' ? (
         <Card>
@@ -286,7 +297,7 @@ const AdminLogsPage = () => {
                     </td>
                   </tr>
                 ) : (
-                  filteredEmails.map((item) => (
+                  paged(filteredEmails).map((item) => (
                     <tr key={item.id} className="text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-900/40 transition-colors">
                       <td className="py-4 text-slate-500 dark:text-slate-400 font-mono text-[10px]">
                         {new Date(item.created_at).toLocaleString()}
@@ -321,6 +332,7 @@ const AdminLogsPage = () => {
               </tbody>
             </table>
           </div>
+          <Pagination page={page} total={filteredEmails.length} onChange={setPage} />
         </Card>
       ) : activeTab === 'recordings' ? (
         <Card>
@@ -345,7 +357,7 @@ const AdminLogsPage = () => {
                     </td>
                   </tr>
                 ) : (
-                  filteredRecordings.map((item) => (
+                  paged(filteredRecordings).map((item) => (
                     <tr key={item.id} className="text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-900/40 transition-colors">
                       <td className="py-4 text-slate-500 dark:text-slate-400 font-mono text-[10px]">
                         {new Date(item.created_at).toLocaleString()}
@@ -379,6 +391,7 @@ const AdminLogsPage = () => {
               </tbody>
             </table>
           </div>
+          <Pagination page={page} total={filteredRecordings.length} onChange={setPage} />
         </Card>
       ) : (
         <Card>
@@ -403,7 +416,7 @@ const AdminLogsPage = () => {
                     </td>
                   </tr>
                 ) : (
-                  filteredSnapshots.map((item) => (
+                  paged(filteredSnapshots).map((item) => (
                     <tr key={item.id} className="text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-900/40 transition-colors">
                       <td className="py-4 text-slate-500 dark:text-slate-400 font-mono text-[10px]">
                         {new Date(item.captured_at).toLocaleString()}
@@ -445,6 +458,7 @@ const AdminLogsPage = () => {
               </tbody>
             </table>
           </div>
+          <Pagination page={page} total={filteredSnapshots.length} onChange={setPage} />
         </Card>
       )}
     </div>
