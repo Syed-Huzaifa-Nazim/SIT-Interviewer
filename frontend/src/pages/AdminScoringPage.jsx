@@ -10,6 +10,9 @@ import StatCard from '../components/ui/StatCard';
 import Alert from '../components/ui/Alert';
 import Badge from '../components/ui/Badge';
 import Spinner from '../components/ui/Spinner';
+import Pagination from '../components/ui/Pagination';
+
+const PAGE_SIZE = 10;
 import {
   Gauge, Target, Activity, AlertTriangle, ClipboardList, ChevronLeft,
   ArrowRight, MessageSquareText, FlaskConical,
@@ -38,6 +41,7 @@ const AdminScoringPage = () => {
 
   const [detail, setDetail] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [page, setPage] = useState(1);
 
   useEffect(() => {
     const fetchAnalytics = async () => {
@@ -152,6 +156,7 @@ const AdminScoringPage = () => {
   // ---- Overview + interview list ------------------------------------------------
   const overview = analytics?.overview || {};
   const interviews = analytics?.interviews || [];
+  const pagedInterviews = interviews.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   return (
     <div className="space-y-6">
@@ -231,7 +236,7 @@ const AdminScoringPage = () => {
                   </td>
                 </tr>
               ) : (
-                interviews.map((row) => (
+                pagedInterviews.map((row) => (
                   <tr
                     key={row.interview_id}
                     onClick={() => openDetail(row.interview_id)}
@@ -263,6 +268,7 @@ const AdminScoringPage = () => {
             </tbody>
           </table>
         </div>
+        <Pagination page={page} total={interviews.length} onChange={setPage} />
       </Card>
     </div>
   );

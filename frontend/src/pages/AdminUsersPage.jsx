@@ -9,7 +9,10 @@ import Button from '../components/ui/Button';
 import SearchBar from '../components/ui/SearchBar';
 import Spinner from '../components/ui/Spinner';
 import Input from '../components/ui/Input';
+import Pagination from '../components/ui/Pagination';
 import { SIGNUP_CATEGORIES, INTERVIEW_STATUS_LABELS, isInstructorCategory, formatCnic } from '../utils/constants';
+
+const PAGE_SIZE = 10;
 import {
   Users,
   Ban,
@@ -42,6 +45,8 @@ const AdminUsersPage = () => {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
+  const [page, setPage] = useState(1);
+  useEffect(() => { setPage(1); }, [searchTerm]);
 
   const [overrideUserId, setOverrideUserId] = useState(null);
   const [overrideVal, setOverrideVal] = useState(0);
@@ -245,6 +250,8 @@ const AdminUsersPage = () => {
     );
   });
 
+  const pagedUsers = filteredUsers.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
   if (loading) {
     return (
       <Card className="text-center max-w-md mx-auto my-12">
@@ -295,7 +302,7 @@ const AdminUsersPage = () => {
                   </td>
                 </tr>
               ) : (
-                filteredUsers.map((item) => (
+                pagedUsers.map((item) => (
                   <tr key={item.id} className="text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-900/40 transition-colors">
                     <td className="py-4 pr-3">
                       <div className="flex items-center gap-2">
@@ -414,6 +421,7 @@ const AdminUsersPage = () => {
             </tbody>
           </table>
         </div>
+        <Pagination page={page} total={filteredUsers.length} onChange={setPage} />
       </Card>
 
       {/* Token override modal (unchanged behavior) */}
