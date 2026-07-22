@@ -6,6 +6,7 @@ import DashboardLayout from './layouts/DashboardLayout';
 import Spinner from './components/ui/Spinner';
 import LaunchSplash from './components/pwa/LaunchSplash';
 import PwaUpdatePrompt from './components/pwa/PwaUpdatePrompt';
+import ColdStartNotice from './components/ui/ColdStartNotice';
 
 // Import Pages
 import LandingPage from './pages/LandingPage';
@@ -145,6 +146,7 @@ function App() {
             service workers are unavailable, so core app behavior is never affected. */}
         <LaunchSplash />
         <PwaUpdatePrompt />
+        <ColdStartNotice />
         <Router>
           <Routes>
             {/* Public Pages */}

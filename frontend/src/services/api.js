@@ -8,13 +8,51 @@ const api = axios.create({
   },
 });
 
-// Request Interceptor: Attach Access Token
+// --- Cold-start detection ------------------------------------------------------
+// Free-tier hosts (Render included) spin the backend down after a period of
+// inactivity; the next request can take 30-50s to wake it back up. A request that
+// slow looks identical to a hung/broken app unless we tell the user what's actually
+// happening. Any request still pending past SLOW_THRESHOLD_MS is assumed to be a
+// cold start; ColdStartNotice.jsx subscribes to this to show a "waking up" banner.
+const SLOW_THRESHOLD_MS = 4000;
+let slowCount = 0;
+const slowListeners = new Set();
+
+function notifySlowChange() {
+  const active = slowCount > 0;
+  slowListeners.forEach((cb) => cb(active));
+}
+
+export function onSlowRequestChange(callback) {
+  slowListeners.add(callback);
+  callback(slowCount > 0);
+  return () => slowListeners.delete(callback);
+}
+
+function clearSlowTimer(config) {
+  const meta = config?.__slowMeta;
+  if (!meta) return;
+  clearTimeout(meta.timerId);
+  if (meta.fired) {
+    slowCount = Math.max(0, slowCount - 1);
+    notifySlowChange();
+  }
+}
+
+// Request Interceptor: Attach Access Token + arm the cold-start timer
 api.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem('access_token');
     if (token) {
       config.headers['Authorization'] = `Bearer ${token}`;
     }
+    const meta = { fired: false, timerId: null };
+    meta.timerId = setTimeout(() => {
+      meta.fired = true;
+      slowCount += 1;
+      notifySlowChange();
+    }, SLOW_THRESHOLD_MS);
+    config.__slowMeta = meta;
     return config;
   },
   (error) => Promise.reject(error)
@@ -22,8 +60,12 @@ api.interceptors.request.use(
 
 // Response Interceptor: Silent Token Refresh
 api.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    clearSlowTimer(response.config);
+    return response;
+  },
   async (error) => {
+    clearSlowTimer(error.config);
     // Normalize FastAPI's default { detail } error shape to { message } so
     // every err.response?.data?.message read across the app gets the real
     // backend message instead of silently falling back to generic text.
