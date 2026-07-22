@@ -1,0 +1,56 @@
+services:
+  - type: web
+    name: interviewer-ai-backend
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    # Bypasses main.py's uvicorn.run(..., reload=True) — reload is a dev-only file-watcher
+    # feature that has no business running in production. $PORT is injected by Render.
+    startCommand: uvicorn app:create_app --factory --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      # Secrets — set these manually in the Render dashboard (Settings > Environment).
+      # sync: false means Render will NOT read a value from this file; it just reserves
+      # the key so you're prompted for it once, and it's never committed to git.
+      - key: JWT_SECRET_KEY
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: AI_PROVIDER
+        sync: false
+      - key: MIXTRAL_API_KEY
+        sync: false
+      - key: WHISPER_API_KEY
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_PUBLISHABLE_KEY
+        sync: false
+      - key: SUPABASE_SECRET_KEY
+        sync: false
+      - key: SUPABASE_JWKS_URL
+        sync: false
+      - key: SUPABASE_BUCKET
+        sync: false
+      - key: EMAIL_MODE
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        sync: false
+      - key: SMTP_USERNAME
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SMTP_USE_TLS
+        sync: false
+      - key: SMTP_USE_SSL
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: EMAIL_FROM_NAME
+        sync: false
+      # Non-secret, safe to set directly here.
+      - key: AI_MODE
+        value: api
