@@ -4,6 +4,8 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
 import DashboardLayout from './layouts/DashboardLayout';
 import Spinner from './components/ui/Spinner';
+import LaunchSplash from './components/pwa/LaunchSplash';
+import PwaUpdatePrompt from './components/pwa/PwaUpdatePrompt';
 
 // Import Pages
 import LandingPage from './pages/LandingPage';
@@ -139,6 +141,10 @@ function App() {
   return (
     <ThemeProvider>
       <AuthProvider>
+        {/* PWA-only, progressive enhancements — both no-op in a normal browser tab / when
+            service workers are unavailable, so core app behavior is never affected. */}
+        <LaunchSplash />
+        <PwaUpdatePrompt />
         <Router>
           <Routes>
             {/* Public Pages */}

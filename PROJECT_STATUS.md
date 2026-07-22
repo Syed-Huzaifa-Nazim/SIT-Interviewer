@@ -108,3 +108,65 @@ AI-powered mock + official proctored interview platform.
 - Made proctor warning a prominent fixed top banner.
 - Iterated snapshot behavior per user → final: snapshot on every violation (1,2,3,4) saved to DB.
 - Created this PROJECT_STATUS.md.
+
+---
+
+## 9. Additional Completed Work — `huzaifa` branch (reconciled 2026-07-20)
+
+> Added during a §7 status reconciliation: the sections above were written from the
+> `saqib-colab` side and did not yet reflect the work completed on the `huzaifa` branch.
+> Everything below is done, tested, and merged into `huzaifa` (which now also contains all
+> of the `saqib-colab` proctoring/snapshot work via a clean merge).
+
+### Database — Supabase/PostgreSQL migration (no local storage anywhere)
+- **SQLite fully removed.** `DATABASE_URL` is mandatory; the app fails fast on a missing or
+  `sqlite://` URL (`backend/app/database/db.py`). No local/file persistence in any
+  environment, including dev.
+- **Live data moved to Supabase-hosted Postgres.** One-shot migration
+  (`backend/scripts/migrate_to_supabase.py`) copied all 15 tables preserving IDs and
+  uploaded 49 legacy local audio files into the `interview-audio` bucket. Verified row-for-row.
+- **App connects via the Supabase _transaction_ pooler (port 6543)**, not the session pooler
+  (5432) — the session pooler's 15-client cap was exhausting connections. Session-pooler
+  string kept in `.env` (commented) for pgAdmin / migration scripts.
+- **Connection-leak fix:** FastAPI runs sync endpoints in worker threads, but the DB-session
+  cleanup ran on the event-loop thread → leaked a connection per request → pool died after
+  ~5 calls. Fixed with request-scoped sessions (contextvar propagated into the worker thread)
+  so `db.session.remove()` closes the exact session the query used. Verified 70/70 sequential
+  requests + concurrent burst with zero pool errors.
+
+### Session video recording + storage
+- Full-session 480p video-only WebM recorded client-side from the proctoring stream, uploaded
+  to the **private** `interview-recordings` bucket; admin plays it back via short-lived signed
+  URLs in the report's Compliance tab. Failed upload leaves `video_path` NULL (no phantom
+  recording shown).
+
+### Storage-aware cascade deletion + retained-anonymized logs
+- Deleting a user removes their DB rows in one transaction **and** every Supabase Storage
+  object (answer audio, session video, profile picture); cleanup failures are logged as
+  `STORAGE_CLEANUP_NEEDED` admin rows. Email/admin logs are **retained but anonymized**
+  (`[deleted-user]`), not deleted. Verified 24/24 against the real buckets.
+
+### Recording lifecycle audit + retention
+- `RecordingLog` model tracks every recording (per-answer audio + full-session video) from
+  creation to deletion; a background worker auto-purges recordings past a 20-day window from
+  Supabase Storage and clears the dead pointer so playback UI stops offering it. Admin gets a
+  Recordings tab (list + delete).
+
+### Async scoring + coding-question formats (earlier huzaifa work)
+- LLM scoring decoupled from question progression: answers are stored and the candidate
+  advances instantly while scoring runs on a background thread; the report shows a
+  "scoring in progress" state and finalizes atomically. Four coding-question formats
+  (scenario / logic / concept / debug) added to live generation.
+
+### Public site redesign
+- Three.js hero on the Home page, new About page, and polished Features / Technology /
+  Pricing / Contact pages; navbar and hero layout fixes.
+
+### PWA (in progress — this task)
+- `vite-plugin-pwa` (Workbox): installable app, precached shell, **network-only `/api`**,
+  cross-origin ML-model CDN bypassed, prompt-to-refresh update flow, branded standalone-only
+  launch splash. Full analysis + reliability constraints documented separately.
+
+### Ops notes discovered on the `huzaifa` machine
+- The `py` launcher here defaults to a **broken free-threaded Python 3.13t** build (corrupt
+  `pydantic_core`). Use **`py -3.13`** (regular 3.13) to run backend scripts on this machine.
