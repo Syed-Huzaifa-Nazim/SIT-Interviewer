@@ -65,15 +65,27 @@ const OfficialInterviewStart = () => {
     setError('');
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: { frameRate: 3 },
+        // Hint the browser to preselect the whole screen. The candidate can still change
+        // the choice in the picker, so the actual surface is validated below.
+        video: { frameRate: 3, displaySurface: 'monitor' },
         audio: false,
       });
+      const [track] = stream.getVideoTracks();
+      const surface = track && track.getSettings ? track.getSettings().displaySurface : undefined;
+      // Require the ENTIRE screen — reject a single window or a browser tab. A candidate
+      // could otherwise share one clean window while keeping notes/answers in another that
+      // the proctor never sees. (If the browser doesn't report the surface, we allow it.)
+      if (surface && surface !== 'monitor') {
+        stream.getTracks().forEach((t) => t.stop());
+        setScreenGranted(false);
+        setError('Please share your ENTIRE SCREEN — not a single window or browser tab. Click "Share Screen" again and choose "Entire Screen".');
+        return;
+      }
       screenStreamRef.current = stream;
       setScreenStream(stream);
       setScreenGranted(true);
       // If the candidate stops sharing via the browser's own control, reflect it so they
       // must re-share before the interview can begin.
-      const [track] = stream.getVideoTracks();
       if (track) {
         track.addEventListener('ended', () => setScreenGranted(false));
       }
