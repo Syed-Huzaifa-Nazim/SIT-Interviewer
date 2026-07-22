@@ -51,6 +51,15 @@ services:
         sync: false
       - key: EMAIL_FROM_NAME
         sync: false
+      # Gmail-API delivery (see backend/scripts/gmail_oauth_setup.py). Required because
+      # Render's free tier blocks outbound SMTP — set EMAIL_MODE to gmail_api here (not
+      # smtp), and provide these three from that script's output.
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_REFRESH_TOKEN
+        sync: false
       # Non-secret, safe to set directly here.
       - key: AI_MODE
         value: api

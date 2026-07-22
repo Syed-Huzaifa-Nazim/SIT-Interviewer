@@ -18,10 +18,12 @@ Passwords or a corporate SMTP server).
 """
 import re
 import time
+import base64
 import logging
 import smtplib
 import ssl
 import threading
+import requests
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.image import MIMEImage
@@ -95,25 +97,9 @@ class EmailService:
         return False
 
     @classmethod
-    def _deliver(cls, to_email, subject, html, attachments=None):
-        if Config.EMAIL_MODE != 'smtp':
-            # Console mode: render to the server log so the flow is fully testable
-            # without SMTP credentials.
-            attach_note = ''
-            if attachments:
-                names = ', '.join(a.get('filename', 'attachment') for a in attachments)
-                attach_note = f"Attachments: {names}\n"
-            print(
-                f"\n===== [EMAIL:console] =====\n"
-                f"To:      {to_email}\n"
-                f"From:    {Config.EMAIL_FROM_NAME} <{Config.EMAIL_FROM}>\n"
-                f"Subject: {subject}\n"
-                f"{attach_note}"
-                f"--- text body ---\n{_html_to_text(html)}\n"
-                f"===== [/EMAIL] =====\n"
-            )
-            return
-
+    def _build_mime_message(cls, to_email, subject, html, attachments=None):
+        """Shared MIME construction for both SMTP and Gmail-API delivery — the wire format
+        (RFC822) is identical either way; only the transport differs."""
         # A body-only message is multipart/alternative (text + html). When there are
         # attachments the whole thing is wrapped in a multipart/mixed container.
         body = MIMEMultipart('alternative')
@@ -141,7 +127,36 @@ class EmailService:
         msg['Date'] = formatdate(localtime=True)
         domain = Config.EMAIL_FROM.split('@')[-1] if '@' in Config.EMAIL_FROM else None
         msg['Message-ID'] = make_msgid(domain=domain)
+        return msg
 
+    @classmethod
+    def _deliver(cls, to_email, subject, html, attachments=None):
+        if Config.EMAIL_MODE == 'console':
+            # Console mode: render to the server log so the flow is fully testable
+            # without any credentials.
+            attach_note = ''
+            if attachments:
+                names = ', '.join(a.get('filename', 'attachment') for a in attachments)
+                attach_note = f"Attachments: {names}\n"
+            print(
+                f"\n===== [EMAIL:console] =====\n"
+                f"To:      {to_email}\n"
+                f"From:    {Config.EMAIL_FROM_NAME} <{Config.EMAIL_FROM}>\n"
+                f"Subject: {subject}\n"
+                f"{attach_note}"
+                f"--- text body ---\n{_html_to_text(html)}\n"
+                f"===== [/EMAIL] =====\n"
+            )
+            return
+
+        if Config.EMAIL_MODE == 'gmail_api':
+            cls._deliver_via_gmail_api(to_email, subject, html, attachments)
+            return
+
+        # Default / 'smtp': raw SMTP via smtplib. Works from a normal network, but many
+        # hosts (e.g. Render's free tier) block outbound SMTP ports entirely — use
+        # EMAIL_MODE=gmail_api there instead (see _deliver_via_gmail_api).
+        msg = cls._build_mime_message(to_email, subject, html, attachments)
         if Config.SMTP_USE_SSL:
             with smtplib.SMTP_SSL(Config.SMTP_HOST, Config.SMTP_PORT,
                                   context=ssl.create_default_context(), timeout=20) as server:
@@ -157,6 +172,44 @@ class EmailService:
                 if Config.SMTP_USERNAME:
                     server.login(Config.SMTP_USERNAME, Config.SMTP_PASSWORD)
                 server.sendmail(Config.EMAIL_FROM, [to_email], msg.as_string())
+
+    @classmethod
+    def _deliver_via_gmail_api(cls, to_email, subject, html, attachments=None):
+        """Sends over HTTPS as EMAIL_FROM's own Gmail account via OAuth2 — bypasses the
+        outbound-SMTP blocks that free-tier hosts (Render included) apply, with no domain
+        ownership required (unlike Resend/SendGrid/etc., which can only send to arbitrary
+        recipients from a DNS-verified domain). Credentials are minted once via
+        scripts/gmail_oauth_setup.py and never expire under normal use."""
+        if not (Config.GOOGLE_CLIENT_ID and Config.GOOGLE_CLIENT_SECRET and Config.GOOGLE_REFRESH_TOKEN):
+            raise RuntimeError(
+                "EMAIL_MODE=gmail_api but GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET/"
+                "GOOGLE_REFRESH_TOKEN are not set. Run scripts/gmail_oauth_setup.py once "
+                "to obtain them."
+            )
+
+        token_resp = requests.post(
+            'https://oauth2.googleapis.com/token',
+            data={
+                'client_id': Config.GOOGLE_CLIENT_ID,
+                'client_secret': Config.GOOGLE_CLIENT_SECRET,
+                'refresh_token': Config.GOOGLE_REFRESH_TOKEN,
+                'grant_type': 'refresh_token',
+            },
+            timeout=20,
+        )
+        token_resp.raise_for_status()
+        access_token = token_resp.json()['access_token']
+
+        msg = cls._build_mime_message(to_email, subject, html, attachments)
+        raw = base64.urlsafe_b64encode(msg.as_bytes()).decode('ascii')
+
+        send_resp = requests.post(
+            'https://gmail.googleapis.com/gmail/v1/users/me/messages/send',
+            headers={'Authorization': f'Bearer {access_token}'},
+            json={'raw': raw},
+            timeout=20,
+        )
+        send_resp.raise_for_status()
 
     @classmethod
     def _log(cls, to_email, subject, email_type, user_id, status, error, attempts):

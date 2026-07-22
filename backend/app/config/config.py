@@ -104,7 +104,7 @@ class Config:
     # 'smtp' sends real mail; 'console' prints the rendered email to the server log
     # so the whole platform stays testable with zero credentials (same philosophy
     # as AI_MODE=mock). Credentials come exclusively from the environment.
-    EMAIL_MODE = os.environ.get('EMAIL_MODE', 'console')  # 'smtp' or 'console'
+    EMAIL_MODE = os.environ.get('EMAIL_MODE', 'console')  # 'gmail_api', 'smtp', or 'console'
     SMTP_HOST = os.environ.get('SMTP_HOST', 'smtp.gmail.com')
     SMTP_PORT = int(os.environ.get('SMTP_PORT', '587'))
     SMTP_USERNAME = os.environ.get('SMTP_USERNAME', '')
@@ -115,5 +115,15 @@ class Config:
     EMAIL_FROM_NAME = os.environ.get('EMAIL_FROM_NAME', 'SMIT Assessment Portal')
     EMAIL_MAX_RETRIES = int(os.environ.get('EMAIL_MAX_RETRIES', '2'))
     EMAIL_RETRY_DELAY = int(os.environ.get('EMAIL_RETRY_DELAY', '3'))  # seconds between attempts
+
+    # Gmail API delivery (EMAIL_MODE=gmail_api): sends over HTTPS as EMAIL_FROM's own Gmail
+    # account via OAuth2, instead of raw SMTP sockets. Needed on hosts (e.g. Render's free
+    # tier) that block outbound SMTP but allow normal HTTPS. No domain ownership required —
+    # unlike every transactional-email API (Resend, SendGrid, etc.), which can only send to
+    # arbitrary recipients from a DNS-verified domain you own. Minted once via
+    # scripts/gmail_oauth_setup.py.
+    GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID', '')
+    GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET', '')
+    GOOGLE_REFRESH_TOKEN = os.environ.get('GOOGLE_REFRESH_TOKEN', '')
     # Used for links inside emails (e.g. the admin approval queue, candidate login page)
     APP_BASE_URL = os.environ.get('APP_BASE_URL', 'http://localhost:5173')
