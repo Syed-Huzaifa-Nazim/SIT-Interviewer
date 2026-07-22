@@ -498,8 +498,9 @@ const InterviewSession = () => {
             if (cameraOn && videoRef.current && videoRef.current.readyState >= 2) {
               try {
                 await faceMesh.send({ image: videoRef.current });
-                // Hands is heavy and only needs an occasional look — run it every 3rd cycle.
-                if (handsModel && frameTick % 3 === 0) {
+                // Hands is heavy (main-thread WASM) and only needs an occasional look — run
+                // it every 4th cycle so it barely touches the frame budget.
+                if (handsModel && frameTick % 4 === 0) {
                   await handsModel.send({ image: videoRef.current });
                 }
               } catch (e) {
@@ -528,11 +529,19 @@ const InterviewSession = () => {
               await loadScript('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js');
               await loadScript('https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js');
               if (!active || !window.cocoSsd) return;
-              // Use the LITE base: it is ~4x lighter than full mobilenet_v2 and, running on
-              // its own loop, keeps the CPU free so the interview UI never hangs. (Full
-              // mobilenet_v2 was accurate but, alongside FaceMesh+Hands, overloaded weaker
-              // machines and caused the whole session to freeze.)
-              const phoneModel = await window.cocoSsd.load({ base: 'lite_mobilenet_v2' });
+              // Force the GPU (WebGL) backend so phone inference runs on the graphics card
+              // instead of the main JS thread — this is what lets us keep the ACCURATE full
+              // model without freezing the interview UI. (The lite model was dropped because
+              // it missed phones; the real hang cause was CPU inference, fixed by WebGL.)
+              try {
+                if (window.tf?.setBackend) {
+                  await window.tf.setBackend('webgl');
+                  await window.tf.ready();
+                }
+              } catch (be) {
+                console.warn('WebGL backend unavailable; using default TF.js backend.', be);
+              }
+              const phoneModel = await window.cocoSsd.load({ base: 'mobilenet_v2' });
               if (!active) return;
 
               const scanForPhone = async () => {
