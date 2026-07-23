@@ -13,6 +13,7 @@ change — see git log / commit messages for full detail on any entry.
 - Fixed proctor termination taking a long time (was blocking navigation on the full session-video upload finishing first)
 - Fixed a webcam hang and missed violations right at interview start (three ML models were all initializing at once; staggered phone-detection to start a few seconds later)
 - Added failure-audit logging for video uploads — a failed upload previously left zero trace anywhere; now logged with the specific reason, same as email failures already were
+- Replaced the blocking "confirm" popup on the admin Send Invite button with the same non-blocking modal pattern
 
 ## 2026-07-22
 - Merged in Saqib's proctoring work: mandatory full-screen-share requirement, GPU-based phone detection (fixed interview hang), admin table pagination, DB indexes + health check
