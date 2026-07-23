@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import api from '../services/api';
 import PageHeader from '../components/ui/PageHeader';
@@ -59,9 +59,11 @@ const AdminUsersPage = () => {
   const [proctoring, setProctoring] = useState(null);
   const [proctoringLoading, setProctoringLoading] = useState(false);
 
-  // Type-to-confirm user deletion modal (irreversible)
+  // Type-to-confirm user deletion modal (irreversible). The confirm-text input's own state
+  // lives in the DeleteUserModal child component, not here — otherwise every keystroke
+  // re-rendered this entire page (including the full user table + its filter/map below),
+  // which measured at ~300ms per keystroke in Chrome's Interaction Timing panel.
   const [deleteUser, setDeleteUser] = useState(null);
-  const [deleteConfirmText, setDeleteConfirmText] = useState('');
 
   const fetchUsers = async (silent = false) => {
     try {
@@ -220,17 +222,14 @@ const AdminUsersPage = () => {
   const fmtDate = (iso) => (iso ? new Date(iso).toLocaleString() : null);
 
   // Delete a user account permanently (type-to-confirm). Admins are non-deletable.
-  const deleteMatch = deleteUser ? (deleteUser.cnic || deleteUser.name) : '';
-  const handleDeleteUser = async () => {
-    if (!deleteUser) return;
+  const handleDeleteUser = async (targetUser) => {
     setActionLoading(true);
     setError('');
     setNotice('');
     try {
-      const res = await api.delete(`/admin/users/${deleteUser.id}`);
+      const res = await api.delete(`/admin/users/${targetUser.id}`);
       setNotice(res.data.message || 'User deleted.');
       setDeleteUser(null);
-      setDeleteConfirmText('');
       fetchUsers();
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to delete the user.');
@@ -239,16 +238,18 @@ const AdminUsersPage = () => {
     }
   };
 
-  const filteredUsers = users.filter((u) => {
+  // Memoized so this only recomputes when the user list or search term actually change —
+  // not on every unrelated re-render (e.g. typing in an open modal elsewhere on the page).
+  const filteredUsers = useMemo(() => {
     const q = searchTerm.toLowerCase();
-    return (
+    return users.filter((u) =>
       u.name.toLowerCase().includes(q) ||
       u.email.toLowerCase().includes(q) ||
       u.job_role?.toLowerCase().includes(q) ||
       u.cnic?.toLowerCase().includes(q) ||
       u.course_category?.toLowerCase().includes(q)
     );
-  });
+  }, [users, searchTerm]);
 
   const pagedUsers = filteredUsers.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
@@ -408,7 +409,7 @@ const AdminUsersPage = () => {
                           variant="danger"
                           size="sm"
                           icon={Trash2}
-                          onClick={() => { setDeleteUser(item); setDeleteConfirmText(''); }}
+                          onClick={() => setDeleteUser(item)}
                           disabled={actionLoading}
                           className="!p-2 !rounded-lg"
                           title="Delete Account Permanently"
@@ -684,64 +685,76 @@ const AdminUsersPage = () => {
         document.body
       )}
 
-      {/* Type-to-confirm user deletion modal (irreversible, cascades all their data) */}
-      {deleteUser !== null && createPortal(
-        <div className="fixed inset-0 z-50 bg-slate-950/60 dark:bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-md glass-panel p-6 rounded-2xl border border-red-500/40 space-y-5 shadow-2xl">
-            <h3 className="font-extrabold text-base text-slate-900 dark:text-white flex items-center gap-2">
-              <AlertTriangle className="text-red-500" size={19} />
-              <span>Delete User Permanently</span>
-            </h3>
-            <div className="p-3.5 bg-red-500/5 border border-red-500/20 rounded-xl text-xs text-slate-600 dark:text-slate-300 leading-relaxed space-y-2">
-              <p>
-                This permanently deletes <b className="text-slate-900 dark:text-white">{deleteUser.name}</b>{' '}
-                ({deleteUser.email}) and <b>all of their data</b> — interview history, reports,
-                transcripts, session recordings and answer audio, tokens, transactions, feedback,
-                and notifications. This cannot be undone.
-              </p>
-              <p>
-                Type <b className="font-mono text-red-600 dark:text-red-400">{deleteMatch}</b> below to confirm.
-              </p>
-            </div>
-
-            <input
-              type="text"
-              className="w-full glass-input text-sm font-mono"
-              placeholder={deleteMatch}
-              value={deleteConfirmText}
-              onChange={(e) =>
-                // Only auto-dash when confirming by CNIC (deleteMatch falls back to the
-                // candidate's name when they have no CNIC — that must stay untouched).
-                setDeleteConfirmText(deleteUser?.cnic ? formatCnic(e.target.value) : e.target.value)
-              }
-              autoFocus
-            />
-
-            <div className="flex items-center justify-end gap-3 pt-1">
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => { setDeleteUser(null); setDeleteConfirmText(''); }}
-                disabled={actionLoading}
-              >
-                Cancel
-              </Button>
-              <Button
-                variant="danger"
-                size="sm"
-                icon={Trash2}
-                onClick={handleDeleteUser}
-                loading={actionLoading}
-                disabled={actionLoading || deleteConfirmText.trim() !== deleteMatch}
-              >
-                Delete Permanently
-              </Button>
-            </div>
-          </div>
-        </div>,
-        document.body
+      {/* Type-to-confirm user deletion modal (irreversible, cascades all their data). Its
+          own input state lives inside DeleteUserModal so typing never re-renders this page. */}
+      {deleteUser !== null && (
+        <DeleteUserModal
+          user={deleteUser}
+          loading={actionLoading}
+          onCancel={() => setDeleteUser(null)}
+          onConfirm={handleDeleteUser}
+        />
       )}
     </div>
+  );
+};
+
+// Isolated from AdminUsersPage so typing in the confirm field only re-renders this small
+// component, not the parent page's full (potentially large) user table.
+const DeleteUserModal = ({ user, loading, onCancel, onConfirm }) => {
+  const [confirmText, setConfirmText] = useState('');
+  const matchText = user.cnic || user.name;
+
+  return createPortal(
+    <div className="fixed inset-0 z-50 bg-slate-950/60 dark:bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="w-full max-w-md glass-panel p-6 rounded-2xl border border-red-500/40 space-y-5 shadow-2xl">
+        <h3 className="font-extrabold text-base text-slate-900 dark:text-white flex items-center gap-2">
+          <AlertTriangle className="text-red-500" size={19} />
+          <span>Delete User Permanently</span>
+        </h3>
+        <div className="p-3.5 bg-red-500/5 border border-red-500/20 rounded-xl text-xs text-slate-600 dark:text-slate-300 leading-relaxed space-y-2">
+          <p>
+            This permanently deletes <b className="text-slate-900 dark:text-white">{user.name}</b>{' '}
+            ({user.email}) and <b>all of their data</b> — interview history, reports,
+            transcripts, session recordings and answer audio, tokens, transactions, feedback,
+            and notifications. This cannot be undone.
+          </p>
+          <p>
+            Type <b className="font-mono text-red-600 dark:text-red-400">{matchText}</b> below to confirm.
+          </p>
+        </div>
+
+        <input
+          type="text"
+          className="w-full glass-input text-sm font-mono"
+          placeholder={matchText}
+          value={confirmText}
+          onChange={(e) =>
+            // Only auto-dash when confirming by CNIC (matchText falls back to the
+            // candidate's name when they have no CNIC — that must stay untouched).
+            setConfirmText(user.cnic ? formatCnic(e.target.value) : e.target.value)
+          }
+          autoFocus
+        />
+
+        <div className="flex items-center justify-end gap-3 pt-1">
+          <Button variant="secondary" size="sm" onClick={onCancel} disabled={loading}>
+            Cancel
+          </Button>
+          <Button
+            variant="danger"
+            size="sm"
+            icon={Trash2}
+            onClick={() => onConfirm(user)}
+            loading={loading}
+            disabled={loading || confirmText.trim() !== matchText}
+          >
+            Delete Permanently
+          </Button>
+        </div>
+      </div>
+    </div>,
+    document.body
   );
 };
 
