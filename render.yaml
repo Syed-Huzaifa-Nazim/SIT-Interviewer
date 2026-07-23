@@ -63,3 +63,9 @@ services:
       # Non-secret, safe to set directly here.
       - key: AI_MODE
         value: api
+      # Used to build links inside emails (OTP invites, approval notices). Without this,
+      # it silently defaults to http://localhost:5173 — meaning every "Log in & Start
+      # Interview" email button would point at the candidate's own machine instead of the
+      # real site. Update this if the Vercel URL ever changes (e.g. a custom domain).
+      - key: APP_BASE_URL
+        value: https://sit-interviewer.vercel.app
