@@ -340,20 +340,46 @@ async def upload_session_video(
     if interview.video_path:
         return {'message': 'Recording already stored for this session', 'stored': True}
 
+    candidate = User.query.get(user_id)
+
+    def _log_failed(reason: str):
+        # Mirrors EmailLog's failure auditing (§ recording-lifecycle). Previously a failed
+        # video upload left NO trace anywhere — only successful uploads created a
+        # RecordingLog row — so a silently-missing recording was undiagnosable after the
+        # fact. Best-effort: never let logging the failure itself break the error response.
+        try:
+            db.session.add(RecordingLog(
+                user_id=user_id,
+                candidate_email=candidate.email if candidate else None,
+                interview_id=interview_id,
+                question_id=None,
+                storage_ref=None,
+                status='failed',
+                error=reason[:2000],
+            ))
+            db.session.commit()
+        except Exception as log_err:
+            db.session.rollback()
+            print(f"[upload-video] Could not persist failure log for interview {interview_id}: {log_err}")
+
     contents = await video.read()
     if not contents:
+        _log_failed("Empty video payload")
         raise HTTPException(status_code=400, detail="Empty video payload")
     # Sanity cap: a 480p video-only WebM at ~0.6 Mbps stays far below this even for a
     # very long session; anything bigger indicates a client bug, not a real recording.
     if len(contents) > 300 * 1024 * 1024:
+        _log_failed(f"Payload exceeded 300MB cap ({len(contents)} bytes)")
         raise HTTPException(status_code=413, detail="Recording exceeds the maximum accepted size")
 
     storage_ref = SupabaseService.upload_interview_video(
         user_id, interview_id, contents, content_type=video.content_type or 'video/webm'
     )
     if not storage_ref:
+        reason = f"Supabase Storage upload failed after retries ({len(contents)} bytes)"
         print(f"[upload-video] FAILED to store session recording for interview {interview_id} "
               f"(user {user_id}, {len(contents)} bytes) — video_path left NULL.")
+        _log_failed(reason)
         raise HTTPException(status_code=503, detail="Could not store the recording right now")
 
     try:
@@ -361,7 +387,6 @@ async def upload_session_video(
         # Audit the recording's creation so it appears in the admin Recordings log and the
         # retention job knows what to purge. question_id stays NULL — this is a full-session
         # video, not a per-answer clip.
-        candidate = User.query.get(user_id)
         db.session.add(RecordingLog(
             user_id=user_id,
             candidate_email=candidate.email if candidate else None,
@@ -371,11 +396,12 @@ async def upload_session_video(
             status='active'
         ))
         db.session.commit()
-    except Exception:
+    except Exception as e:
         db.session.rollback()
         # The object is in storage but unreferenced; log enough detail to reconcile.
         print(f"[upload-video] Stored {storage_ref} but failed to save reference on "
               f"interview {interview_id} — manual reconciliation needed.")
+        _log_failed(f"Uploaded to {storage_ref} but failed to link to interview: {e}")
         raise HTTPException(status_code=500, detail="Failed to link the recording")
 
     return {'message': 'Session recording stored', 'stored': True}
