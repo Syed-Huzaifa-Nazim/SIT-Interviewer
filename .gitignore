@@ -1,3 +1,6 @@
+# Google OAuth client secrets (downloaded from Cloud Console — never commit)
+client_secret*.json
+
 # Python
 __pycache__/
 *.py[cod]
