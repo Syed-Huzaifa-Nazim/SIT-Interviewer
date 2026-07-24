@@ -384,6 +384,7 @@ const InterviewSession = () => {
     let animationFrameId = null;
     let timeoutId = null;
     let objectScanTimeoutId = null;
+    let phoneLoadTimeoutId = null;
 
     const startCameraAndProctoring = async () => {
       try {
@@ -520,26 +521,29 @@ const InterviewSession = () => {
           setProctoringActive(true);
 
           // Optional object-detection model (TensorFlow.js COCO-SSD): flags a mobile
-          // phone in view of the camera. Loaded in the background (not awaited before
-          // proctoring starts) and run on its own independent scan loop — decoupled from
-          // the face frame loop so neither blocks the other. Any failure here never
+          // phone in view of the camera. This is the HEAVIEST model (it downloads weights
+          // and its first warm-up inference is expensive), so loading it at t=0 alongside
+          // FaceMesh + Hands is what spikes the CPU and hangs the interview at the very
+          // start. We DEFER it ~5s — until after the first question has rendered and the UI
+          // is interactive — so the start stays smooth. Phone coverage simply begins a few
+          // seconds in; face/gaze/hands proctoring is already live from t=0. It runs on its
+          // own scan loop, decoupled from the face frame loop, and any failure here never
           // disrupts the face/hands proctoring above.
+          phoneLoadTimeoutId = setTimeout(() => {
+          if (!active) return;
           (async () => {
             try {
               await loadScript('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js');
               await loadScript('https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js');
               if (!active || !window.cocoSsd) return;
-              // Force the GPU (WebGL) backend so phone inference runs on the graphics card
-              // instead of the main JS thread — this is what lets us keep the ACCURATE full
-              // model without freezing the interview UI. (The lite model was dropped because
-              // it missed phones; the real hang cause was CPU inference, fixed by WebGL.)
+              // Run phone inference on the CPU backend (reverted from WebGL by request).
               try {
                 if (window.tf?.setBackend) {
-                  await window.tf.setBackend('webgl');
+                  await window.tf.setBackend('cpu');
                   await window.tf.ready();
                 }
               } catch (be) {
-                console.warn('WebGL backend unavailable; using default TF.js backend.', be);
+                console.warn('CPU backend unavailable; using default TF.js backend.', be);
               }
               const phoneModel = await window.cocoSsd.load({ base: 'mobilenet_v2' });
               if (!active) return;
@@ -568,6 +572,7 @@ const InterviewSession = () => {
               console.warn('Object detection (phone) model unavailable; face proctoring continues.', e);
             }
           })();
+          }, 5000);
         }
       } catch (err) {
         console.warn('MediaPipe initialization failed. Proctoring is active but running on fallback system event monitors.', err);
@@ -595,6 +600,9 @@ const InterviewSession = () => {
       }
       if (objectScanTimeoutId) {
         clearTimeout(objectScanTimeoutId);
+      }
+      if (phoneLoadTimeoutId) {
+        clearTimeout(phoneLoadTimeoutId);
       }
       stopCamera();
     };
