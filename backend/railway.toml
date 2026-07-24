@@ -3,7 +3,7 @@
 # render.yaml used rootDir: backend.
 
 [build]
-builder = "NIXPACKS"
+builder = "RAILPACK"
 buildCommand = "pip install -r requirements.txt"
 
 [deploy]
