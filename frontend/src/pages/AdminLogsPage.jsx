@@ -369,9 +369,14 @@ const AdminLogsPage = () => {
                         #{item.interview_id ?? '—'} / Q{item.question_id ?? '—'}
                       </td>
                       <td className="py-4">
-                        <Badge variant={item.status === 'active' ? 'success' : 'neutral'}>
-                          {item.status === 'active' ? 'Active' : 'Deleted'}
+                        <Badge variant={item.status === 'active' ? 'success' : item.status === 'failed' ? 'error' : 'neutral'}>
+                          {item.status === 'active' ? 'Active' : item.status === 'failed' ? 'Failed' : 'Deleted'}
                         </Badge>
+                        {item.status === 'failed' && item.error && (
+                          <span className="block text-[9px] text-red-400 mt-1 max-w-[180px] truncate" title={item.error}>
+                            {item.error}
+                          </span>
+                        )}
                       </td>
                       <td className="py-4 text-slate-500 dark:text-slate-400 font-mono text-[10px]">
                         {item.deleted_at ? new Date(item.deleted_at).toLocaleString() : '—'}

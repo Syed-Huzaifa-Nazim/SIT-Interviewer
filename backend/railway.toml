@@ -1,0 +1,17 @@
+# Railway config-as-code for the backend service. Lives inside the service's Root
+# Directory (set to "backend" in the Railway dashboard). Railway auto-detects
+# backend/Dockerfile and builds from it.
+#
+# startCommand is `python main.py` on purpose: Railway runs a startCommand as bare argv
+# WITHOUT a shell, so a "--port $PORT" form would hand the server the literal text "$PORT"
+# and crash ('$PORT' is not a valid integer). main.py instead reads PORT from the
+# environment inside Python — no shell expansion needed, immune to that whole class of bug.
+# Setting it here also OVERWRITES any stale start command saved on the service instance
+# (removing it from this file does not clear a previously-applied value; setting it does).
+
+[deploy]
+startCommand = "python main.py"
+healthcheckPath = "/health"
+healthcheckTimeout = 100
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10

@@ -1,10 +1,10 @@
 FROM python:3.10-slim
 
-# Install system dependencies (including FFmpeg for audio processing)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
+# No system packages needed: every Python dependency installs from a prebuilt wheel
+# (no compiler required), and the optional pydub/ffmpeg audio conversion is best-effort
+# only — Whisper (Groq/OpenAI) accepts the raw webm/ogg/wav directly, and the code
+# no-ops the conversion when ffmpeg is absent. Keeping the image lean (~200MB vs ~1GB
+# with ffmpeg+build-essential) makes the build fast and reliable on constrained builders.
 
 # Set working directory
 WORKDIR /app
@@ -18,11 +18,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the rest of the application
 COPY . .
 
-# Expose port 5000
-EXPOSE 5000
-
 # Create directories for uploads and reports
 RUN mkdir -p uploads reports
 
-# Start the Flask app using Gunicorn for production scalability
-CMD ["gunicorn", "-b", "0.0.0.0:5000", "app:app"]
+# main.py reads PORT from the environment in Python and serves the app on 0.0.0.0 with
+# reload disabled — so the start command needs no shell and no "$PORT" expansion, which is
+# what a bare-argv platform runner (Railway) mishandles. Exec form so the process gets
+# SIGTERM directly for clean shutdowns.
+CMD ["python", "main.py"]

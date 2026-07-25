@@ -525,10 +525,13 @@ class EmailLog(db.Model):
         }
 
 class RecordingLog(db.Model):
-    """Lifecycle record for every interview answer recording (voice .webm), so the admin
-    can audit when a recording was created and when it was auto-deleted. Recordings are
-    automatically purged after a retention window; deletion stamps ``deleted_at``/``status``
-    here rather than removing the row, so the audit trail survives the file."""
+    """Lifecycle record for every interview recording (per-answer audio + full-session
+    video), so the admin can audit when a recording was created, when it was auto-deleted,
+    and — mirroring EmailLog's failure auditing — when an upload attempt FAILED. Previously
+    failed uploads left no trace anywhere (a session-video upload could fail silently with
+    nothing queryable to explain why); a 'failed' row now records the reason. Deletion
+    stamps ``deleted_at``/``status`` here rather than removing the row, so the audit trail
+    survives the file."""
     __tablename__ = 'recording_logs'
 
     id = db.Column(db.Integer, primary_key=True)
@@ -538,8 +541,12 @@ class RecordingLog(db.Model):
     interview_id = db.Column(db.Integer, nullable=True)
     question_id = db.Column(db.Integer, nullable=True)
     # Where the recording lives: a 'supabase://bucket/path' ref or a local upload path.
+    # NULL for a 'failed' row — the upload never produced a stored object.
     storage_ref = db.Column(db.Text, nullable=True)
-    status = db.Column(db.String(20), default='active')  # active, deleted
+    status = db.Column(db.String(20), default='active')  # active, deleted, failed
+    # Failure reason (only set when status='failed'), e.g. "Supabase Storage upload failed
+    # after retries" or "Empty video payload".
+    error = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
     deleted_at = db.Column(db.DateTime, nullable=True)
 
@@ -552,6 +559,7 @@ class RecordingLog(db.Model):
             'question_id': self.question_id,
             'storage_ref': self.storage_ref,
             'status': self.status,
+            'error': self.error,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'deleted_at': self.deleted_at.isoformat() if self.deleted_at else None
         }

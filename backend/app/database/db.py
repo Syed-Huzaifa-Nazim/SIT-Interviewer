@@ -37,6 +37,20 @@ engine = create_engine(
     # Recycle idle connections so the pooler doesn't hold a server slot indefinitely.
     pool_recycle=300,
     pool_timeout=30,
+    # libpq connection hardening (passed through psycopg2). Without connect_timeout, an
+    # unreachable database makes the very first connect — which happens during app startup
+    # (ensure_schema) — hang indefinitely, so the server never binds its port and a
+    # platform healthcheck just times out with no useful error. A bounded timeout instead
+    # surfaces a clear "connection timed out" in the logs within seconds. The keepalives
+    # keep pooled connections alive through the PgBouncer front-end and detect dropped
+    # links promptly.
+    connect_args={
+        "connect_timeout": 10,
+        "keepalives": 1,
+        "keepalives_idle": 30,
+        "keepalives_interval": 10,
+        "keepalives_count": 5,
+    },
 )
 
 # FastAPI runs sync endpoints in anyio worker threads, so a query started inside a request

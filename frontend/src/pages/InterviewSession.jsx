@@ -389,9 +389,13 @@ const InterviewSession = () => {
         // Give those fire-and-forget uploads a brief moment to reach the server before we
         // tear the session down and navigate away.
         await new Promise((r) => setTimeout(r, 400));
-        // A terminated session's recording matters MOST for admin review — store it
-        // before leaving (§2.2 covers auto-termination scenarios explicitly).
-        await uploadSessionVideo();
+        // Termination must be immediate — the candidate should not remain on a live,
+        // proctorable session for however long a multi-MB video upload takes (previously
+        // this was `await`ed, making "instant" termination take up to minutes). Fire it off
+        // and let it finish in the background instead: there's no AbortController anywhere
+        // in this app, so navigating away does NOT cancel the in-flight upload — it keeps
+        // running via the browser's own network stack regardless of the component unmounting.
+        uploadSessionVideo();
         stopCamera();
         // Redirect directly with proctor violation flags
         navigate(`/interview/report/${id}`, { state: { proctorFailed: true }, replace: true });
@@ -655,6 +659,16 @@ const InterviewSession = () => {
           if (!active) return;
           (async () => {
             try {
+              // Give FaceMesh/Hands the CPU, network, and GPU-shader-compile budget to
+              // themselves for the first few seconds. Loading all three heavy ML pipelines
+              // at the exact same moment (TF.js + COCO-SSD is the heaviest of the three) was
+              // causing a real multi-second hang right when the interview starts — and
+              // because the face/hands frame loop can't service requestAnimationFrame while
+              // the main thread is busy compiling/parsing all this, violations committed
+              // during that window went uncaught. Staggering the load shrinks that window
+              // without dropping any detection.
+              await new Promise((r) => setTimeout(r, 4000));
+              if (!active) return;
               await loadScript('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js');
               await loadScript('https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js');
               if (!active || !window.cocoSsd) return;

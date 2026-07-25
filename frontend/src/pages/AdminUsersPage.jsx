@@ -65,6 +65,14 @@ const AdminUsersPage = () => {
   // which measured at ~300ms per keystroke in Chrome's Interaction Timing panel.
   const [deleteUser, setDeleteUser] = useState(null);
 
+  // Generic non-blocking confirm dialog, replacing window.confirm() (a native call that
+  // freezes the whole tab and — as measured in Chrome's Interaction Timing panel — makes
+  // whatever time the admin spends reading it show up as multi-second "lag" on the click
+  // that triggered it). Any handler can call askConfirm(message, doAction) instead of
+  // `if (!window.confirm(...)) return;`.
+  const [confirmDialog, setConfirmDialog] = useState(null); // { message, onConfirm }
+  const askConfirm = (message, onConfirm) => setConfirmDialog({ message, onConfirm });
+
   const fetchUsers = async (silent = false) => {
     try {
       const res = await api.get('/admin/users');
@@ -155,26 +163,24 @@ const AdminUsersPage = () => {
     }
   };
 
-  const handleSendInvite = async (u) => {
-    if (!window.confirm(
-      `Send one-time interview credentials to ${u.name} (${u.email})?\n\n` +
-      'Their password login (if any) will stop working and a fresh one-time password will be emailed. It can be used to log in exactly once.'
-    )) {
-      return;
+  const handleSendInvite = (u) => askConfirm(
+    `Send one-time interview credentials to ${u.name} (${u.email})?\n\n` +
+    'Their password login (if any) will stop working and a fresh one-time password will be emailed. It can be used to log in exactly once.',
+    async () => {
+      setActionLoading(true);
+      setError('');
+      setNotice('');
+      try {
+        const res = await api.post(`/admin/users/${u.id}/send-interview-invite`);
+        setNotice(res.data.message || 'Invite sent.');
+        fetchUsers();
+      } catch (err) {
+        setError(err.response?.data?.message || 'Failed to send the interview invite.');
+      } finally {
+        setActionLoading(false);
+      }
     }
-    setActionLoading(true);
-    setError('');
-    setNotice('');
-    try {
-      const res = await api.post(`/admin/users/${u.id}/send-interview-invite`);
-      setNotice(res.data.message || 'Invite sent.');
-      fetchUsers();
-    } catch (err) {
-      setError(err.response?.data?.message || 'Failed to send the interview invite.');
-    } finally {
-      setActionLoading(false);
-    }
-  };
+  );
 
   // Post-interview admin email actions (Update §5). kind: 'clearance' | 'hr-invite'
   const handlePostInterviewEmail = async (u, kind) => {
@@ -694,6 +700,44 @@ const AdminUsersPage = () => {
           onCancel={() => setDeleteUser(null)}
           onConfirm={handleDeleteUser}
         />
+      )}
+
+      {/* Generic confirm dialog (replaces window.confirm() for send-invite; see askConfirm). */}
+      {confirmDialog && createPortal(
+        <div className="fixed inset-0 z-50 bg-slate-950/60 dark:bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-sm glass-panel p-6 rounded-2xl border border-primary-500/30 space-y-5 shadow-2xl">
+            <h3 className="font-extrabold text-base text-slate-900 dark:text-white flex items-center gap-2">
+              <Send className="text-primary-400" size={18} />
+              <span>Confirm</span>
+            </h3>
+            <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed whitespace-pre-line">
+              {confirmDialog.message}
+            </p>
+            <div className="flex items-center justify-end gap-3 pt-1">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setConfirmDialog(null)}
+                disabled={actionLoading}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                loading={actionLoading}
+                onClick={async () => {
+                  const action = confirmDialog.onConfirm;
+                  setConfirmDialog(null);
+                  await action();
+                }}
+              >
+                Confirm
+              </Button>
+            </div>
+          </div>
+        </div>,
+        document.body
       )}
     </div>
   );
