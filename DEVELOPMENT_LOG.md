@@ -5,6 +5,14 @@ change — see git log / commit messages for full detail on any entry.
 
 ---
 
+## 2026-07-25
+- Migrated the backend off Render (delay-prone free tier) to Railway — removed `render.yaml`, added `backend/railway.toml`
+- Fixed the backend Dockerfile: it still targeted the old Flask app (`gunicorn app:app`, hardcoded port 5000) from before the FastAPI migration, so it could never have actually run
+- Slimmed the Docker image (~1GB to ~200MB) by dropping `ffmpeg`/`build-essential` — nothing compiles from source, and Whisper transcription already accepts raw webm without local conversion
+- Root-caused a persistent Railway healthcheck failure to a stale start command saved on the service (`--port $PORT` run without a shell, so `$PORT` was passed as a literal string); fixed by starting via `python main.py`, which reads `PORT` from the environment in-process instead
+- Added DB connection timeout + keepalives so an unreachable database fails fast with a clear log instead of hanging the whole startup silently
+- Pointed the live frontend at the new Railway backend URL and verified the full chain live: login, JWT auth, admin routes, and CORS from the Vercel origin all confirmed working end-to-end
+
 ## 2026-07-23
 - Secured the downloaded Google OAuth credentials file so it can never be committed to git
 - Fixed production emails linking to `localhost` instead of the live Vercel site
