@@ -1,15 +1,13 @@
-# Railway config-as-code for the backend service. This file must live inside the
-# service's Root Directory (set to "backend" in the Railway dashboard), the same way
-# render.yaml used rootDir: backend.
-
-[build]
-builder = "RAILPACK"
-buildCommand = "pip install -r requirements.txt"
+# Railway config-as-code for the backend service. Lives inside the service's Root
+# Directory (set to "backend" in the Railway dashboard). Railway auto-detects
+# backend/Dockerfile and builds from it, and the app is started by that Dockerfile's CMD
+# — which wraps uvicorn in `sh -c` so the platform-injected $PORT actually expands.
+#
+# Deliberately NO startCommand here: Railway runs a startCommand string as a bare argv
+# WITHOUT a shell, so "--port $PORT" would hand uvicorn the literal text "$PORT" and it
+# crashes with 'is not a valid integer'. Letting the Dockerfile CMD run avoids that.
 
 [deploy]
-# Bypasses main.py's uvicorn.run(..., reload=True) — reload is a dev-only file-watcher
-# feature that has no business running in production. $PORT is injected by Railway.
-startCommand = "uvicorn app:create_app --factory --host 0.0.0.0 --port $PORT"
 healthcheckPath = "/health"
 healthcheckTimeout = 100
 restartPolicyType = "ON_FAILURE"

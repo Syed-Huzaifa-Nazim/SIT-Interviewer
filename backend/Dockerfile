@@ -23,6 +23,7 @@ RUN mkdir -p uploads reports
 
 # $PORT is injected by the hosting platform (Railway/Render) at runtime, so we need a
 # shell to expand it — but `exec` then replaces the shell with uvicorn so it runs as PID 1
-# and receives SIGTERM directly for clean shutdowns on redeploy. app:create_app is a
+# and receives SIGTERM directly for clean shutdowns on redeploy. The ${PORT:-8000}
+# fallback keeps the image runnable locally where PORT isn't set. app:create_app is a
 # factory (FastAPI); there is no plain app:app object to serve.
-CMD ["sh", "-c", "exec uvicorn app:create_app --factory --host 0.0.0.0 --port $PORT"]
+CMD ["sh", "-c", "exec uvicorn app:create_app --factory --host 0.0.0.0 --port ${PORT:-8000}"]
