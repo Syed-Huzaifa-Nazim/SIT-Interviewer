@@ -2,6 +2,17 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import api from '../services/api';
 import { getScreenStream, hasScreenStream, clearScreenStream } from '../services/proctorScreen';
+import {
+  loadFaceApi,
+  computeDescriptor,
+  descriptorDistance,
+  getBaselineDescriptor,
+  getBaselineImage,
+  clearBaseline,
+  IDENTITY_MATCH_THRESHOLD,
+  IDENTITY_CHECK_INTERVAL_MS,
+  IDENTITY_MISMATCH_STRIKES,
+} from '../services/identityCheck';
 import Card from '../components/ui/Card';
 import Alert from '../components/ui/Alert';
 import Badge from '../components/ui/Badge';
@@ -79,6 +90,12 @@ const InterviewSession = () => {
   const gazeAwaySinceRef = useRef(null);
   const eyesClosedSinceRef = useRef(null);
   const lastGazeCheckRef = useRef(0);
+  // Identity verification (§ identity check): consecutive mismatches seen so far, and a
+  // latch so the terminate-once path can never fire twice.
+  const identityMismatchesRef = useRef(0);
+  const identityFailedRef = useRef(false);
+  const identityBaselineSentRef = useRef(false);
+  const [identityAlert, setIdentityAlert] = useState('');
 
   // Voice capture refs
   const [isRecording, setIsRecording] = useState(false);
@@ -228,6 +245,93 @@ const InterviewSession = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [questions.length]);
 
+  // ------------------------------------------------- Identity verification (§ identity)
+  // File the baseline photo captured on the pre-interview gate against this interview, so
+  // the admin can see exactly who was verified at the start.
+  useEffect(() => {
+    const image = getBaselineImage();
+    if (!image || !questions.length || identityBaselineSentRef.current) return;
+    identityBaselineSentRef.current = true;
+    api.post(`/interviews/${id}/proctor-snapshot`, {
+      image,
+      kind: 'identity',
+      label: 'identity-baseline',
+    }).catch(() => {});
+  }, [questions.length, id]);
+
+  // Hard-terminate the session because the person on camera is no longer the verified
+  // candidate. Deliberately separate from logProctorViolation: this does NOT touch the
+  // 4-strike counter and gives no warning — it is an immediate block, and the backend
+  // writes its own IDENTITY_VERIFICATION_FAILED admin log.
+  const terminateForIdentity = async (distance) => {
+    if (identityFailedRef.current) return;
+    identityFailedRef.current = true;
+    setIdentityAlert('Identity check failed — the person on camera is not the verified candidate. This session is being terminated.');
+    const snapshot = captureSnapshot();
+    try {
+      await api.post(`/interviews/${id}/identity-failed`, {
+        details: `Face on camera did not match the candidate verified at the start (distance ${distance.toFixed(3)}).`,
+        snapshot_image: snapshot,
+      });
+    } catch (err) {
+      console.error('Failed to report the identity failure:', err);
+    }
+    await uploadSessionVideo();
+    stopCamera();
+    clearBaseline();
+    navigate(`/interview/report/${id}`, { state: { proctorFailed: true }, replace: true });
+  };
+
+  // Periodically re-verify that the candidate on camera is still the one who passed the
+  // identity check. Hang safety: the library and its models were already downloaded on the
+  // pre-interview gate, a check runs only every 30s, and each one is a single small
+  // inference — so this adds no meaningful load to the interview.
+  useEffect(() => {
+    const baseline = getBaselineDescriptor();
+    if (!baseline || !questions.length) return undefined;
+
+    let active = true;
+    let timerId = null;
+
+    const runCheck = async () => {
+      if (!active || identityFailedRef.current) return;
+      const vid = videoRef.current;
+      if (cameraOn && vid && vid.readyState >= 2) {
+        try {
+          await loadFaceApi();
+          const descriptor = await computeDescriptor(vid);
+          if (descriptor) {
+            const distance = descriptorDistance(descriptor, baseline);
+            if (distance > IDENTITY_MATCH_THRESHOLD) {
+              identityMismatchesRef.current += 1;
+              if (identityMismatchesRef.current >= IDENTITY_MISMATCH_STRIKES) {
+                await terminateForIdentity(distance);
+                return;
+              }
+            } else {
+              // Back to the right person — a single odd reading never accumulates.
+              identityMismatchesRef.current = 0;
+            }
+          }
+          // No descriptor means no face was found at all. That is already covered by the
+          // NO_FACE proctoring check, so identity stays neutral instead of counting it as
+          // a mismatch (otherwise looking away twice could terminate an honest candidate).
+        } catch (err) {
+          // A verification hiccup must never interrupt the interview.
+          console.warn('Identity re-check skipped:', err);
+        }
+      }
+      if (active) timerId = setTimeout(runCheck, IDENTITY_CHECK_INTERVAL_MS);
+    };
+
+    timerId = setTimeout(runCheck, IDENTITY_CHECK_INTERVAL_MS);
+    return () => {
+      active = false;
+      if (timerId) clearTimeout(timerId);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [questions.length, cameraOn]);
+
   // 3. Send Proctor Log payload to backend (hard violation — counts toward termination)
   // No two hard violations may be counted closer together than this — a single lag spike
   // can make several independent checks (no-face, gaze, look-away) trip within the same
@@ -259,8 +363,9 @@ const InterviewSession = () => {
     const snapshot = captureSnapshot();
 
     // Archive a snapshot for every violation (not just the terminating one): the webcam
-    // frame plus the shared screen at this moment. Fire-and-forget so it never delays the
-    // violation flow. The 4th (terminating) violation is additionally archived server-side.
+    // frame plus the shared screen at this moment — exactly ONE of each per counted
+    // violation, so 4 violations produce 4 webcam + 4 screen snapshots and nothing more.
+    // Fire-and-forget so it never delays the violation flow.
     if (snapshot) {
       api.post(`/interviews/${id}/proctor-snapshot`, { image: snapshot, kind: 'webcam', label: type }).catch(() => {});
     }
@@ -279,10 +384,10 @@ const InterviewSession = () => {
       }
 
       if (res.data.auto_terminate) {
-        // The 4th violation's webcam + screen frames were already archived just above (every
-        // violation is), and the backend also files the terminating webcam frame from this
-        // request. Give those fire-and-forget uploads a brief moment to reach the server
-        // before we tear the session down and navigate away.
+        // The 4th violation's webcam + screen frames were already archived just above, like
+        // every other violation — the server no longer files a duplicate 'termination' copy.
+        // Give those fire-and-forget uploads a brief moment to reach the server before we
+        // tear the session down and navigate away.
         await new Promise((r) => setTimeout(r, 400));
         // A terminated session's recording matters MOST for admin review — store it
         // before leaving (§2.2 covers auto-termination scenarios explicitly).
@@ -294,6 +399,23 @@ const InterviewSession = () => {
     } catch (err) {
       console.error('Failed to log violation to server:', err);
     }
+  };
+
+  // 3a. Camera toggle guard. Switching the camera off used to actually stop the feed — and
+  // because every proctoring loop is gated on `cameraOn`, that silently disabled face, gaze,
+  // hands, phone AND identity checking for the rest of the interview. So the camera is now
+  // never allowed off during a session: the attempt is refused and counted straight away
+  // through the normal violation flow (snapshot + strike + the existing 4-strike
+  // termination), with no separate mechanism of its own.
+  const handleCameraToggleAttempt = () => {
+    if (!cameraOn) {
+      setCameraOn(true);
+      return;
+    }
+    logProctorViolation(
+      'CAMERA_OFF',
+      'Attempted to turn the camera off. The camera must stay on for the entire interview.'
+    );
   };
 
   // 3b. Soft proctor warning (§4): logged for admin visibility, shown to the candidate,
@@ -1283,6 +1405,19 @@ const InterviewSession = () => {
         </div>
       )}
 
+      {/* Identity failure — a hard block, not a strike. Shown as a full-cover overlay
+          because the session is already being torn down behind it. */}
+      {identityAlert && (
+        <div className="fixed inset-0 z-[90] bg-slate-950/90 backdrop-blur-sm flex flex-col items-center justify-center gap-4 p-6 text-center">
+          <div className="w-16 h-16 rounded-full bg-red-600/20 border-2 border-red-500 text-red-400 flex items-center justify-center">
+            <ScanFace size={32} />
+          </div>
+          <h2 className="text-xl font-extrabold text-white">Identity Verification Failed</h2>
+          <p className="text-sm text-slate-300 max-w-md leading-relaxed">{identityAlert}</p>
+          <Spinner size="lg" />
+        </div>
+      )}
+
       {/* Soft (non-terminating) full-face warning (§4) — also pinned near the top, just
           below the hard-warning slot, in a calmer amber style. */}
       {softAlert && (
@@ -1327,13 +1462,15 @@ const InterviewSession = () => {
 
               <button
                 type="button"
-                onClick={() => setCameraOn(!cameraOn)}
+                onClick={handleCameraToggleAttempt}
                 className={`p-1.5 rounded-lg border transition ${
                   cameraOn
-                    ? 'bg-slate-100 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white'
+                    ? 'bg-slate-100 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 hover:text-red-500 hover:border-red-500/40'
                     : 'bg-primary-600/10 border-primary-500 text-primary-500 dark:text-primary-400'
                 }`}
-                title={cameraOn ? 'Turn Off Camera' : 'Turn On Camera'}
+                title={cameraOn
+                  ? 'The camera must stay on — turning it off is recorded as a violation'
+                  : 'Turn the camera back on'}
               >
                 {cameraOn ? <Camera size={14} /> : <CameraOff size={14} />}
               </button>

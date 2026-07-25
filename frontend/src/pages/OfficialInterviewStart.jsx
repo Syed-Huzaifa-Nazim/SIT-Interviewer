@@ -10,9 +10,10 @@ import Spinner from '../components/ui/Spinner';
 import Badge from '../components/ui/Badge';
 import {
   ShieldCheck, Camera, Mic, Maximize, EyeOff, Clock, AlertTriangle,
-  PlayCircle, LogOut, CheckCircle2, ChevronLeft, CameraOff, Monitor
+  PlayCircle, LogOut, CheckCircle2, ChevronLeft, CameraOff, Monitor, ScanFace, RefreshCw
 } from 'lucide-react';
 import { setScreenStream, clearScreenStream } from '../services/proctorScreen';
+import { loadFaceApi, computeDescriptor, setBaseline, clearBaseline } from '../services/identityCheck';
 
 /**
  * Pre-interview gate for one-time (completed-course) candidates — §3.3 steps 1–5.
@@ -24,7 +25,7 @@ const OfficialInterviewStart = () => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [confirmOpen, setConfirmOpen] = useState(false);
-  // 'instructions' | 'device_check'
+  // 'instructions' | 'device_check' | 'identity_check'
   const [stage, setStage] = useState('instructions');
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState('');
@@ -34,6 +35,11 @@ const OfficialInterviewStart = () => {
   const [screenGranted, setScreenGranted] = useState(false);
   const [checkingDevices, setCheckingDevices] = useState(false);
   const [checkingScreen, setCheckingScreen] = useState(false);
+  // Identity check (§ new step): the captured baseline photo the whole interview is
+  // verified against, plus its busy/progress state.
+  const [identityPhoto, setIdentityPhoto] = useState(null);
+  const [identityBusy, setIdentityBusy] = useState(false);
+  const [identityStatus, setIdentityStatus] = useState('');
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const screenStreamRef = useRef(null);
@@ -52,6 +58,7 @@ const OfficialInterviewStart = () => {
   const handleExit = async () => {
     stopDeviceStream();
     clearScreenStream();
+    clearBaseline();
     await logout();
     navigate('/login');
   };
@@ -125,6 +132,62 @@ const OfficialInterviewStart = () => {
     }
   };
 
+  // The live preview <video> is rendered inside each stage's own JSX branch, so moving from
+  // the device check to the identity check remounts it and drops srcObject. Re-attach the
+  // already-granted stream whenever the stage changes instead of asking for the camera again.
+  useEffect(() => {
+    if ((stage === 'device_check' || stage === 'identity_check') && videoRef.current && streamRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+      videoRef.current.play().catch(() => {});
+    }
+  }, [stage, cameraGranted]);
+
+  // §New identity check: capture ONE photo of the candidate and turn it into the baseline
+  // face descriptor. Everything heavy (library + models) is downloaded here, on this static
+  // screen, so the interview itself never pays that cost and can't hang because of it.
+  const captureIdentity = async () => {
+    setIdentityBusy(true);
+    setError('');
+    try {
+      setIdentityStatus('Preparing face verification…');
+      await loadFaceApi();
+
+      const vid = videoRef.current;
+      if (!vid || !vid.videoWidth) {
+        setError('Your camera preview is not ready yet. Wait a moment and try again.');
+        return;
+      }
+
+      setIdentityStatus('Checking your face…');
+      const descriptor = await computeDescriptor(vid);
+      if (!descriptor) {
+        setError('No face was detected. Sit facing the camera in good lighting, remove anything covering your face, then capture again.');
+        return;
+      }
+
+      const canvas = document.createElement('canvas');
+      canvas.width = vid.videoWidth;
+      canvas.height = vid.videoHeight;
+      canvas.getContext('2d').drawImage(vid, 0, 0, canvas.width, canvas.height);
+      const image = canvas.toDataURL('image/jpeg', 0.8);
+
+      setBaseline(descriptor, image);
+      setIdentityPhoto(image);
+    } catch (err) {
+      console.error('Identity check failed:', err);
+      setError('Face verification could not be prepared. Check your internet connection and press Retry. If it keeps failing, contact the administrator.');
+    } finally {
+      setIdentityStatus('');
+      setIdentityBusy(false);
+    }
+  };
+
+  const retakeIdentity = () => {
+    clearBaseline();
+    setIdentityPhoto(null);
+    setError('');
+  };
+
   const openConfirm = () => setConfirmOpen(true);
 
   const proceedToDeviceCheck = () => {
@@ -175,6 +238,7 @@ const OfficialInterviewStart = () => {
     { icon: Mic, text: 'A working microphone is required — you will answer the questions by voice (typed answers are also accepted).' },
     { icon: Maximize, text: 'The interview runs in full-screen. Do not exit full-screen, switch tabs, or minimize the window.' },
     { icon: EyeOff, text: 'Stay alone, keep your face visible, and look at the screen. Multiple faces, looking away, or leaving the frame are flagged as violations.' },
+    { icon: ScanFace, text: 'Before starting, we capture a photo of you. If the person on camera changes during the interview, the session is terminated immediately.' },
     { icon: Monitor, text: 'Your screen is monitored — you must share your entire screen, and periodic screenshots are recorded for the proctoring audit.' },
     { icon: AlertTriangle, text: 'Three integrity violations automatically terminate the interview.' },
     { icon: Clock, text: 'You have exactly ONE attempt with this login. Once the interview ends you will be signed out automatically.' },
@@ -300,12 +364,118 @@ const OfficialInterviewStart = () => {
                 </button>
                 <Button
                   size="lg"
-                  icon={PlayCircle}
-                  onClick={startInterview}
+                  icon={ScanFace}
+                  onClick={() => {
+                    setError('');
+                    setStage('identity_check');
+                  }}
                   disabled={!devicesReady || starting}
                 >
-                  Begin Interview
+                  Continue to Identity Check
                 </Button>
+              </div>
+            </div>
+          </>
+        ) : stage === 'identity_check' ? (
+          <>
+            <div className="text-center space-y-2">
+              <div className="w-14 h-14 mx-auto rounded-2xl bg-gradient-to-tr from-primary-500 to-indigo-500 flex items-center justify-center shadow-lg shadow-primary-500/25">
+                <ScanFace className="text-white" size={28} />
+              </div>
+              <h1 className="text-2xl md:text-3xl font-extrabold text-slate-900 dark:text-white">
+                Identity Verification
+              </h1>
+              <p className="text-sm text-slate-500 dark:text-slate-400 max-w-md mx-auto">
+                We'll capture one photo of you now. Throughout the interview the system checks
+                that the person on camera is still you.
+              </p>
+            </div>
+
+            {error && <Alert variant="error">{error}</Alert>}
+
+            <div className="glass-panel border border-slate-200 dark:border-slate-800 rounded-2xl p-6 md:p-8 space-y-6">
+              <div className="relative aspect-video rounded-xl bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 overflow-hidden flex items-center justify-center">
+                {identityPhoto ? (
+                  <>
+                    <img
+                      src={identityPhoto}
+                      alt="Captured identity photo"
+                      className="w-full h-full object-cover scale-x-[-1]"
+                    />
+                    <Badge variant="success" className="absolute top-2 left-2">Photo captured</Badge>
+                  </>
+                ) : (
+                  <>
+                    <video
+                      ref={videoRef}
+                      autoPlay
+                      playsInline
+                      muted
+                      className="w-full h-full object-cover scale-x-[-1]"
+                    />
+                    {/* Face-placement guide so the candidate centres themselves. */}
+                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                      <div className="w-40 h-52 rounded-[50%] border-2 border-dashed border-white/70 shadow-[0_0_0_9999px_rgba(15,23,42,0.35)]" />
+                    </div>
+                  </>
+                )}
+                {identityBusy && (
+                  <div className="absolute inset-0 bg-slate-950/70 backdrop-blur-sm flex flex-col items-center justify-center gap-3">
+                    <Spinner size="lg" />
+                    <p className="text-xs font-semibold text-white">{identityStatus || 'Working…'}</p>
+                  </div>
+                )}
+              </div>
+
+              {!identityPhoto ? (
+                <div className="space-y-3">
+                  <p className="text-xs text-slate-500 dark:text-slate-400 text-center leading-relaxed">
+                    Center your face inside the oval, look straight at the camera in good light,
+                    and remove sunglasses, masks or caps.
+                  </p>
+                  <div className="flex justify-center">
+                    <Button size="lg" icon={ScanFace} onClick={captureIdentity} loading={identityBusy}>
+                      {error ? 'Retry Capture' : 'Capture My Photo'}
+                    </Button>
+                  </div>
+                  <p className="text-[11px] text-slate-400 dark:text-slate-500 text-center">
+                    The first capture downloads the verification models — this can take a few
+                    seconds on a slow connection.
+                  </p>
+                </div>
+              ) : (
+                <Alert variant="success" className="text-xs">
+                  Identity captured. If anyone else appears on camera during the interview, the
+                  session is terminated immediately.
+                </Alert>
+              )}
+
+              <div className="flex items-center justify-between gap-3 pt-2 border-t border-slate-200 dark:border-slate-800">
+                <button
+                  onClick={() => {
+                    retakeIdentity();
+                    setStage('device_check');
+                  }}
+                  className="flex items-center gap-1.5 text-xs font-semibold text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 transition"
+                  disabled={starting || identityBusy}
+                >
+                  <ChevronLeft size={14} /> Back
+                </button>
+                <div className="flex items-center gap-3">
+                  {identityPhoto && (
+                    <Button variant="secondary" size="sm" icon={RefreshCw} onClick={retakeIdentity} disabled={starting}>
+                      Retake
+                    </Button>
+                  )}
+                  <Button
+                    size="lg"
+                    icon={PlayCircle}
+                    onClick={startInterview}
+                    disabled={!identityPhoto || starting}
+                  >
+                    Begin Interview
+                  </Button>
+                </div>
               </div>
             </div>
           </>
