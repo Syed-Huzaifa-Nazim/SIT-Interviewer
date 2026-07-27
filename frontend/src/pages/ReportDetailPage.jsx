@@ -39,10 +39,15 @@ const ReportDetailPage = () => {
   const [videoUrl, setVideoUrl] = useState('');
   const [videoLoading, setVideoLoading] = useState(false);
   const [videoError, setVideoError] = useState('');
+  // Playback-level failure (distinct from the fetch error above): fires when the <video>
+  // element itself can't play the stream — e.g. the short-lived signed URL expired mid-view,
+  // a codec issue, or the network dropped. Retrying re-fetches a fresh signed URL.
+  const [videoPlaybackError, setVideoPlaybackError] = useState('');
 
   const loadSessionVideo = async () => {
     setVideoLoading(true);
     setVideoError('');
+    setVideoPlaybackError('');
     try {
       const res = await api.get(`/admin/interviews/${id}/video-url`);
       setVideoUrl(res.data.video_url);
@@ -616,16 +621,31 @@ const ReportDetailPage = () => {
             {user?.role === 'admin' && interview.has_video && (
               <div className="space-y-3 pt-4 border-t border-slate-200 dark:border-slate-800/80 no-print">
                 <h4 className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider font-sans">Session Recording</h4>
-                {videoUrl ? (
-                  <video controls src={videoUrl} className="w-full rounded-xl bg-black max-h-[420px]" />
+                {videoUrl && !videoPlaybackError ? (
+                  <video
+                    controls
+                    src={videoUrl}
+                    className="w-full rounded-xl bg-black max-h-[420px]"
+                    // Playback failed inside the element (expired signed URL, codec, network
+                    // drop). Surface it with a retry instead of leaving a silently-frozen player.
+                    onError={() => setVideoPlaybackError('The recording could not be played — the secure link may have expired. Retry to generate a fresh one.')}
+                  />
                 ) : (
                   <div className="p-6 text-center border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-xl space-y-3">
                     <p className="text-xs text-slate-500 dark:text-slate-400">
                       A full-session camera recording is stored for this interview.
                     </p>
-                    {videoError && <Alert variant="error" className="text-xs">{videoError}</Alert>}
-                    <Button size="sm" loading={videoLoading} onClick={loadSessionVideo}>
-                      {videoLoading ? 'Preparing secure link...' : 'Play Session Recording'}
+                    {(videoError || videoPlaybackError) && (
+                      <Alert variant="error" className="text-xs">{videoError || videoPlaybackError}</Alert>
+                    )}
+                    <Button
+                      size="sm"
+                      loading={videoLoading}
+                      onClick={() => { setVideoUrl(''); setVideoPlaybackError(''); loadSessionVideo(); }}
+                    >
+                      {videoLoading
+                        ? 'Preparing secure link...'
+                        : (videoPlaybackError ? 'Retry Playback' : 'Play Session Recording')}
                     </Button>
                   </div>
                 )}

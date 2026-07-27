@@ -61,6 +61,11 @@ const InterviewSession = () => {
   // Soft (non-terminating) proctor warning, e.g. full-face-not-visible (§4).
   const [softAlert, setSoftAlert] = useState('');
   const [isMuted, setIsMuted] = useState(false);
+  // Camera-stall watchdog (§ reliability): a calm "reconnecting" banner while we re-acquire
+  // a dropped/frozen stream, and a persistent notice if it truly can't be restored. Neither
+  // touches the detection logic — only the camera stream that feeds it.
+  const [cameraReconnecting, setCameraReconnecting] = useState(false);
+  const [cameraLost, setCameraLost] = useState(false);
 
   const videoRef = useRef(null);
   const streamRef = useRef(null);
@@ -79,6 +84,13 @@ const InterviewSession = () => {
   const gazeAwaySinceRef = useRef(null);
   const eyesClosedSinceRef = useRef(null);
   const lastGazeCheckRef = useRef(0);
+  // Camera-stall watchdog refs: timestamp of the last successfully processed frame (a silent
+  // freeze = this stops advancing), whether recovery is in progress (re-entry guard),
+  // whether we've given up retrying, and the consecutive-attempt counter.
+  const lastFrameAtRef = useRef(0);
+  const cameraStalledRef = useRef(false);
+  const cameraLostRef = useRef(false);
+  const recoveryAttemptsRef = useRef(0);
 
   // Voice capture refs
   const [isRecording, setIsRecording] = useState(false);
@@ -389,9 +401,18 @@ const InterviewSession = () => {
     let timeoutId = null;
     let objectScanTimeoutId = null;
     let phoneLoadTimeoutId = null;
+    let watchdogId = null;
 
     const startCameraAndProctoring = async () => {
       try {
+        // Fresh watchdog state for this camera session.
+        lastFrameAtRef.current = 0;
+        cameraStalledRef.current = false;
+        cameraLostRef.current = false;
+        recoveryAttemptsRef.current = 0;
+        setCameraReconnecting(false);
+        setCameraLost(false);
+
         // Request webcam stream
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { width: 640, height: 480 },
@@ -412,6 +433,11 @@ const InterviewSession = () => {
             console.log("Video playback started:", e);
           }
         }
+        // Watch this stream's track for explicit death (driver glitch, device sleep, unplug)
+        // and start the silent-freeze poller. Both only re-acquire the stream — never touch
+        // detection thresholds or violation logic.
+        attachTrackWatch(stream);
+        startWatchdog();
 
         // Start the session recording on the first camera stream only (§2) — a camera
         // re-toggle would otherwise produce a second WebM segment that can't be joined.
@@ -503,6 +529,9 @@ const InterviewSession = () => {
             if (cameraOn && videoRef.current && videoRef.current.readyState >= 2) {
               try {
                 await faceMesh.send({ image: videoRef.current });
+                // Watchdog heartbeat: a frame was successfully processed. If this stops
+                // advancing for STALL_THRESHOLD_MS the poller re-acquires the camera.
+                lastFrameAtRef.current = Date.now();
                 // Hands is heavy (main-thread WASM) and only needs an occasional look — run
                 // it every 4th cycle so it barely touches the frame budget.
                 if (handsModel && frameTick % 4 === 0) {
@@ -593,6 +622,97 @@ const InterviewSession = () => {
       }
     };
 
+    // --- Camera-stall watchdog & recovery (§ reliability) -------------------------------
+    // These ONLY re-acquire a dropped/frozen camera stream — they never change detection
+    // thresholds, violation logic, or the terminating counter. Confirmed defaults: react to
+    // a silent freeze after 6s, try up to 3 re-acquisitions, then (on failure) continue the
+    // interview but flag the unproctored gap for admin review rather than halting the candidate.
+    const STALL_THRESHOLD_MS = 6000;
+    const MAX_RECOVERY_ATTEMPTS = 3;
+
+    const attachTrackWatch = (mediaStream) => {
+      const track = mediaStream.getVideoTracks()[0];
+      if (!track) return;
+      // ended/muted = the OS/browser dropped the camera; react at once instead of waiting
+      // out the silent-freeze threshold.
+      track.onended = () => { if (active) recoverCamera('the camera turned off'); };
+      track.onmute = () => { if (active) recoverCamera('the camera feed was interrupted'); };
+      track.onunmute = () => { lastFrameAtRef.current = Date.now(); };
+    };
+
+    const recoverCamera = async (reason) => {
+      if (!active || !cameraOn) return;
+      if (cameraStalledRef.current || cameraLostRef.current) return; // already handling
+      cameraStalledRef.current = true;
+      setCameraReconnecting(true);
+      // Log ONCE as a technical incident (soft) — appears as a technical note on the report,
+      // never as candidate misconduct, and never touches the terminating counter.
+      api.post(`/interviews/${id}/proctor-log`, {
+        type: 'CAMERA_STALL',
+        details: `Camera feed interrupted (${reason}); attempting to reconnect.`,
+        soft: true,
+      }).catch(() => {});
+
+      while (active && cameraOn && recoveryAttemptsRef.current < MAX_RECOVERY_ATTEMPTS) {
+        recoveryAttemptsRef.current += 1;
+        try {
+          // Drop the dead stream before requesting a fresh one. NOTE: the session
+          // MediaRecorder was bound to the old stream and cannot be re-pointed; per the
+          // existing "one contiguous recording, no multi-segment stitching" design we
+          // deliberately do NOT restart it — the recording ends at the stall point and
+          // uploads what it captured. Proctoring itself DOES resume, which is the priority.
+          if (streamRef.current) {
+            streamRef.current.getTracks().forEach((t) => t.stop());
+          }
+          const fresh = await navigator.mediaDevices.getUserMedia({
+            video: { width: 640, height: 480 }, audio: false,
+          });
+          if (!active || !cameraOn) { fresh.getTracks().forEach((t) => t.stop()); return; }
+          streamRef.current = fresh;
+          if (videoRef.current) {
+            videoRef.current.srcObject = fresh;
+            try { await videoRef.current.play(); } catch (_) {}
+          }
+          attachTrackWatch(fresh);
+          // The frame loop reads videoRef.current every cycle, so detection resumes on the
+          // new stream automatically once readyState recovers — nothing to restart.
+          lastFrameAtRef.current = Date.now();
+          recoveryAttemptsRef.current = 0;
+          cameraStalledRef.current = false;
+          setCameraReconnecting(false);
+          return;
+        } catch (e) {
+          await new Promise((r) => setTimeout(r, 1500));
+        }
+      }
+
+      // Attempts exhausted: continue but make the unproctored gap visible and flagged.
+      if (active && cameraOn) {
+        cameraLostRef.current = true;
+        setCameraReconnecting(false);
+        setCameraLost(true);
+        api.post(`/interviews/${id}/proctor-log`, {
+          type: 'CAMERA_UNRECOVERABLE',
+          details: 'Camera feed could not be restored after multiple attempts; the interview '
+            + 'continued but was temporarily unproctored. Flagged for admin review.',
+          soft: true,
+        }).catch(() => {});
+      }
+      cameraStalledRef.current = false;
+    };
+
+    const startWatchdog = () => {
+      if (watchdogId) return;
+      watchdogId = setInterval(() => {
+        if (!active || !cameraOn) return;
+        if (cameraStalledRef.current || cameraLostRef.current) return;
+        if (lastFrameAtRef.current === 0) return; // still initializing — no frame processed yet
+        if (Date.now() - lastFrameAtRef.current > STALL_THRESHOLD_MS) {
+          recoverCamera('the video feed froze');
+        }
+      }, 2000);
+    };
+
     if (cameraOn) {
       // Add a 500ms delay to allow setup page to completely release the camera device lock
       timeoutId = setTimeout(() => {
@@ -617,6 +737,9 @@ const InterviewSession = () => {
       }
       if (phoneLoadTimeoutId) {
         clearTimeout(phoneLoadTimeoutId);
+      }
+      if (watchdogId) {
+        clearInterval(watchdogId);
       }
       stopCamera();
     };
@@ -1303,6 +1426,23 @@ const InterviewSession = () => {
         <div className="fixed top-24 left-1/2 -translate-x-1/2 z-[75] px-5 py-3.5 bg-amber-500 border-2 border-amber-300 text-white rounded-xl text-sm font-bold flex items-center gap-2.5 shadow-2xl shadow-amber-950/40 max-w-[92vw]">
           <ScanFace className="shrink-0" size={18} />
           <span>{softAlert}</span>
+        </div>
+      )}
+
+      {/* Camera-stall recovery (§ reliability) — deliberately calm, NOT the red violation
+          style: a transient "reconnecting" state while we re-acquire the stream, and a
+          persistent notice if it couldn't be restored (the interview continues; the gap is
+          logged for admin review, not counted against the candidate). */}
+      {cameraReconnecting && !cameraLost && (
+        <div className="fixed top-40 left-1/2 -translate-x-1/2 z-[75] px-5 py-3.5 bg-sky-600 border-2 border-sky-300 text-white rounded-xl text-sm font-semibold flex items-center gap-2.5 shadow-2xl shadow-sky-950/40 max-w-[92vw]">
+          <Camera className="shrink-0 animate-pulse" size={18} />
+          <span>Reconnecting to your camera…</span>
+        </div>
+      )}
+      {cameraLost && (
+        <div className="fixed top-40 left-1/2 -translate-x-1/2 z-[75] px-5 py-3.5 bg-orange-600 border-2 border-orange-300 text-white rounded-xl text-sm font-semibold flex items-center gap-2.5 shadow-2xl shadow-orange-950/40 max-w-[92vw]">
+          <CameraOff className="shrink-0" size={18} />
+          <span>Camera unavailable — the interview will continue, and this has been noted for review.</span>
         </div>
       )}
 
