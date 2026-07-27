@@ -143,6 +143,18 @@ AI-powered mock + official proctored interview platform.
 - Possible tuning knobs if user asks: `GAZE_AWAY_MS`, gaze bounds, `VIOLATION_COOLDOWN_MS`, COCO scan interval / base model.
 
 ## 8. Daily Log
+### 2026-07-25
+- **New animated landing page APPLIED** to the real frontend (light corporate + SMIT
+  blue/green, interviewer.ai-inspired; hero live product console + lower-half live visuals:
+  radar, scoring ring, proctor chips/strikes, filmstrip, admin-log ticker, interactive
+  walkthrough, count-up stats, blur-in scroll reveals).
+  - `frontend/src/pages/landingContent.js` (new) — `LANDING_CSS`+`LANDING_HTML`, ALL selectors
+    scoped under `.lp` so nothing leaks app-wide; dark mode via `html.dark .lp` (global theme).
+  - `frontend/src/pages/LandingPage.jsx` — PublicLayout kept (shared nav/footer); one useEffect
+    drives all animations with cleanup; `a[data-route]` clicks routed via React Router; old
+    Three.js NeuralHero import removed (lighter bundle).
+  - Verified: `vite build` clean, oxlint clean, dev server returns 200. Not committed/pushed.
+
 ### 2026-07-24
 - **Interview-start hang:** deferred the COCO-SSD phone model by 5s (it is the heaviest —
   weights download + expensive warm-up) so it no longer competes with FaceMesh/Hands at t=0.
