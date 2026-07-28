@@ -5,6 +5,11 @@ change — see git log / commit messages for full detail on any entry.
 
 ---
 
+## 2026-07-28
+- Added a camera-stall watchdog for the live interview feed: detects both an instant camera drop (track ended/muted) and a silent freeze (no frame processed for 6s), then automatically re-acquires the webcam so proctoring resumes without restarting the interview
+- Added a calm "reconnecting" banner during recovery, and a persistent notice if the camera truly can't be restored — the interview continues rather than penalizing the candidate, with the gap logged as a technical incident for admin review (not counted as misconduct)
+- Hardened the Admin Hub's session-recording player: an in-player playback failure (e.g. an expired signed URL) now shows a clear error with a one-click retry instead of a silently frozen video
+
 ## 2026-07-23
 - Secured the downloaded Google OAuth credentials file so it can never be committed to git
 - Fixed production emails linking to `localhost` instead of the live Vercel site
