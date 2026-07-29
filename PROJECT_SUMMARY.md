@@ -91,7 +91,7 @@ Centralizes all environment-driven settings: database URL, JWT secrets/expiry, u
 - `POST /extract-file-text` — generic file → text extraction utility.
 
 **Coding Sandbox** (`/api/coding`, **admin-only**) — a soft-launched feature not yet exposed to regular candidates
-- `GET /problems`, `GET /problems/{id}` — problem bank (currently 4 LeetCode-style problems).
+- `GET /problems`, `GET /problems/{id}` — problem bank (**18** LeetCode-style problems: 10 Easy, 6 Medium, 2 Hard; 106 test cases). Every problem's expected values are verified against a reference solution in `backend/tests/test_problem_bank.py`.
 - `POST /run` — executes code against visible sample tests only.
 - `POST /submit` — executes against sample + hidden tests, persists a `CodeSubmission`.
 
@@ -175,6 +175,17 @@ Three route tiers, each with its own layout shell:
 ---
 
 ## 6. Known Inconsistencies / Technical Debt
+
+> **Accuracy note (2026-07-28):** parts of this document have drifted from the code. Seven
+> specific discrepancies are catalogued as D1–D7 at the top of **`TEST_CASES.md`**, which was
+> written against the actual code. The most important: registration also requires
+> `cnic`/`course_category`/`course_status`; proctoring terminates on the **4th** violation
+> (`> 3`), not the 3rd, and auto-bans for **30 days** after a **single** termination;
+> `submit-answer` scores on a **background thread** rather than inline. Two further findings
+> (F1: the offline domain keyword list misses job-title forms like "Dentist"; F2: mock
+> question generation is **not** deterministic — it calls `random.shuffle`) are pinned by
+> tests in `backend/tests/`. Treat `TEST_CASES.md` and the code as authoritative where they
+> disagree with this file.
 
 - **README.md and `backend/Dockerfile` still describe a Flask stack** (`Flask-SQLAlchemy`, `gunicorn app:app`), but the codebase has migrated to **FastAPI** (`main.py`, `uvicorn`). The Dockerfile's `CMD` should target `main:app` with a Uvicorn worker class for Gunicorn to serve it correctly.
 - No formal DB migration tool (tables are created via `create_all` on startup) — schema changes require manual care in production.

@@ -558,10 +558,50 @@ class MixtralService:
 
         api_result = cls._call_llm(system_prompt, user_prompt)
         if api_result and all(k in api_result for k in ['extracted_skills', 'resume_score', 'suggestions']):
-            return api_result
+            return cls._normalize_resume_analysis(api_result)
 
         # Fallback Mock Resume Analysis
         return cls._generate_mock_resume_analysis(resume_text)
+
+    # The resume list fields are persisted into TEXT columns and the client JSON.parse()s
+    # them, so they must ALWAYS leave this service as JSON strings. The mock path already
+    # json.dumps() them; the live LLM returns real Python lists, which used to be written to
+    # the column raw and read back as a str(list) — "['React', 'Node']" with single quotes —
+    # which is not valid JSON, so the client's JSON.parse threw and blanked the page.
+    # Normalising here keeps both paths identical and is the single source of truth.
+    _RESUME_LIST_FIELDS = (
+        'extracted_skills', 'extracted_experience',
+        'extracted_education', 'missing_skills', 'suggestions',
+    )
+
+    @classmethod
+    def _normalize_resume_analysis(cls, result):
+        normalized = dict(result)
+
+        for field in cls._RESUME_LIST_FIELDS:
+            value = normalized.get(field)
+
+            if isinstance(value, str):
+                # Already a string: keep it only if it really is JSON, otherwise wrap the
+                # plain text as a single-item list so the client always gets an array.
+                try:
+                    parsed = json.loads(value)
+                    normalized[field] = json.dumps(parsed if isinstance(parsed, list) else [parsed])
+                except (ValueError, TypeError):
+                    normalized[field] = json.dumps([value] if value.strip() else [])
+            elif isinstance(value, list):
+                normalized[field] = json.dumps([str(v) for v in value])
+            elif value is None:
+                normalized[field] = json.dumps([])
+            else:
+                normalized[field] = json.dumps([str(value)])
+
+        try:
+            normalized['resume_score'] = max(0, min(int(float(normalized.get('resume_score', 0))), 100))
+        except (TypeError, ValueError):
+            normalized['resume_score'] = 0
+
+        return normalized
 
     @classmethod
     def analyze_jd(cls, jd_text):

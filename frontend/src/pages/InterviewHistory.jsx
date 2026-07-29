@@ -9,7 +9,10 @@ import Button from '../components/ui/Button';
 import EmptyState from '../components/ui/EmptyState';
 import SearchBar from '../components/ui/SearchBar';
 import Spinner from '../components/ui/Spinner';
+import Pagination from '../components/ui/Pagination';
 import { History, Filter, ArrowUpRight, Award } from 'lucide-react';
+
+const PAGE_SIZE = 10;
 
 const InterviewHistory = () => {
   const [history, setHistory] = useState([]);
@@ -20,6 +23,7 @@ const InterviewHistory = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterType, setFilterType] = useState('all'); // all, technical, HR, behavioral, custom
   const [sortBy, setSortBy] = useState('newest'); // newest, oldest, highest_score
+  const [page, setPage] = useState(1);
 
   useEffect(() => {
     const fetchHistory = async () => {
@@ -58,6 +62,14 @@ const InterviewHistory = () => {
       }
       return 0;
     });
+
+  // Changing a filter/search/sort re-scopes the list, so send the user back to page 1 —
+  // otherwise a narrowed result set would leave them on a page that no longer exists.
+  useEffect(() => {
+    setPage(1);
+  }, [searchTerm, filterType, sortBy]);
+
+  const pagedHistory = filteredHistory.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   return (
     <div className="space-y-6">
@@ -119,8 +131,9 @@ const InterviewHistory = () => {
           actionTo="/interview/start"
         />
       ) : (
+        <>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {filteredHistory.map((mock) => (
+          {pagedHistory.map((mock) => (
             <Card key={mock.id} variant="interactive" className="flex flex-col justify-between">
               
               <div className="space-y-4">
@@ -169,6 +182,9 @@ const InterviewHistory = () => {
             </Card>
           ))}
         </div>
+
+        <Pagination page={page} total={filteredHistory.length} onChange={setPage} />
+        </>
       )}
     </div>
   );

@@ -143,6 +143,92 @@ AI-powered mock + official proctored interview platform.
 - Possible tuning knobs if user asks: `GAZE_AWAY_MS`, gaze bounds, `VIOLATION_COOLDOWN_MS`, COCO scan interval / base model.
 
 ## 8. Daily Log
+### 2026-07-28
+- **BUG FIXED — Resume & JD Analyzer blank/black screen after upload.** Root cause: the
+  `extracted_skills` family of fields left the AI service in **two different shapes**. The
+  mock path `json.dumps()`'d them (valid JSON string), but the live-LLM path returned real
+  Python lists which were written raw into the `Text` column and read back as a `str(list)`
+  — `"['React', 'Node']"` with single quotes, which is **not valid JSON**. The client's
+  `JSON.parse()` threw **during render**, so React unmounted the whole tree → blank page.
+  Only live mode was affected, which is why it looked intermittent.
+  - `backend/app/ai/mixtral/mixtral_service.py` — new `_normalize_resume_analysis()`; every
+    list field always leaves as a JSON string, `resume_score` clamped to 0–100. Single
+    source of truth, so mock and live are now byte-compatible.
+  - `frontend/src/pages/ResumeJdAnalyzer.jsx` — new `toList()` helper used for every list
+    field (incl. `matched_skills`, `missing_skills`, `suggestions`, `custom_questions`,
+    which the live LLM can omit entirely). Malformed data now degrades to an empty list
+    instead of crashing the page.
+  - `backend/tests/test_resume_analysis_normalization.py` (new) — 26 regression tests.
+- **Test suite added** (first automated tests in the repo).
+  - `TEST_CASES.md` — 196 manual test cases across Auth, Interviews, Proctoring, Tokens,
+    Resume/JD, Coding Sandbox, Admin, AI mock mode, and technical debt.
+  - `backend/tests/` — pytest. Covers the anti-fabrication rules (never fabricate a score or
+    a transcript) and the coding-sandbox timeout guard. **69 passing.**
+  - `frontend/src/pages/AdminScoringPage.test.jsx` — vitest + RTL, 10 passing.
+  - **DB safety:** `backend/tests/conftest.py` installs a `do_connect` guard that fails the
+    run if any test tries to reach the configured database. `db.py` hard-blocks SQLite and
+    there is no local Postgres/Docker on this machine, so DB-backed API tests are still
+    **pending** — they need either a SQLite escape hatch in `db.py` or a test Postgres.
+  - New dev-only deps (approved): `pytest`, `httpx`; `vitest`, `@testing-library/react`,
+    `@testing-library/jest-dom`, `@testing-library/user-event`, `jsdom`. None ship to prod.
+  - `frontend/vitest.config.js` is deliberately SEPARATE from `vite.config.js` so the
+    production/PWA build config is untouched. `npm test` added to package.json.
+- **UI updates (all previewed and confirmed before implementing).**
+  - **History pagination** — reused the existing `Pagination` component and the
+    `AdminScoringPage` pattern (PAGE_SIZE 10); page resets to 1 when search/filter/sort change.
+  - **Start Interview (`InterviewConfig.jsx`)** — progress stepper, tick on the selected
+    focus card, question count as pills instead of a range slider, and a sticky **Session
+    Summary rail** stating the token cost and post-start balance before committing. Colour
+    scheme deliberately unchanged per the user's instruction.
+  - **Resume & JD (`ResumeJdAnalyzer.jsx`)** — 3-step flow indicator, upload zone collapses
+    to a confirmation row once parsed, ATS score and match score as **rings** instead of a
+    flat bar, numbered upskilling roadmap.
+  - **Profile (`ProfilePage.jsx`)** — animated rank medallion (rotating conic halo, gentle
+    bob, shine sweep; pure CSS, no library, fully disabled under `prefers-reduced-motion`),
+    progress-to-next-rank bar, and **tiered badges**. Animations live in a page-scoped
+    `<style>` block so `index.css` stays untouched.
+  - **Badge tiers decision:** `/users/achievements` returns only `unlocked: true/false` — the
+    backend has **no tier concept**. The five rank tiers already existed in the frontend
+    (`getRankBadge`), so badge tiers are mapped frontend-side via `BADGE_TIERS`
+    (welcome/first_interview → Bronze, resume_analyzed → Silver, five_interviews → Gold,
+    high_performer → Platinum). No backend change, nothing new to deploy.
+- **Coding sandbox problem bank expanded: 4 → 18 problems** (`backend/app/coding/problem_bank.py`).
+  - Added 14: Valid Parentheses, Contains Duplicate, Binary Search, Climbing Stairs, Move
+    Zeroes, Best Time to Buy and Sell Stock, Longest Common Prefix (Easy); Product of Array
+    Except Self, Longest Substring Without Repeating Characters, Rotate Array, Merge
+    Intervals, Spiral Matrix (Medium); Trapping Rain Water, Edit Distance (Hard).
+  - Spread is now Easy 10 / Medium 6 / Hard 2, **106 test cases** total. Every problem ships
+    sample tests (Run) + hidden tests (Submit) and signature-only starters for Python and
+    JavaScript — never a partial solution (§1.2).
+  - Problems were chosen so the expected value is **unambiguous** (single deterministic
+    return, no order-dependent answers like group-anagrams, no float equality), because the
+    runner compares results by equality after a JSON round-trip.
+  - `backend/tests/test_problem_bank.py` (new, 112 tests) — the important one runs a
+    **known-good reference solution for every problem through the real runner** against that
+    problem's own sample + hidden tests. A wrong `expected` in the bank would fail a correct
+    candidate, so this makes the bank self-verifying. Also asserts: every starter does NOT
+    pass its own tests (no giveaway), starters exist for both languages and declare the
+    right function, ids are unique, all three difficulties are represented, and
+    `public_problem`/`list_problems` never leak `hidden_tests`.
+  - Reference solutions live only in the test file — the shipped bank stays solution-free.
+  - Frontend needed no change: `CodingInterview.jsx` renders `problems.map(...)` from the
+    API, so the new problems appear automatically.
+- **Findings recorded, deliberately NOT fixed** (documented in the tests so any future fix
+  is a reviewed change):
+  - **F1** — the offline domain keyword list holds field names (`dentistry`, `medicine`,
+    `nursing`) but not the job-title forms candidates actually type (`Dentist`, `Doctor`,
+    `Nurse`, `Chef`). Those fall through at confidence 40, under the 50-point bar `/start`
+    blocks at, so with the LLM unavailable they are let through. The live LLM path is fine.
+  - **F2** — `PROJECT_SUMMARY.md` calls the mock question bank "deterministic", but
+    `generate_questions` calls `random.shuffle`, so selection/order vary between runs. Only
+    the shape (count, non-empty text, valid type) is guaranteed.
+  - **PROJECT_SUMMARY.md is stale in 7 places** (D1–D7, listed at the top of `TEST_CASES.md`)
+    — most importantly it says proctoring terminates at 3 violations and bans for a day,
+    whereas the code terminates on the **4th** (`> 3`) and bans for **30 days**. User
+    confirmed the **code** is correct.
+- Verified: `vite build` exit 0, oxlint clean (2 warnings, both pre-existing — confirmed via
+  a stash test), backend 69/69 pytest, frontend 10/10 vitest. **Not committed/pushed.**
+
 ### 2026-07-25
 - **New animated landing page APPLIED** to the real frontend (light corporate + SMIT
   blue/green, interviewer.ai-inspired; hero live product console + lower-half live visuals:
