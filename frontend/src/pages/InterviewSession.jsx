@@ -361,12 +361,24 @@ const InterviewSession = () => {
     const now = Date.now();
     // Global cooldown across ALL violation types (prevents batched detections after a
     // freeze from counting 2–3 strikes at once and terminating the session instantly).
+    // It also collapses the pair of events a single tab switch fires (visibilitychange AND
+    // blur) into one strike, so this stays in force for every type.
     if (now - lastAnyViolationRef.current < VIOLATION_COOLDOWN_MS) {
       return;
     }
-    // Throttle reporting of same violation types to once every 5 seconds
-    if (lastViolationTimeRef.current[type] && now - lastViolationTimeRef.current[type] < 5000) {
-      return;
+    // The 5s same-type throttle exists for CONTINUOUS conditions: the detection loop
+    // re-reports "no face"/"looking away" every few hundred ms for as long as the state
+    // lasts, and without it two seconds out of frame would burn every strike at once.
+    //
+    // It must NOT apply to discrete, deliberate actions. Switching tabs four times is four
+    // separate offences, but under a blanket 5s throttle only the 1st and 4th were counted —
+    // so the strike count stalled at 3, the 4th violation never reached the server, and the
+    // session never terminated no matter how many times the candidate re-offended.
+    const DISCRETE_ACTIONS = ['TAB_SWITCH', 'FOCUS_LOSS', 'COPY_PASTE', 'KEYBOARD_SHORTCUT', 'CAMERA_OFF'];
+    if (!DISCRETE_ACTIONS.includes(type)) {
+      if (lastViolationTimeRef.current[type] && now - lastViolationTimeRef.current[type] < 5000) {
+        return;
+      }
     }
     lastAnyViolationRef.current = now;
     lastViolationTimeRef.current[type] = now;
