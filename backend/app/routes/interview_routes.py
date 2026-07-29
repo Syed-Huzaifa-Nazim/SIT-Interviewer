@@ -1034,11 +1034,11 @@ def archive_proctor_snapshot(interview, kind, image_data_url, label=None):
 
 
 def mark_interview_as_failed_proctoring(interview, snapshot_image=None, snapshot_description=None):
-    # Archive the termination webcam frame as an organized file in Supabase (folder tree
-    # user_<id>/<date>/) in addition to the inline copy kept on the report for quick view.
-    if snapshot_image:
-        archive_proctor_snapshot(interview, 'termination', snapshot_image,
-                                 label=snapshot_description)
+    # NOTE: we deliberately do NOT archive a ProctorSnapshot row here. The client already
+    # files exactly one webcam + one screen snapshot for EVERY counted violation, including
+    # the 4th (terminating) one. Archiving a 'termination' copy as well made that last
+    # violation produce three rows instead of two (4 violations => 9 snapshots, not 8).
+    # The inline copy kept on the report below still powers the Compliance Audit card.
 
     interview.is_proctor_failed = True
     interview.status = 'completed'
@@ -1222,9 +1222,9 @@ async def upload_proctor_snapshot(interview_id: int, request: Request, user_id: 
     if not image:
         raise HTTPException(status_code=400, detail="Snapshot image is required")
 
-    # Only screen/webcam monitoring kinds are accepted here; termination frames are
-    # archived server-side when the session is actually terminated.
-    if kind not in ('screen', 'webcam'):
+    # Only these monitoring kinds are accepted here. 'identity' is the pre-interview
+    # baseline face photo captured during the identity check.
+    if kind not in ('screen', 'webcam', 'identity'):
         kind = 'screen'
 
     snap = archive_proctor_snapshot(interview, kind, image, label=label)
@@ -1232,6 +1232,79 @@ async def upload_proctor_snapshot(interview_id: int, request: Request, user_id: 
         return {'stored': False, 'message': 'Snapshot could not be stored right now'}
     db.session.commit()
     return {'stored': True, 'id': snap.id}
+
+
+@interview_bp.post('/{interview_id}/identity-failed')
+async def identity_verification_failed(interview_id: int, request: Request,
+                                       user_id: int = Depends(get_current_user_id)):
+    """Hard-terminate an interview because the person on camera is no longer the person who
+    passed the pre-interview identity check.
+
+    This is deliberately NOT part of the 4-strike violation flow: the violation counter is
+    left untouched and no warning is issued — a swapped candidate is an immediate block, not
+    a strike. The event gets its own AdminLog entry (action IDENTITY_VERIFICATION_FAILED)
+    carrying the candidate email, interview id and timestamp, plus an archived 'identity'
+    snapshot of the mismatching frame, so the admin can see exactly why it ended."""
+    interview = Interview.query.filter_by(id=interview_id, user_id=user_id).first()
+    if not interview:
+        raise HTTPException(status_code=404, detail="Interview session not found")
+    if interview.status == 'completed':
+        return {'message': 'Interview already completed', 'terminated': False}
+
+    data = await request.json() or {}
+    details = (data.get('details') or 'Face on camera did not match the verified candidate.')[:255]
+    snapshot_image = data.get('snapshot_image')
+
+    try:
+        candidate = User.query.get(user_id)
+        # Archive the mismatching frame so the admin can visually confirm the decision.
+        if snapshot_image:
+            archive_proctor_snapshot(interview, 'identity', snapshot_image,
+                                     label=f"identity-mismatch: {details}")
+
+        # Reuse the standard termination path (zero-score report, candidate notification,
+        # one-time attempt consumed), then overwrite the wording so the report and logs say
+        # identity — not "proctoring violations", which would be misleading here.
+        mark_interview_as_failed_proctoring(
+            interview,
+            snapshot_image=snapshot_image,
+            snapshot_description=f"Identity verification failed: {details}"
+        )
+        interview.terminated_reason = 'identity_mismatch'
+        interview.feedback_summary = (
+            "Session automatically terminated: the person on camera did not match the "
+            "candidate verified at the start of the interview."
+        )
+        # Explicitly NOT touched: interview.proctor_violations_count. Identity failure is a
+        # hard block that must not consume or inflate the candidate's violation strikes.
+
+        report = InterviewReport.query.filter_by(interview_id=interview.id).first()
+        if report:
+            report.weaknesses = json.dumps(["Identity verification failed"])
+            report.missing_concepts = "The candidate on camera could not be verified."
+            report.recommendations = (
+                "The face detected during the interview did not match the photo captured at "
+                "the identity check. Contact the administrator if you believe this is an error."
+            )
+
+        admin_user = User.query.filter_by(role='admin').first()
+        db.session.add(AdminLog(
+            admin_id=admin_user.id if admin_user else user_id,
+            action='IDENTITY_VERIFICATION_FAILED',
+            details=(
+                f"Identity verification FAILED for {candidate.email if candidate else 'unknown'} "
+                f"(user ID {user_id}) during interview ID {interview_id} at "
+                f"{datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}. "
+                f"{details} Interview was terminated immediately without counting a proctoring "
+                f"violation. A snapshot of the mismatching frame was archived."
+            )
+        ))
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to record identity failure: {str(e)}")
+
+    return {'message': 'Interview terminated — identity verification failed', 'terminated': True}
 
 @interview_bp.post('/{interview_id}/fail-proctoring')
 async def force_fail_proctoring(interview_id: int, request: Request, user_id: int = Depends(get_current_user_id)):

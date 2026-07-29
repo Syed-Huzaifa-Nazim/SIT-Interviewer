@@ -7,7 +7,15 @@ import Card from '../components/ui/Card';
 import Alert from '../components/ui/Alert';
 import Badge from '../components/ui/Badge';
 import Button from '../components/ui/Button';
-import { Sparkles, Play, Cpu, UserCircle2, BrainCircuit, FileSpreadsheet, Upload } from 'lucide-react';
+import { SlidersHorizontal, Play, Cpu, UserCircle2, BrainCircuit, FileSpreadsheet, Upload, Check, Coins, Clock } from 'lucide-react';
+
+// Selectable question counts. Replaces the old range slider: a slider gives no sense of
+// which values are available and is fiddly to hit precisely, while these read at a glance.
+const QUESTION_CHOICES = [3, 4, 5, 6, 8, 10];
+
+// Rough session length shown in the summary — ~3 minutes of speaking and thinking per
+// question, which matches the per-question timers the backend sets.
+const MINUTES_PER_QUESTION = 3;
 
 const InterviewConfig = () => {
   const { user, tokens, setTokens } = useAuth();
@@ -122,10 +130,27 @@ const InterviewConfig = () => {
     { id: 'custom', name: 'Custom Role Match', desc: 'Upload a specific JD to align questions with requirements.', icon: FileSpreadsheet }
   ];
 
+  const finalRoleLabel = (selectedRole === 'Custom' ? customRoleText : selectedRole) || 'React Developer';
+  const balanceAfter = Math.max(0, (tokens?.tokens_available ?? 0) - 1);
+  const canStart = (tokens?.tokens_available ?? 0) >= 1;
+
+  // The stepper is presentational: it reflects how far the form has been filled in rather
+  // than gating anything, so the page still submits in a single action as it always did.
+  const stepDone = {
+    focus: !!type,
+    details: !!finalRoleLabel && (type !== 'custom' || !!customJd.trim()),
+  };
+
+  const steps = [
+    { id: 'focus', label: 'Focus', done: stepDone.focus },
+    { id: 'details', label: 'Details', done: stepDone.details },
+    { id: 'launch', label: 'Launch', done: false },
+  ];
+
   return (
-    <div className="max-w-3xl mx-auto space-y-6 md:space-y-8 animate-fade-in">
+    <div className="max-w-5xl mx-auto space-y-6 animate-fade-in">
       <PageHeader
-        icon={Sparkles}
+        icon={SlidersHorizontal}
         title="Configure Mock Interview"
         subtitle="Configure parameters and launch your personalized mock interview. 1 token will be deducted."
       />
@@ -133,14 +158,56 @@ const InterviewConfig = () => {
       {error && <Alert variant="error">{error}</Alert>}
       {domainNotice && <Alert variant="warning">{domainNotice}</Alert>}
 
-      <Card className="space-y-8 md:p-8">
-        <form onSubmit={handleStart} className="space-y-8">
+      {/* Progress stepper — shows where you are in the setup at a glance. */}
+      <div className="flex items-center">
+        {steps.map((s, idx) => {
+          const isActive = !s.done && (idx === 0 || steps[idx - 1].done);
+          return (
+            <React.Fragment key={s.id}>
+              <div className="flex items-center gap-2 shrink-0">
+                <span
+                  className={`w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-extrabold border transition ${
+                    s.done
+                      ? 'bg-primary-600 border-primary-600 text-white'
+                      : isActive
+                        ? 'border-primary-500 text-primary-600 dark:text-primary-400 ring-4 ring-primary-500/15 bg-white dark:bg-slate-900'
+                        : 'border-slate-300 dark:border-slate-700 text-slate-400 dark:text-slate-600 bg-white dark:bg-slate-900'
+                  }`}
+                >
+                  {s.done ? <Check size={13} strokeWidth={3} /> : idx + 1}
+                </span>
+                <span
+                  className={`text-xs font-bold ${
+                    s.done || isActive
+                      ? 'text-slate-800 dark:text-slate-200'
+                      : 'text-slate-400 dark:text-slate-600'
+                  }`}
+                >
+                  {s.label}
+                </span>
+              </div>
+              {idx < steps.length - 1 && (
+                <div
+                  className={`flex-1 h-px mx-3 min-w-4 ${
+                    s.done ? 'bg-primary-500' : 'bg-slate-200 dark:bg-slate-800'
+                  }`}
+                />
+              )}
+            </React.Fragment>
+          );
+        })}
+      </div>
+
+      <form onSubmit={handleStart}>
+        <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-6 items-start">
+          {/* ---------------------------------------------------------- main column */}
+          <div className="space-y-6">
           {/* Step 1: Select Type */}
-          <div className="space-y-4">
-            <label className="text-sm font-bold text-slate-700 dark:text-slate-200 block">
-              1. Select Interview Focus
+          <Card className="space-y-4">
+            <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider block">
+              Interview Focus
             </label>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 md:gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {typesList.map((t) => {
                 const Icon = t.icon;
                 const isSelected = type === t.id;
@@ -149,12 +216,17 @@ const InterviewConfig = () => {
                     key={t.id}
                     type="button"
                     onClick={() => setType(t.id)}
-                    className={`p-4 rounded-xl text-left border flex items-start gap-3.5 transition-all duration-200 ${
+                    className={`relative p-4 rounded-xl text-left border flex items-start gap-3.5 transition-all duration-200 ${
                       isSelected
                         ? 'bg-primary-500/10 border-primary-500 ring-2 ring-primary-500/20 text-slate-900 dark:text-white'
-                        : 'bg-slate-50 dark:bg-slate-900/40 border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 hover:border-slate-300 dark:hover:border-slate-700'
+                        : 'bg-slate-50 dark:bg-slate-900/40 border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 hover:border-slate-300 dark:hover:border-slate-700 hover:-translate-y-0.5'
                     }`}
                   >
+                    {isSelected && (
+                      <span className="absolute top-2.5 right-2.5 w-4.5 h-4.5 p-0.5 rounded-full bg-primary-600 text-white flex items-center justify-center">
+                        <Check size={11} strokeWidth={3} />
+                      </span>
+                    )}
                     <div
                       className={`p-2.5 rounded-lg shrink-0 ${
                         isSelected
@@ -172,7 +244,7 @@ const InterviewConfig = () => {
                 );
               })}
             </div>
-          </div>
+          </Card>
 
           {/* Quick Job Description Upload */}
           <Card variant="highlighted" className="!p-5 space-y-4">
@@ -213,8 +285,10 @@ const InterviewConfig = () => {
           </Card>
 
           {/* Step 2: Details */}
-          <div className="space-y-5 pt-4 border-t border-slate-200 dark:border-slate-800">
-            <h3 className="text-sm font-bold text-slate-700 dark:text-slate-200">2. Configure Details</h3>
+          <Card className="space-y-5">
+            <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider block">
+              Configure Details
+            </label>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
               <div className="space-y-1.5">
@@ -278,25 +352,35 @@ const InterviewConfig = () => {
 
               <div className="space-y-1.5">
                 <label className="text-xs font-semibold text-slate-500 dark:text-slate-400">
-                  Number of Questions:{' '}
-                  <span className="text-primary-500 dark:text-primary-400 font-bold">{numQuestions}</span>
+                  Number of Questions
                 </label>
-                <input
-                  type="range"
-                  min="3"
-                  max="10"
-                  className="w-full h-2 bg-slate-200 dark:bg-slate-800 rounded-lg appearance-none cursor-pointer accent-primary-500 mt-2"
-                  value={numQuestions}
-                  onChange={(e) => setNumQuestions(parseInt(e.target.value))}
-                />
+                <div className="flex flex-wrap gap-2 pt-0.5">
+                  {QUESTION_CHOICES.map((count) => (
+                    <button
+                      key={count}
+                      type="button"
+                      onClick={() => setNumQuestions(count)}
+                      aria-pressed={numQuestions === count}
+                      className={`w-9 h-9 rounded-lg text-xs font-bold font-mono border transition ${
+                        numQuestions === count
+                          ? 'bg-primary-600 border-primary-600 text-white shadow-sm'
+                          : 'bg-slate-50 dark:bg-slate-900/40 border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 hover:border-slate-300 dark:hover:border-slate-700'
+                      }`}
+                    >
+                      {count}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
-          </div>
+          </Card>
 
           {/* Custom fields */}
           {type === 'custom' && (
-            <div className="space-y-4 pt-4 border-t border-slate-200 dark:border-slate-800">
-              <h3 className="text-sm font-bold text-slate-700 dark:text-slate-200">3. Custom Job Context</h3>
+            <Card className="space-y-4">
+              <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider block">
+                Custom Job Context
+              </label>
 
               <div className="space-y-4">
                 <div className="space-y-1.5">
@@ -325,30 +409,78 @@ const InterviewConfig = () => {
                   />
                 </div>
               </div>
-            </div>
+            </Card>
           )}
-
-          {/* Submit */}
-          <div className="pt-6 border-t border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4">
-            <p className="text-xs text-slate-500 dark:text-slate-500">
-              Current balance:{' '}
-              <span className="font-bold text-slate-700 dark:text-slate-300">
-                {tokens?.tokens_available ?? 0} tokens
-              </span>
-            </p>
-
-            <Button
-              type="submit"
-              size="lg"
-              icon={Play}
-              loading={loading}
-              className="w-full sm:w-auto"
-            >
-              {loading ? 'Generating Questions...' : 'Deduct 1 Token & Start'}
-            </Button>
           </div>
-        </form>
-      </Card>
+
+          {/* ------------------------------------------------------- summary rail */}
+          <aside className="lg:sticky lg:top-4">
+            <Card className="space-y-4">
+              <h4 className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                Session Summary
+              </h4>
+
+              <dl className="space-y-0">
+                {[
+                  ['Focus', typesList.find((t) => t.id === type)?.name ?? '—'],
+                  ['Role', finalRoleLabel],
+                  ['Level', experienceLevel],
+                  ['Difficulty', difficulty],
+                  ['Questions', numQuestions],
+                ].map(([label, value]) => (
+                  <div
+                    key={label}
+                    className="flex items-center justify-between gap-3 py-2 border-b border-dashed border-slate-200 dark:border-slate-800 text-xs"
+                  >
+                    <dt className="text-slate-500 dark:text-slate-400 shrink-0">{label}</dt>
+                    <dd className="font-bold text-slate-800 dark:text-slate-200 text-right truncate">{value}</dd>
+                  </div>
+                ))}
+                <div className="flex items-center justify-between gap-3 py-2 text-xs">
+                  <dt className="text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
+                    <Clock size={12} /> Est. duration
+                  </dt>
+                  <dd className="font-bold text-slate-800 dark:text-slate-200">
+                    ~{numQuestions * MINUTES_PER_QUESTION} min
+                  </dd>
+                </div>
+              </dl>
+
+              {/* Cost is stated before the candidate commits, so the deduction is never a surprise. */}
+              <div className="flex items-center justify-between px-4 py-3 rounded-xl bg-primary-500/10 border border-primary-500/25">
+                <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                  <Coins size={13} /> Token cost
+                </span>
+                <span className="text-xl font-extrabold text-primary-600 dark:text-primary-400">1</span>
+              </div>
+
+              <Button
+                type="submit"
+                size="lg"
+                icon={Play}
+                loading={loading}
+                disabled={!canStart}
+                fullWidth
+              >
+                {loading ? 'Generating Questions...' : 'Start Interview'}
+              </Button>
+
+              <p className="text-[11px] text-center text-slate-500 dark:text-slate-500">
+                {canStart ? (
+                  <>
+                    Balance after start:{' '}
+                    <span className="font-bold text-slate-700 dark:text-slate-300">{balanceAfter} tokens</span>
+                  </>
+                ) : (
+                  <span className="font-bold text-amber-600 dark:text-amber-400">
+                    No tokens left — top up from your Profile.
+                  </span>
+                )}
+              </p>
+            </Card>
+          </aside>
+        </div>
+      </form>
     </div>
   );
 };

@@ -2,6 +2,17 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import api from '../services/api';
 import { getScreenStream, hasScreenStream, clearScreenStream } from '../services/proctorScreen';
+import {
+  loadFaceApi,
+  computeDescriptor,
+  descriptorDistance,
+  getBaselineDescriptor,
+  getBaselineImage,
+  clearBaseline,
+  IDENTITY_MATCH_THRESHOLD,
+  IDENTITY_CHECK_INTERVAL_MS,
+  IDENTITY_MISMATCH_STRIKES,
+} from '../services/identityCheck';
 import Card from '../components/ui/Card';
 import Alert from '../components/ui/Alert';
 import Badge from '../components/ui/Badge';
@@ -61,6 +72,11 @@ const InterviewSession = () => {
   // Soft (non-terminating) proctor warning, e.g. full-face-not-visible (§4).
   const [softAlert, setSoftAlert] = useState('');
   const [isMuted, setIsMuted] = useState(false);
+  // Camera-stall watchdog (§ reliability): a calm "reconnecting" banner while we re-acquire
+  // a dropped/frozen stream, and a persistent notice if it truly can't be restored. Neither
+  // touches the detection logic — only the camera stream that feeds it.
+  const [cameraReconnecting, setCameraReconnecting] = useState(false);
+  const [cameraLost, setCameraLost] = useState(false);
 
   const videoRef = useRef(null);
   const streamRef = useRef(null);
@@ -79,6 +95,22 @@ const InterviewSession = () => {
   const gazeAwaySinceRef = useRef(null);
   const eyesClosedSinceRef = useRef(null);
   const lastGazeCheckRef = useRef(0);
+  // Camera recovery refs. There is deliberately NO polling "is it frozen?" watchdog: every
+  // frame/clock-based heuristic tried here produced false stalls (a busy main thread during
+  // heavy model work looks identical to a dead camera), and each false stall tore down a
+  // perfectly healthy stream — killing the session MediaRecorder bound to it and making the
+  // camera appear to hang. Recovery now runs ONLY on the browser's own unambiguous track
+  // signals (ended/mute), which fire for genuine device loss and nothing else.
+  const cameraStalledRef = useRef(false);
+  const cameraLostRef = useRef(false);
+  const recoveryAttemptsRef = useRef(0);
+  const muteGraceTimerRef = useRef(null);
+  // Identity verification (§ identity check): consecutive mismatches seen so far, and a
+  // latch so the terminate-once path can never fire twice.
+  const identityMismatchesRef = useRef(0);
+  const identityFailedRef = useRef(false);
+  const identityBaselineSentRef = useRef(false);
+  const [identityAlert, setIdentityAlert] = useState('');
 
   // Voice capture refs
   const [isRecording, setIsRecording] = useState(false);
@@ -228,11 +260,102 @@ const InterviewSession = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [questions.length]);
 
+  // ------------------------------------------------- Identity verification (§ identity)
+  // File the baseline photo captured on the pre-interview gate against this interview, so
+  // the admin can see exactly who was verified at the start.
+  useEffect(() => {
+    const image = getBaselineImage();
+    if (!image || !questions.length || identityBaselineSentRef.current) return;
+    identityBaselineSentRef.current = true;
+    api.post(`/interviews/${id}/proctor-snapshot`, {
+      image,
+      kind: 'identity',
+      label: 'identity-baseline',
+    }).catch(() => {});
+  }, [questions.length, id]);
+
+  // Hard-terminate the session because the person on camera is no longer the verified
+  // candidate. Deliberately separate from logProctorViolation: this does NOT touch the
+  // 4-strike counter and gives no warning — it is an immediate block, and the backend
+  // writes its own IDENTITY_VERIFICATION_FAILED admin log.
+  const terminateForIdentity = async (distance) => {
+    if (identityFailedRef.current) return;
+    identityFailedRef.current = true;
+    setIdentityAlert('Identity check failed — the person on camera is not the verified candidate. This session is being terminated.');
+    const snapshot = captureSnapshot();
+    try {
+      await api.post(`/interviews/${id}/identity-failed`, {
+        details: `Face on camera did not match the candidate verified at the start (distance ${distance.toFixed(3)}).`,
+        snapshot_image: snapshot,
+      });
+    } catch (err) {
+      console.error('Failed to report the identity failure:', err);
+    }
+    await uploadSessionVideo();
+    stopCamera();
+    clearBaseline();
+    navigate(`/interview/report/${id}`, { state: { proctorFailed: true }, replace: true });
+  };
+
+  // Periodically re-verify that the candidate on camera is still the one who passed the
+  // identity check. Hang safety: the library and its models were already downloaded on the
+  // pre-interview gate, a check runs only every 30s, and each one is a single small
+  // inference — so this adds no meaningful load to the interview.
+  useEffect(() => {
+    const baseline = getBaselineDescriptor();
+    if (!baseline || !questions.length) return undefined;
+
+    let active = true;
+    let timerId = null;
+
+    const runCheck = async () => {
+      if (!active || identityFailedRef.current) return;
+      const vid = videoRef.current;
+      if (cameraOn && vid && vid.readyState >= 2) {
+        try {
+          await loadFaceApi();
+          const descriptor = await computeDescriptor(vid);
+          if (descriptor) {
+            const distance = descriptorDistance(descriptor, baseline);
+            if (distance > IDENTITY_MATCH_THRESHOLD) {
+              identityMismatchesRef.current += 1;
+              if (identityMismatchesRef.current >= IDENTITY_MISMATCH_STRIKES) {
+                await terminateForIdentity(distance);
+                return;
+              }
+            } else {
+              // Back to the right person — a single odd reading never accumulates.
+              identityMismatchesRef.current = 0;
+            }
+          }
+          // No descriptor means no face was found at all. That is already covered by the
+          // NO_FACE proctoring check, so identity stays neutral instead of counting it as
+          // a mismatch (otherwise looking away twice could terminate an honest candidate).
+        } catch (err) {
+          // A verification hiccup must never interrupt the interview.
+          console.warn('Identity re-check skipped:', err);
+        }
+      }
+      if (active) timerId = setTimeout(runCheck, IDENTITY_CHECK_INTERVAL_MS);
+    };
+
+    timerId = setTimeout(runCheck, IDENTITY_CHECK_INTERVAL_MS);
+    return () => {
+      active = false;
+      if (timerId) clearTimeout(timerId);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [questions.length, cameraOn]);
+
   // 3. Send Proctor Log payload to backend (hard violation — counts toward termination)
   // No two hard violations may be counted closer together than this — a single lag spike
   // can make several independent checks (no-face, gaze, look-away) trip within the same
   // instant, and without this global gate they would stack into an immediate termination.
-  const VIOLATION_COOLDOWN_MS = 3000;
+  // 3000ms was suppressing genuine back-to-back violations of DIFFERENT types (the second one
+  // is dropped outright, not deferred), which read as "violations detected very late". 1500ms
+  // still absorbs the burst of simultaneous trips that a single lag spike produces — the case
+  // this gate exists for — while letting a real second violation register promptly.
+  const VIOLATION_COOLDOWN_MS = 1500;
 
   const logProctorViolation = async (type, details) => {
     const now = Date.now();
@@ -253,14 +376,24 @@ const InterviewSession = () => {
     setViolationAlert(`PROCTOR WARNING: ${details}`);
     setTimeout(() => setViolationAlert(''), 4000);
 
+    // Bump the strike counter immediately rather than waiting for the server's reply. The
+    // authoritative number still comes from the backend below and overwrites this the moment
+    // it lands — but that round trip crosses regions (app in the US, database in Asia), so
+    // relying on it alone left the alarm sounding while the count sat unchanged for a second
+    // or more. The candidate now sees the strike register at the same instant they're warned.
+    const optimisticCount = violationsCountRef.current + 1;
+    violationsCountRef.current = optimisticCount;
+    setViolationsCount(optimisticCount);
+
     // Capture the webcam frame for THIS violation. Archived per-violation below (every
     // violation — 1, 2, 3, 4 — gets its own snapshot saved to the proctoring DB), and also
     // passed to the proctor-log so the terminating violation still records it on the report.
     const snapshot = captureSnapshot();
 
     // Archive a snapshot for every violation (not just the terminating one): the webcam
-    // frame plus the shared screen at this moment. Fire-and-forget so it never delays the
-    // violation flow. The 4th (terminating) violation is additionally archived server-side.
+    // frame plus the shared screen at this moment — exactly ONE of each per counted
+    // violation, so 4 violations produce 4 webcam + 4 screen snapshots and nothing more.
+    // Fire-and-forget so it never delays the violation flow.
     if (snapshot) {
       api.post(`/interviews/${id}/proctor-snapshot`, { image: snapshot, kind: 'webcam', label: type }).catch(() => {});
     }
@@ -272,6 +405,7 @@ const InterviewSession = () => {
         details,
         snapshot_image: snapshot
       });
+      // Reconcile with the authoritative server count (replaces the optimistic bump above).
       const count = res.data.violations_count;
       if (typeof count === 'number') {
         setViolationsCount(count);
@@ -279,10 +413,10 @@ const InterviewSession = () => {
       }
 
       if (res.data.auto_terminate) {
-        // The 4th violation's webcam + screen frames were already archived just above (every
-        // violation is), and the backend also files the terminating webcam frame from this
-        // request. Give those fire-and-forget uploads a brief moment to reach the server
-        // before we tear the session down and navigate away.
+        // The 4th violation's webcam + screen frames were already archived just above, like
+        // every other violation — the server no longer files a duplicate 'termination' copy.
+        // Give those fire-and-forget uploads a brief moment to reach the server before we
+        // tear the session down and navigate away.
         await new Promise((r) => setTimeout(r, 400));
         // Termination must be immediate — the candidate should not remain on a live,
         // proctorable session for however long a multi-MB video upload takes (previously
@@ -296,8 +430,33 @@ const InterviewSession = () => {
         navigate(`/interview/report/${id}`, { state: { proctorFailed: true }, replace: true });
       }
     } catch (err) {
+      // The strike never reached the server, so undo the optimistic bump rather than leaving
+      // the candidate looking at a count the backend doesn't actually hold. Guarded so a
+      // reply that already corrected the value isn't pulled back down.
+      if (violationsCountRef.current === optimisticCount) {
+        const rolledBack = Math.max(0, optimisticCount - 1);
+        violationsCountRef.current = rolledBack;
+        setViolationsCount(rolledBack);
+      }
       console.error('Failed to log violation to server:', err);
     }
+  };
+
+  // 3a. Camera toggle guard. Switching the camera off used to actually stop the feed — and
+  // because every proctoring loop is gated on `cameraOn`, that silently disabled face, gaze,
+  // hands, phone AND identity checking for the rest of the interview. So the camera is now
+  // never allowed off during a session: the attempt is refused and counted straight away
+  // through the normal violation flow (snapshot + strike + the existing 4-strike
+  // termination), with no separate mechanism of its own.
+  const handleCameraToggleAttempt = () => {
+    if (!cameraOn) {
+      setCameraOn(true);
+      return;
+    }
+    logProctorViolation(
+      'CAMERA_OFF',
+      'Attempted to turn the camera off. The camera must stay on for the entire interview.'
+    );
   };
 
   // 3b. Soft proctor warning (§4): logged for admin visibility, shown to the candidate,
@@ -387,11 +546,16 @@ const InterviewSession = () => {
     let active = true;
     let animationFrameId = null;
     let timeoutId = null;
-    let objectScanTimeoutId = null;
-    let phoneLoadTimeoutId = null;
 
     const startCameraAndProctoring = async () => {
       try {
+        // Fresh recovery state for this camera session.
+        cameraStalledRef.current = false;
+        cameraLostRef.current = false;
+        recoveryAttemptsRef.current = 0;
+        setCameraReconnecting(false);
+        setCameraLost(false);
+
         // Request webcam stream
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { width: 640, height: 480 },
@@ -412,6 +576,10 @@ const InterviewSession = () => {
             console.log("Video playback started:", e);
           }
         }
+        // Watch this stream's track for explicit device loss (driver glitch, sleep, unplug).
+        // This only ever re-acquires the stream — it never touches detection thresholds or
+        // violation logic.
+        attachTrackWatch(stream);
 
         // Start the session recording on the first camera stream only (§2) — a camera
         // re-toggle would otherwise produce a second WebM segment that can't be joined.
@@ -491,21 +659,23 @@ const InterviewSession = () => {
             console.warn('MediaPipe Hands unavailable; face proctoring continues.', e);
           }
 
-          // Custom frame loop. Proctoring does NOT need a high frame rate — face/gaze
-          // checks at ~6 FPS are more than enough, and running the heavy FaceMesh (with
-          // iris refinement) + Hands models any faster pegs the CPU and makes the whole
-          // interview UI hang. So: FaceMesh runs every ~160ms, and the (also heavy) Hands
-          // model runs at HALF that rate, on alternating cycles — this keeps a hand raised
-          // in view still caught quickly while roughly halving the per-cycle cost.
+          // Custom frame loop. Each cycle awaits its inference, so the loop can never queue
+          // work faster than the device clears it — the gap below is just breathing room for
+          // the browser to paint the video and run the UI. With the phone model gone there is
+          // enough headroom to keep this gap short, which is what makes hand/eye/face warnings
+          // fire promptly instead of lagging behind the candidate.
           let frameTick = 0;
           const processFrame = async () => {
             if (!active) return;
             if (cameraOn && videoRef.current && videoRef.current.readyState >= 2) {
               try {
                 await faceMesh.send({ image: videoRef.current });
-                // Hands is heavy (main-thread WASM) and only needs an occasional look — run
-                // it every 4th cycle so it barely touches the frame budget.
-                if (handsModel && frameTick % 4 === 0) {
+                // NOTE: deliberately no "still alive" heartbeat here. Frame-loop progress
+                // reflects main-thread availability, not camera health, so using it to judge
+                // the camera produced false stalls during heavy model work.
+                // Hands on alternating cycles: frequent enough that a raised hand is caught
+                // in well under a second, while keeping the per-cycle cost roughly halved.
+                if (handsModel && frameTick % 2 === 0) {
                   await handsModel.send({ image: videoRef.current });
                 }
               } catch (e) {
@@ -515,82 +685,122 @@ const InterviewSession = () => {
             frameTick += 1;
             setTimeout(() => {
               animationFrameId = requestAnimationFrame(processFrame);
-            }, 200); // ~5 FPS — plenty for proctoring, keeps the CPU free so the UI never hangs
+            }, 120);
           };
 
           animationFrameId = requestAnimationFrame(processFrame);
-          // Proctoring is considered active as soon as the face pipeline is running —
-          // we do NOT wait for the heavier object-detection model, so the interview
-          // starts quickly. The phone model is loaded and run separately below.
           setProctoringActive(true);
 
-          // Optional object-detection model (TensorFlow.js COCO-SSD): flags a mobile
-          // phone in view of the camera. This is the HEAVIEST model (it downloads weights
-          // and its first warm-up inference is expensive), so loading it at t=0 alongside
-          // FaceMesh + Hands is what spikes the CPU and hangs the interview at the very
-          // start. We DEFER it ~5s — until after the first question has rendered and the UI
-          // is interactive — so the start stays smooth. Phone coverage simply begins a few
-          // seconds in; face/gaze/hands proctoring is already live from t=0. It runs on its
-          // own scan loop, decoupled from the face frame loop, and any failure here never
-          // disrupts the face/hands proctoring above.
-          phoneLoadTimeoutId = setTimeout(() => {
-          if (!active) return;
-          (async () => {
-            try {
-              // Give FaceMesh/Hands the CPU, network, and GPU-shader-compile budget to
-              // themselves for the first few seconds. Loading all three heavy ML pipelines
-              // at the exact same moment (TF.js + COCO-SSD is the heaviest of the three) was
-              // causing a real multi-second hang right when the interview starts — and
-              // because the face/hands frame loop can't service requestAnimationFrame while
-              // the main thread is busy compiling/parsing all this, violations committed
-              // during that window went uncaught. Staggering the load shrinks that window
-              // without dropping any detection.
-              await new Promise((r) => setTimeout(r, 4000));
-              if (!active) return;
-              await loadScript('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js');
-              await loadScript('https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js');
-              if (!active || !window.cocoSsd) return;
-              // Run phone inference on the CPU backend (reverted from WebGL by request).
-              try {
-                if (window.tf?.setBackend) {
-                  await window.tf.setBackend('cpu');
-                  await window.tf.ready();
-                }
-              } catch (be) {
-                console.warn('CPU backend unavailable; using default TF.js backend.', be);
-              }
-              const phoneModel = await window.cocoSsd.load({ base: 'mobilenet_v2' });
-              if (!active) return;
-
-              const scanForPhone = async () => {
-                if (!active) return;
-                if (cameraOn && videoRef.current && videoRef.current.readyState >= 2) {
-                  try {
-                    // detect(img, maxNumBoxes, minScore): coco-ssd's default minScore is
-                    // 0.5, which hides a phone that's only partially/faintly visible. We
-                    // pass a low minScore (0.2) so those low-confidence detections are
-                    // returned, then apply our own threshold in handleObjectDetections —
-                    // this is what makes even a slightly-visible phone get flagged.
-                    const predictions = await phoneModel.detect(videoRef.current, 20, 0.2);
-                    if (active) handleObjectDetections(predictions);
-                  } catch (e) {
-                    // Ignore transient inference failures
-                  }
-                }
-                // Scan ~1.5x per second — a phone in view is still caught within ~1s, while
-                // leaving the CPU almost entirely free for the face pipeline and the UI.
-                objectScanTimeoutId = setTimeout(scanForPhone, 700);
-              };
-              scanForPhone();
-            } catch (e) {
-              console.warn('Object detection (phone) model unavailable; face proctoring continues.', e);
-            }
-          })();
-          }, 5000);
+          // NOTE: phone/object detection (TensorFlow.js + COCO-SSD) was removed from the
+          // interview. It was by far the heaviest thing on the page — a separate model
+          // download plus a repeated inference that blocked the main thread, and because the
+          // video element renders on that same thread the camera visibly froze each time.
+          // Removing it is what makes the feed smooth and lets the face/gaze/hands warnings
+          // fire promptly. Everything else is unchanged: face count, look-away, eye/gaze,
+          // hands, and identity verification all still run.
         }
       } catch (err) {
         console.warn('MediaPipe initialization failed. Proctoring is active but running on fallback system event monitors.', err);
       }
+    };
+
+    // --- Camera loss recovery (§ reliability) -------------------------------------------
+    // Re-acquires the stream ONLY when the browser itself reports the device is gone. Never
+    // changes detection thresholds, violation logic, or the terminating counter. On repeated
+    // failure the interview continues and the unproctored gap is flagged for admin review
+    // rather than halting the candidate.
+    const MAX_RECOVERY_ATTEMPTS = 3;
+
+    const attachTrackWatch = (mediaStream) => {
+      const track = mediaStream.getVideoTracks()[0];
+      if (!track) return;
+      // 'ended' is terminal — the device is gone and will never come back on this track.
+      track.onended = () => { if (active) recoverCamera('the camera turned off'); };
+      // 'mute' is NOT terminal: browsers fire it for brief interruptions that very often
+      // resolve themselves a moment later (an 'unmute' follows). Reconnecting on the first
+      // mute is what produced needless "reconnecting" flashes, so wait out a grace period
+      // and only act if the feed is still muted by the end of it.
+      track.onmute = () => {
+        if (!active) return;
+        if (muteGraceTimerRef.current) clearTimeout(muteGraceTimerRef.current);
+        muteGraceTimerRef.current = setTimeout(() => {
+          muteGraceTimerRef.current = null;
+          if (active && track.readyState !== 'ended' && track.muted) {
+            recoverCamera('the camera feed was interrupted');
+          }
+        }, 3000);
+      };
+      track.onunmute = () => {
+        // Self-healed — cancel the pending recovery entirely.
+        if (muteGraceTimerRef.current) {
+          clearTimeout(muteGraceTimerRef.current);
+          muteGraceTimerRef.current = null;
+        }
+      };
+    };
+
+    const recoverCamera = async (reason) => {
+      if (!active || !cameraOn) return;
+      if (cameraStalledRef.current || cameraLostRef.current) return; // already handling
+      cameraStalledRef.current = true;
+      setCameraReconnecting(true);
+      // Log ONCE as a technical incident (soft) — appears as a technical note on the report,
+      // never as candidate misconduct, and never touches the terminating counter.
+      api.post(`/interviews/${id}/proctor-log`, {
+        type: 'CAMERA_STALL',
+        details: `Camera feed interrupted (${reason}); attempting to reconnect.`,
+        soft: true,
+      }).catch(() => {});
+
+      while (active && cameraOn && recoveryAttemptsRef.current < MAX_RECOVERY_ATTEMPTS) {
+        recoveryAttemptsRef.current += 1;
+        try {
+          // Fully release the old stream FIRST. This is mandatory, not optional: a frozen
+          // camera often still reports readyState 'live', and leaving that track open keeps
+          // the OS device handle held — so the getUserMedia() below cannot acquire the very
+          // camera it is trying to reopen, and recovery stalls instead of recovering.
+          // (Skipping this for live tracks, to try to spare the MediaRecorder, is exactly
+          // what turned a brief reconnect into a repeating hang.) The recording is protected
+          // by not reaching this path spuriously in the first place — recovery now only runs
+          // on a genuine 'ended'/sustained-'mute' signal — and whatever the recorder already
+          // captured is retained in sessionChunksRef and still uploaded at session end.
+          if (streamRef.current) {
+            streamRef.current.getTracks().forEach((t) => t.stop());
+          }
+          const fresh = await navigator.mediaDevices.getUserMedia({
+            video: { width: 640, height: 480 }, audio: false,
+          });
+          if (!active || !cameraOn) { fresh.getTracks().forEach((t) => t.stop()); return; }
+          streamRef.current = fresh;
+          if (videoRef.current) {
+            videoRef.current.srcObject = fresh;
+            try { await videoRef.current.play(); } catch (_) {}
+          }
+          attachTrackWatch(fresh);
+          // The frame loop reads videoRef.current every cycle, so detection resumes on the
+          // new stream automatically once readyState recovers — nothing to restart.
+          recoveryAttemptsRef.current = 0;
+          cameraStalledRef.current = false;
+          setCameraReconnecting(false);
+          return;
+        } catch (e) {
+          await new Promise((r) => setTimeout(r, 1500));
+        }
+      }
+
+      // Attempts exhausted: continue but make the unproctored gap visible and flagged.
+      if (active && cameraOn) {
+        cameraLostRef.current = true;
+        setCameraReconnecting(false);
+        setCameraLost(true);
+        api.post(`/interviews/${id}/proctor-log`, {
+          type: 'CAMERA_UNRECOVERABLE',
+          details: 'Camera feed could not be restored after multiple attempts; the interview '
+            + 'continued but was temporarily unproctored. Flagged for admin review.',
+          soft: true,
+        }).catch(() => {});
+      }
+      cameraStalledRef.current = false;
     };
 
     if (cameraOn) {
@@ -612,11 +822,9 @@ const InterviewSession = () => {
       if (animationFrameId) {
         cancelAnimationFrame(animationFrameId);
       }
-      if (objectScanTimeoutId) {
-        clearTimeout(objectScanTimeoutId);
-      }
-      if (phoneLoadTimeoutId) {
-        clearTimeout(phoneLoadTimeoutId);
+      if (muteGraceTimerRef.current) {
+        clearTimeout(muteGraceTimerRef.current);
+        muteGraceTimerRef.current = null;
       }
       stopCamera();
     };
@@ -804,20 +1012,6 @@ const InterviewSession = () => {
     const hands = results.multiHandLandmarks || [];
     if (hands.length > 0) {
       logProctorViolation('HAND_DETECTED', 'Hand detected in front of the camera. Keep your hands out of view.');
-    }
-  };
-
-  // 7c. Process object detections (COCO-SSD): flag a mobile phone in the frame.
-  // A phone is flagged as soon as it is seen with reasonable confidence — no sustained
-  // wait — so bringing any smartphone toward the camera warns immediately. The
-  // logProctorViolation throttle (same type once per 5s) already prevents spamming, so
-  // an occasional noisy frame cannot pile up violations.
-  const handleObjectDetections = (predictions) => {
-    const phone = (predictions || []).find(
-      (p) => p.class === 'cell phone' && p.score >= 0.3
-    );
-    if (phone) {
-      logProctorViolation('PHONE_DETECTED', 'Mobile phone detected in the camera view. Please remove all devices.');
     }
   };
 
@@ -1297,12 +1491,42 @@ const InterviewSession = () => {
         </div>
       )}
 
+      {/* Identity failure — a hard block, not a strike. Shown as a full-cover overlay
+          because the session is already being torn down behind it. */}
+      {identityAlert && (
+        <div className="fixed inset-0 z-[90] bg-slate-950/90 backdrop-blur-sm flex flex-col items-center justify-center gap-4 p-6 text-center">
+          <div className="w-16 h-16 rounded-full bg-red-600/20 border-2 border-red-500 text-red-400 flex items-center justify-center">
+            <ScanFace size={32} />
+          </div>
+          <h2 className="text-xl font-extrabold text-white">Identity Verification Failed</h2>
+          <p className="text-sm text-slate-300 max-w-md leading-relaxed">{identityAlert}</p>
+          <Spinner size="lg" />
+        </div>
+      )}
+
       {/* Soft (non-terminating) full-face warning (§4) — also pinned near the top, just
           below the hard-warning slot, in a calmer amber style. */}
       {softAlert && (
         <div className="fixed top-24 left-1/2 -translate-x-1/2 z-[75] px-5 py-3.5 bg-amber-500 border-2 border-amber-300 text-white rounded-xl text-sm font-bold flex items-center gap-2.5 shadow-2xl shadow-amber-950/40 max-w-[92vw]">
           <ScanFace className="shrink-0" size={18} />
           <span>{softAlert}</span>
+        </div>
+      )}
+
+      {/* Camera-stall recovery (§ reliability) — deliberately calm, NOT the red violation
+          style: a transient "reconnecting" state while we re-acquire the stream, and a
+          persistent notice if it couldn't be restored (the interview continues; the gap is
+          logged for admin review, not counted against the candidate). */}
+      {cameraReconnecting && !cameraLost && (
+        <div className="fixed top-40 left-1/2 -translate-x-1/2 z-[75] px-5 py-3.5 bg-sky-600 border-2 border-sky-300 text-white rounded-xl text-sm font-semibold flex items-center gap-2.5 shadow-2xl shadow-sky-950/40 max-w-[92vw]">
+          <Camera className="shrink-0 animate-pulse" size={18} />
+          <span>Reconnecting to your camera…</span>
+        </div>
+      )}
+      {cameraLost && (
+        <div className="fixed top-40 left-1/2 -translate-x-1/2 z-[75] px-5 py-3.5 bg-orange-600 border-2 border-orange-300 text-white rounded-xl text-sm font-semibold flex items-center gap-2.5 shadow-2xl shadow-orange-950/40 max-w-[92vw]">
+          <CameraOff className="shrink-0" size={18} />
+          <span>Camera unavailable — the interview will continue, and this has been noted for review.</span>
         </div>
       )}
 
@@ -1341,13 +1565,15 @@ const InterviewSession = () => {
 
               <button
                 type="button"
-                onClick={() => setCameraOn(!cameraOn)}
+                onClick={handleCameraToggleAttempt}
                 className={`p-1.5 rounded-lg border transition ${
                   cameraOn
-                    ? 'bg-slate-100 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white'
+                    ? 'bg-slate-100 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 hover:text-red-500 hover:border-red-500/40'
                     : 'bg-primary-600/10 border-primary-500 text-primary-500 dark:text-primary-400'
                 }`}
-                title={cameraOn ? 'Turn Off Camera' : 'Turn On Camera'}
+                title={cameraOn
+                  ? 'The camera must stay on — turning it off is recorded as a violation'
+                  : 'Turn the camera back on'}
               >
                 {cameraOn ? <Camera size={14} /> : <CameraOff size={14} />}
               </button>

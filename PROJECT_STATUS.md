@@ -14,7 +14,7 @@ AI-powered mock + official proctored interview platform.
 - **Backend:** FastAPI + SQLAlchemy + Uvicorn + PyJWT + bcrypt + pypdf + pydub
 - **DB:** PostgreSQL / Supabase (prod). **No SQLite fallback** (removed) — `DATABASE_URL` must be set.
 - **AI:** Mixtral (LLM scoring) + Whisper (STT). Modes: mock / api.
-- **Proctoring (client-side):** MediaPipe FaceMesh (+ iris/refineLandmarks) + MediaPipe Hands + TensorFlow.js COCO-SSD (phone detection), all loaded from CDN.
+- **Proctoring (client-side):** MediaPipe FaceMesh (+ iris/refineLandmarks) + MediaPipe Hands + TensorFlow.js COCO-SSD (phone detection) + `@vladmandic/face-api` (identity verification), all loaded from CDN.
 - **Storage:** Supabase Storage (private buckets). Refs stored as `supabase://bucket/path`, served to admin via short-lived signed URLs.
 - **Git:** GitHub repo `SyedHuzaifaNazim/Interviewer.ai`. Working branch: `saqib-colab`. Main: `main`.
 
@@ -22,6 +22,9 @@ AI-powered mock + official proctored interview platform.
 - **Do NOT push to GitHub until the user explicitly says so.**
 - **Do ONLY what the user asks — no self-initiated extra features/refactors.** If something extra seems useful, mention it and ask first.
 - **Communicate in Roman Urdu.**
+- **Never add a new library without asking first.** Tell the user what it is and why, get approval, then implement.
+- **Nothing may slow down or crash the live backend** (FastAPI on Render) — it is deployed from `main`.
+- **The interview must never hang.** Heavy ML work belongs on the pre-interview gate or deferred, never at interview start.
 - Ask before any big/ambiguous work; don't ask about deleting features during merges.
 - Commit messages must NOT contain any AI/Claude co-author line (user wants history to look team-authored). Author identity is `SAQIBKHAN1020`.
 
@@ -52,6 +55,35 @@ AI-powered mock + official proctored interview platform.
   - **Warning banner**: fixed, top-center, prominent (red hard / amber soft), z-index high, visible in fullscreen.
 - **Snapshots**: on EVERY counted violation (1,2,3,4) the client captures a **webcam** frame + a **screen** frame and POSTs to `/interviews/{id}/proctor-snapshot` → archived in `proctor-snapshots` bucket + `ProctorSnapshot` DB row. The 4th (terminating) webcam frame is ALSO archived server-side (`kind='termination'`) and set on the report for the admin review card.
 - **Admin viewing** `frontend/src/pages/AdminLogsPage.jsx`: new **"Proctor Snapshots"** tab — list (candidate, interview, type, context) with per-image lazy signed-URL "View" + delete.
+
+### Identity verification (added 2026-07-24)
+- **New pre-interview step**, after the device check and before "Begin Interview"
+  (`OfficialInterviewStart.jsx`, stage `identity_check`): captures ONE photo of the candidate
+  and turns it into a 128-d face descriptor — the session **baseline**.
+- **Library:** `@vladmandic/face-api` @1.7.15 from jsdelivr (approved by the user). Models:
+  `tiny_face_detector` (193KB) + `face_landmark_68` (357KB) + `face_recognition` (6.4MB).
+  All CDN paths and file sizes were verified before use — note this fork ships **single
+  `.bin` files, NOT sharded `-shard1` weights** (the sharded paths 404).
+- **Why a separate model:** MediaPipe FaceMesh only returns face *geometry* — it can locate a
+  face but can never say *who* it is. Identity needs an embedding model.
+- **Hang safety:** library + all models download on the pre-interview gate (a static screen
+  with a spinner), never during the interview. In-interview re-checks run once every 30s
+  (`IDENTITY_CHECK_INTERVAL_MS`) as a single small inference, so the session cost is ~zero.
+- **Monitoring:** every 30s the webcam descriptor is compared with the baseline. Distance
+  above `IDENTITY_MATCH_THRESHOLD` (0.6) counts a mismatch; `IDENTITY_MISMATCH_STRIKES` (2)
+  consecutive mismatches hard-terminate. "No face found" is NOT a mismatch (that is already
+  the NO_FACE violation) so an honest candidate looking away is never terminated.
+- **Termination is NOT a violation:** `POST /interviews/{id}/identity-failed` terminates the
+  interview, leaves `proctor_violations_count` untouched, sets
+  `terminated_reason='identity_mismatch'`, archives an `identity` snapshot of the mismatching
+  frame, and writes an **`IDENTITY_VERIFICATION_FAILED` AdminLog** carrying candidate email +
+  interview id + timestamp, so the admin can see exactly why the session ended.
+- **Refresh-proof:** the baseline descriptor is mirrored into `sessionStorage`
+  (`frontend/src/services/identityCheck.js`) — otherwise reloading the page would silently
+  switch identity monitoring off and hand the candidate an easy bypass.
+- **NOTE — enrolled photos do not exist.** Of 9 candidates only 1 has a `profile_pic_url`, and
+  `RegisterPage.jsx` captures no photo at signup, so "match against the enrolled photo" was
+  not buildable. The baseline is therefore captured at the start of each session instead.
 
 ### Backend proctoring/snapshot infra
 - `backend/app/models/models.py`: `ProctorSnapshot` model (user_id, candidate_email, interview_id, kind ['termination'/'screen'/'webcam'], label, storage_ref, captured_at).
@@ -93,11 +125,152 @@ AI-powered mock + official proctored interview platform.
   - Backend: `models.py`, `models/__init__.py`, `config.py`, `supabase_service.py`, `interview_routes.py`, `admin_routes.py`
 
 ## 7. Next Steps / Pending
+
+### Open decisions from 2026-07-24 (need the user's call)
+- **If the face-api CDN is unreachable**, the candidate currently cannot pass the identity
+  check (Retry only, no bypass) and therefore cannot start their one-time interview. Chosen
+  deliberately — a visible "skip" button would defeat the feature — but it is an operational
+  risk worth a decision.
+- **No ban on identity failure.** A proctoring termination triggers a 30-day auto-ban;
+  identity failure currently does not (it was not requested, and face matching can produce
+  false positives). Say the word if it should ban too.
+- **Threshold tuning:** `IDENTITY_MATCH_THRESHOLD` (0.6) and `IDENTITY_MISMATCH_STRIKES` (2)
+  live in `frontend/src/services/identityCheck.js` — raise the threshold if honest candidates
+  are ever wrongly flagged.
+
 - **User to test on real machine (needs webcam + screen):** eye detection (~1s → count), hang gone, warnings visible, snapshots on all 4 violations appearing in admin "Proctor Snapshots" tab (webcam + screen). During testing keep violations ~3s apart (cooldown).
 - After user confirms → commit each logical change separately (clean English messages, NO AI co-author) and push when told.
 - Possible tuning knobs if user asks: `GAZE_AWAY_MS`, gaze bounds, `VIOLATION_COOLDOWN_MS`, COCO scan interval / base model.
 
 ## 8. Daily Log
+### 2026-07-28
+- **BUG FIXED — Resume & JD Analyzer blank/black screen after upload.** Root cause: the
+  `extracted_skills` family of fields left the AI service in **two different shapes**. The
+  mock path `json.dumps()`'d them (valid JSON string), but the live-LLM path returned real
+  Python lists which were written raw into the `Text` column and read back as a `str(list)`
+  — `"['React', 'Node']"` with single quotes, which is **not valid JSON**. The client's
+  `JSON.parse()` threw **during render**, so React unmounted the whole tree → blank page.
+  Only live mode was affected, which is why it looked intermittent.
+  - `backend/app/ai/mixtral/mixtral_service.py` — new `_normalize_resume_analysis()`; every
+    list field always leaves as a JSON string, `resume_score` clamped to 0–100. Single
+    source of truth, so mock and live are now byte-compatible.
+  - `frontend/src/pages/ResumeJdAnalyzer.jsx` — new `toList()` helper used for every list
+    field (incl. `matched_skills`, `missing_skills`, `suggestions`, `custom_questions`,
+    which the live LLM can omit entirely). Malformed data now degrades to an empty list
+    instead of crashing the page.
+  - `backend/tests/test_resume_analysis_normalization.py` (new) — 26 regression tests.
+- **Test suite added** (first automated tests in the repo).
+  - `TEST_CASES.md` — 196 manual test cases across Auth, Interviews, Proctoring, Tokens,
+    Resume/JD, Coding Sandbox, Admin, AI mock mode, and technical debt.
+  - `backend/tests/` — pytest. Covers the anti-fabrication rules (never fabricate a score or
+    a transcript) and the coding-sandbox timeout guard. **69 passing.**
+  - `frontend/src/pages/AdminScoringPage.test.jsx` — vitest + RTL, 10 passing.
+  - **DB safety:** `backend/tests/conftest.py` installs a `do_connect` guard that fails the
+    run if any test tries to reach the configured database. `db.py` hard-blocks SQLite and
+    there is no local Postgres/Docker on this machine, so DB-backed API tests are still
+    **pending** — they need either a SQLite escape hatch in `db.py` or a test Postgres.
+  - New dev-only deps (approved): `pytest`, `httpx`; `vitest`, `@testing-library/react`,
+    `@testing-library/jest-dom`, `@testing-library/user-event`, `jsdom`. None ship to prod.
+  - `frontend/vitest.config.js` is deliberately SEPARATE from `vite.config.js` so the
+    production/PWA build config is untouched. `npm test` added to package.json.
+- **UI updates (all previewed and confirmed before implementing).**
+  - **History pagination** — reused the existing `Pagination` component and the
+    `AdminScoringPage` pattern (PAGE_SIZE 10); page resets to 1 when search/filter/sort change.
+  - **Start Interview (`InterviewConfig.jsx`)** — progress stepper, tick on the selected
+    focus card, question count as pills instead of a range slider, and a sticky **Session
+    Summary rail** stating the token cost and post-start balance before committing. Colour
+    scheme deliberately unchanged per the user's instruction.
+  - **Resume & JD (`ResumeJdAnalyzer.jsx`)** — 3-step flow indicator, upload zone collapses
+    to a confirmation row once parsed, ATS score and match score as **rings** instead of a
+    flat bar, numbered upskilling roadmap.
+  - **Profile (`ProfilePage.jsx`)** — animated rank medallion (rotating conic halo, gentle
+    bob, shine sweep; pure CSS, no library, fully disabled under `prefers-reduced-motion`),
+    progress-to-next-rank bar, and **tiered badges**. Animations live in a page-scoped
+    `<style>` block so `index.css` stays untouched.
+  - **Badge tiers decision:** `/users/achievements` returns only `unlocked: true/false` — the
+    backend has **no tier concept**. The five rank tiers already existed in the frontend
+    (`getRankBadge`), so badge tiers are mapped frontend-side via `BADGE_TIERS`
+    (welcome/first_interview → Bronze, resume_analyzed → Silver, five_interviews → Gold,
+    high_performer → Platinum). No backend change, nothing new to deploy.
+- **Coding sandbox problem bank expanded: 4 → 18 problems** (`backend/app/coding/problem_bank.py`).
+  - Added 14: Valid Parentheses, Contains Duplicate, Binary Search, Climbing Stairs, Move
+    Zeroes, Best Time to Buy and Sell Stock, Longest Common Prefix (Easy); Product of Array
+    Except Self, Longest Substring Without Repeating Characters, Rotate Array, Merge
+    Intervals, Spiral Matrix (Medium); Trapping Rain Water, Edit Distance (Hard).
+  - Spread is now Easy 10 / Medium 6 / Hard 2, **106 test cases** total. Every problem ships
+    sample tests (Run) + hidden tests (Submit) and signature-only starters for Python and
+    JavaScript — never a partial solution (§1.2).
+  - Problems were chosen so the expected value is **unambiguous** (single deterministic
+    return, no order-dependent answers like group-anagrams, no float equality), because the
+    runner compares results by equality after a JSON round-trip.
+  - `backend/tests/test_problem_bank.py` (new, 112 tests) — the important one runs a
+    **known-good reference solution for every problem through the real runner** against that
+    problem's own sample + hidden tests. A wrong `expected` in the bank would fail a correct
+    candidate, so this makes the bank self-verifying. Also asserts: every starter does NOT
+    pass its own tests (no giveaway), starters exist for both languages and declare the
+    right function, ids are unique, all three difficulties are represented, and
+    `public_problem`/`list_problems` never leak `hidden_tests`.
+  - Reference solutions live only in the test file — the shipped bank stays solution-free.
+  - Frontend needed no change: `CodingInterview.jsx` renders `problems.map(...)` from the
+    API, so the new problems appear automatically.
+- **Findings recorded, deliberately NOT fixed** (documented in the tests so any future fix
+  is a reviewed change):
+  - **F1** — the offline domain keyword list holds field names (`dentistry`, `medicine`,
+    `nursing`) but not the job-title forms candidates actually type (`Dentist`, `Doctor`,
+    `Nurse`, `Chef`). Those fall through at confidence 40, under the 50-point bar `/start`
+    blocks at, so with the LLM unavailable they are let through. The live LLM path is fine.
+  - **F2** — `PROJECT_SUMMARY.md` calls the mock question bank "deterministic", but
+    `generate_questions` calls `random.shuffle`, so selection/order vary between runs. Only
+    the shape (count, non-empty text, valid type) is guaranteed.
+  - **PROJECT_SUMMARY.md is stale in 7 places** (D1–D7, listed at the top of `TEST_CASES.md`)
+    — most importantly it says proctoring terminates at 3 violations and bans for a day,
+    whereas the code terminates on the **4th** (`> 3`) and bans for **30 days**. User
+    confirmed the **code** is correct.
+- Verified: `vite build` exit 0, oxlint clean (2 warnings, both pre-existing — confirmed via
+  a stash test), backend 69/69 pytest, frontend 10/10 vitest. **Not committed/pushed.**
+
+### 2026-07-25
+- **New animated landing page APPLIED** to the real frontend (light corporate + SMIT
+  blue/green, interviewer.ai-inspired; hero live product console + lower-half live visuals:
+  radar, scoring ring, proctor chips/strikes, filmstrip, admin-log ticker, interactive
+  walkthrough, count-up stats, blur-in scroll reveals).
+  - `frontend/src/pages/landingContent.js` (new) — `LANDING_CSS`+`LANDING_HTML`, ALL selectors
+    scoped under `.lp` so nothing leaks app-wide; dark mode via `html.dark .lp` (global theme).
+  - `frontend/src/pages/LandingPage.jsx` — PublicLayout kept (shared nav/footer); one useEffect
+    drives all animations with cleanup; `a[data-route]` clicks routed via React Router; old
+    Three.js NeuralHero import removed (lighter bundle).
+  - Verified: `vite build` clean, oxlint clean, dev server returns 200. Not committed/pushed.
+
+### 2026-07-24
+- **Interview-start hang:** deferred the COCO-SSD phone model by 5s (it is the heaviest —
+  weights download + expensive warm-up) so it no longer competes with FaceMesh/Hands at t=0.
+  Phone inference also moved back to the **CPU** backend per the user's request (WebGL
+  reverted). Face/gaze/hands proctoring still starts immediately.
+- **Identity verification** built end-to-end (see §4). Approach was confirmed with the user
+  first; the enrolled-photo blocker was found by querying the real DB (only 1 of 9 candidates
+  has a photo) — so the baseline is captured per session instead.
+- **Snapshot cascade-delete bug FIXED** (`admin_routes.py`). Two independent causes:
+  1. `_collect_user_storage_refs()` never queried `ProctorSnapshot`, so the bucket files were
+     never collected for deletion;
+  2. `ProctorSnapshot.user_id` is `ON DELETE SET NULL` with no ORM cascade, so the DB rows
+     survived as orphans with a nulled user_id.
+  Both fixed, plus the same gap in `delete_interview`. **Tested end-to-end against the real
+  DB + Supabase: dummy candidate → snapshot uploaded → delete → row gone, bucket file gone.**
+  Watch out: `db.or_` does NOT exist on this project's custom `db` class — import `or_` from
+  `sqlalchemy` directly (using `db.or_` would have crashed the backend).
+- **Camera-off toggle FIXED** (`InterviewSession.jsx`). Turning the camera off was a full
+  proctoring bypass: every detection loop is gated on `cameraOn`, so switching it off disabled
+  face, gaze, hands, phone AND identity checks for the rest of the session. The camera can no
+  longer be turned off — the attempt is refused and counted immediately as a `CAMERA_OFF`
+  violation through the existing flow (snapshot + strike + the same 4-strike termination).
+- **Duplicate snapshot FIXED.** The 4th (terminating) violation produced THREE rows — client
+  webcam + client screen + a server-side `kind='termination'` copy — so 4 violations wrote 9
+  snapshots instead of 8. Removed the server-side duplicate in
+  `mark_interview_as_failed_proctoring`; the report's inline `snapshot_image` (which powers the
+  Compliance Audit card) is unaffected. Now exactly 1 webcam + 1 screen per violation.
+- Verified: backend imports clean, frontend builds clean, oxlint shows no new warnings.
+- **Not committed / not pushed** — awaiting the user's go-ahead.
+
 ### 2026-07-21
 - Moved admin video player below compliance snapshot; fixed video RecordingLog (committed + pushed).
 - Removed AI co-author from 2 commits; force-pushed clean history.
