@@ -528,8 +528,6 @@ const InterviewSession = () => {
     let active = true;
     let animationFrameId = null;
     let timeoutId = null;
-    let objectScanTimeoutId = null;
-    let phoneLoadTimeoutId = null;
 
     const startCameraAndProctoring = async () => {
       try {
@@ -643,37 +641,25 @@ const InterviewSession = () => {
             console.warn('MediaPipe Hands unavailable; face proctoring continues.', e);
           }
 
-          // Custom frame loop. Proctoring does NOT need a high frame rate — face/gaze
-          // checks at ~6 FPS are more than enough, and running the heavy FaceMesh (with
-          // iris refinement) + Hands models any faster pegs the CPU and makes the whole
-          // interview UI hang. So: FaceMesh runs every ~160ms, and the (also heavy) Hands
-          // model runs at HALF that rate, on alternating cycles — this keeps a hand raised
-          // in view still caught quickly while roughly halving the per-cycle cost.
+          // Custom frame loop. Each cycle awaits its inference, so the loop can never queue
+          // work faster than the device clears it — the gap below is just breathing room for
+          // the browser to paint the video and run the UI. With the phone model gone there is
+          // enough headroom to keep this gap short, which is what makes hand/eye/face warnings
+          // fire promptly instead of lagging behind the candidate.
           let frameTick = 0;
           const processFrame = async () => {
             if (!active) return;
-            // Minimum breathing room between cycles; raised below if this machine turns out
-            // to be slow, so the loop can never monopolise the main thread.
-            let gap = 200;
             if (cameraOn && videoRef.current && videoRef.current.readyState >= 2) {
               try {
-                const startedAt = performance.now();
                 await faceMesh.send({ image: videoRef.current });
                 // NOTE: deliberately no "still alive" heartbeat here. Frame-loop progress
                 // reflects main-thread availability, not camera health, so using it to judge
                 // the camera produced false stalls during heavy model work.
-                // Hands is heavy (main-thread WASM) and only needs an occasional look — run
-                // it every 4th cycle so it barely touches the frame budget.
-                if (handsModel && frameTick % 4 === 0) {
+                // Hands on alternating cycles: frequent enough that a raised hand is caught
+                // in well under a second, while keeping the per-cycle cost roughly halved.
+                if (handsModel && frameTick % 2 === 0) {
                   await handsModel.send({ image: videoRef.current });
                 }
-                // Adaptive pacing: always leave at least as much idle time as the inference
-                // just consumed. On a capable machine this stays at the 200ms floor (~5 FPS);
-                // on a slow one it stretches automatically instead of queueing work faster
-                // than the device can clear it — which is what pegged the main thread and made
-                // the camera feed freeze. Capped so proctoring never degrades past ~1.5 FPS.
-                const cost = performance.now() - startedAt;
-                gap = Math.min(650, Math.max(200, Math.round(cost)));
               } catch (e) {
                 // Ignore transient frame send failures
               }
@@ -681,104 +667,19 @@ const InterviewSession = () => {
             frameTick += 1;
             setTimeout(() => {
               animationFrameId = requestAnimationFrame(processFrame);
-            }, gap);
+            }, 120);
           };
 
           animationFrameId = requestAnimationFrame(processFrame);
-          // Proctoring is considered active as soon as the face pipeline is running —
-          // we do NOT wait for the heavier object-detection model, so the interview
-          // starts quickly. The phone model is loaded and run separately below.
           setProctoringActive(true);
 
-          // Optional object-detection model (TensorFlow.js COCO-SSD): flags a mobile
-          // phone in view of the camera. This is the HEAVIEST model (it downloads weights
-          // and its first warm-up inference is expensive), so loading it at t=0 alongside
-          // FaceMesh + Hands is what spikes the CPU and hangs the interview at the very
-          // start. We DEFER it ~5s — until after the first question has rendered and the UI
-          // is interactive — so the start stays smooth. Phone coverage simply begins a few
-          // seconds in; face/gaze/hands proctoring is already live from t=0. It runs on its
-          // own scan loop, decoupled from the face frame loop, and any failure here never
-          // disrupts the face/hands proctoring above.
-          phoneLoadTimeoutId = setTimeout(() => {
-          if (!active) return;
-          (async () => {
-            try {
-              // Give FaceMesh/Hands the CPU, network, and GPU-shader-compile budget to
-              // themselves for the first few seconds. Loading all three heavy ML pipelines
-              // at the exact same moment (TF.js + COCO-SSD is the heaviest of the three) was
-              // causing a real multi-second hang right when the interview starts — and
-              // because the face/hands frame loop can't service requestAnimationFrame while
-              // the main thread is busy compiling/parsing all this, violations committed
-              // during that window went uncaught. Staggering the load shrinks that window
-              // without dropping any detection.
-              await new Promise((r) => setTimeout(r, 4000));
-              if (!active) return;
-              await loadScript('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js');
-              await loadScript('https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js');
-              if (!active || !window.cocoSsd) return;
-              // Run phone inference on the GPU (WebGL). This matters more than anything else
-              // in this file for perceived stability: mobilenet_v2 on the CPU backend blocks
-              // the main thread for hundreds of ms — up to seconds on a modest machine — every
-              // single scan, and because the video element and the face/gaze loop both live on
-              // that thread, the camera visibly freezes each time. WebGL runs the same model on
-              // the GPU in a fraction of the time and leaves the main thread free. Falls back
-              // to CPU only if WebGL is genuinely unavailable, so nothing breaks on a machine
-              // without GPU support.
-              try {
-                if (window.tf?.setBackend) {
-                  let onGpu = false;
-                  try {
-                    onGpu = await window.tf.setBackend('webgl');
-                  } catch (we) {
-                    onGpu = false;
-                  }
-                  if (!onGpu) {
-                    console.warn('WebGL unavailable for phone detection; falling back to CPU.');
-                    await window.tf.setBackend('cpu');
-                  }
-                  await window.tf.ready();
-                }
-              } catch (be) {
-                console.warn('TF.js backend selection failed; using the default backend.', be);
-              }
-              const phoneModel = await window.cocoSsd.load({ base: 'mobilenet_v2' });
-              if (!active) return;
-
-              const scanForPhone = async () => {
-                if (!active) return;
-                // Default gap when the scan is skipped (camera not ready).
-                let nextDelay = 1500;
-                if (cameraOn && videoRef.current && videoRef.current.readyState >= 2) {
-                  try {
-                    // detect(img, maxNumBoxes, minScore): coco-ssd's default minScore is
-                    // 0.5, which hides a phone that's only partially/faintly visible. We
-                    // pass a low minScore (0.2) so those low-confidence detections are
-                    // returned, then apply our own threshold in handleObjectDetections —
-                    // this is what makes even a slightly-visible phone get flagged.
-                    const startedAt = performance.now();
-                    const predictions = await phoneModel.detect(videoRef.current, 20, 0.2);
-                    const cost = performance.now() - startedAt;
-                    if (active) handleObjectDetections(predictions);
-                    // Self-throttling, the key safeguard against the camera freezing: wait
-                    // several times longer than the scan itself took, so phone detection can
-                    // never occupy more than a small share of the main thread no matter how
-                    // slow the device is. A fast GPU machine keeps scanning ~1.5s apart; a
-                    // slow one automatically backs off instead of starving the face/gaze
-                    // pipeline and the video element (which is what made the feed hang).
-                    nextDelay = Math.min(8000, Math.max(1500, Math.round(cost * 6)));
-                  } catch (e) {
-                    // Transient inference failure — back off a little before trying again.
-                    nextDelay = 3000;
-                  }
-                }
-                objectScanTimeoutId = setTimeout(scanForPhone, nextDelay);
-              };
-              scanForPhone();
-            } catch (e) {
-              console.warn('Object detection (phone) model unavailable; face proctoring continues.', e);
-            }
-          })();
-          }, 5000);
+          // NOTE: phone/object detection (TensorFlow.js + COCO-SSD) was removed from the
+          // interview. It was by far the heaviest thing on the page — a separate model
+          // download plus a repeated inference that blocked the main thread, and because the
+          // video element renders on that same thread the camera visibly froze each time.
+          // Removing it is what makes the feed smooth and lets the face/gaze/hands warnings
+          // fire promptly. Everything else is unchanged: face count, look-away, eye/gaze,
+          // hands, and identity verification all still run.
         }
       } catch (err) {
         console.warn('MediaPipe initialization failed. Proctoring is active but running on fallback system event monitors.', err);
@@ -902,12 +803,6 @@ const InterviewSession = () => {
       }
       if (animationFrameId) {
         cancelAnimationFrame(animationFrameId);
-      }
-      if (objectScanTimeoutId) {
-        clearTimeout(objectScanTimeoutId);
-      }
-      if (phoneLoadTimeoutId) {
-        clearTimeout(phoneLoadTimeoutId);
       }
       if (muteGraceTimerRef.current) {
         clearTimeout(muteGraceTimerRef.current);
@@ -1099,20 +994,6 @@ const InterviewSession = () => {
     const hands = results.multiHandLandmarks || [];
     if (hands.length > 0) {
       logProctorViolation('HAND_DETECTED', 'Hand detected in front of the camera. Keep your hands out of view.');
-    }
-  };
-
-  // 7c. Process object detections (COCO-SSD): flag a mobile phone in the frame.
-  // A phone is flagged as soon as it is seen with reasonable confidence — no sustained
-  // wait — so bringing any smartphone toward the camera warns immediately. The
-  // logProctorViolation throttle (same type once per 5s) already prevents spamming, so
-  // an occasional noisy frame cannot pile up violations.
-  const handleObjectDetections = (predictions) => {
-    const phone = (predictions || []).find(
-      (p) => p.class === 'cell phone' && p.score >= 0.3
-    );
-    if (phone) {
-      logProctorViolation('PHONE_DETECTED', 'Mobile phone detected in the camera view. Please remove all devices.');
     }
   };
 
