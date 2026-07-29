@@ -1,231 +1,231 @@
-import React from 'react';
-import { Link } from 'react-router-dom';
+import React, { useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import PublicLayout from '../layouts/PublicLayout';
-import Button from '../components/ui/Button';
-import Reveal from '../components/ui/Reveal';
-import NeuralHero from '../components/three/NeuralHero';
-import {
-  Mic, Code, FileText, TrendingUp, ShieldCheck,
-  ArrowRight, Award, Play, Zap, Eye, Timer, X, Check, Building2,
-} from 'lucide-react';
+import { LANDING_CSS, LANDING_HTML } from './landingContent';
 
-const FEATURES = [
-  { title: 'Real-Time Adaptive Evaluation', desc: 'Every spoken and coded answer is judged on substance by an LLM against an ideal answer — not keyword matching, not a fixed rubric.', icon: Mic },
-  { title: 'Domain-Intelligent Questioning', desc: 'Questions are generated for your actual category or a pasted job description, across four coding formats — scenario, logic, concept, and debugging.', icon: Code },
-  { title: 'Integrity by Design', desc: 'Face, hand, and eye/gaze tracking plus full-screen enforcement run continuously in the background — never blocking your flow, always watching.', icon: ShieldCheck },
-  { title: 'Instant Question Progression', desc: 'Answers are scored asynchronously in the background, so you move to the next question in milliseconds — the interview feels human-paced.', icon: Zap },
-  { title: 'ATS Resume & JD Matching', desc: 'Upload a resume or paste a job description to extract skills, surface gaps, and generate questions tailored to that exact role.', icon: FileText },
-  { title: 'Structured Scorecards', desc: 'A written rationale, technical/communication/confidence sub-scores, and a full transcript for every completed session.', icon: TrendingUp },
-];
+/**
+ * Public landing page. The animated marketing content lives as a self-contained,
+ * `.lp`-scoped block (markup + styles in landingContent.js) so its generic selectors
+ * never leak into the rest of the app. Dark mode follows the global ThemeContext
+ * (`html.dark`). All the live visuals (radar, scoring ring, tickers, interactive
+ * walkthrough, scroll reveals) are driven here in one effect with full cleanup.
+ */
+const LandingPage = () => {
+  const rootRef = useRef(null);
+  const navigate = useNavigate();
 
-const OLD_VS_NEW = [
-  { old: 'Keyword-matched scoring that rewards buzzwords over understanding', icon: X },
-  { old: 'Generic question banks with no connection to the actual role', icon: X },
-  { old: 'Unmonitored sessions — no way to trust the result was earned', icon: X },
-  { old: 'Manual grading that takes days to turn into feedback', icon: X },
-];
+  // Client-side navigation for the in-content CTAs (they are plain anchors inside the
+  // injected markup, so intercept their clicks and route through React Router).
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return undefined;
+    const onClick = (e) => {
+      const a = e.target.closest('a[data-route]');
+      if (a) {
+        e.preventDefault();
+        navigate(a.getAttribute('data-route'));
+      }
+    };
+    root.addEventListener('click', onClick);
+    return () => root.removeEventListener('click', onClick);
+  }, [navigate]);
 
-const NEW_WAY = [
-  { text: 'An LLM reads meaning, not keywords — genuine understanding of what you actually said', icon: Check },
-  { text: 'Questions generated for your domain or a pasted JD, across four distinct coding formats', icon: Check },
-  { text: 'Continuous face, hand, and eye/gaze proctoring with one-time secure sessions', icon: Check },
-  { text: 'Scoring runs in the background — your report is ready the moment the interview ends', icon: Check },
-];
+  // All the live animations.
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return undefined;
+    const rm = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const timers = [];
+    const rafs = [];
+    const $ = (s) => root.querySelector(s);
+    const $$ = (s) => Array.from(root.querySelectorAll(s));
 
-const LandingPage = () => (
-  <PublicLayout>
-    {/* Hero */}
-    <header className="relative pt-16 pb-24 md:pb-32 overflow-hidden">
-      <div className="absolute inset-0 bg-slate-50 dark:bg-slate-900/50 -z-10" />
-      <div className="max-w-7xl mx-auto px-6 grid grid-cols-1 lg:grid-cols-5 gap-16 items-center">
-        <div className="text-left space-y-6 lg:col-span-3">
-          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-accent-100 text-accent-800 dark:bg-accent-900/30 dark:text-accent-400 text-xs font-bold uppercase tracking-wide">
-            <Award size={14} /> Built by Saylani for Real Readiness
-          </div>
-          <h1 className="text-4xl sm:text-5xl xl:text-6xl font-extrabold tracking-tight leading-tight text-balance text-slate-900 dark:text-white">
-            Interviews that <span className="text-primary-600 dark:text-primary-400">actually understand</span> you.
-          </h1>
-          <p className="text-base sm:text-lg text-slate-600 dark:text-slate-400 leading-relaxed max-w-lg">
-            Most practice tools check for keywords. This one actually understands your answer —
-            spoken or coded — the same way a real technical panel would, with live proctoring
-            that makes the result something you can trust.
-          </p>
-          <div className="flex flex-col sm:flex-row items-center gap-3 sm:gap-4 pt-2">
-            <Link to="/register" className="w-full sm:w-auto">
-              <Button size="lg" icon={ArrowRight} iconPosition="right" className="w-full">Access Student Portal</Button>
-            </Link>
-            <Link to="/demo" className="w-full sm:w-auto">
-              <Button variant="secondary" size="lg" icon={Play} className="w-full">Interactive Demo</Button>
-            </Link>
-          </div>
-        </div>
+    // count-up helper
+    const count = (el) => {
+      const t = parseFloat(el.dataset.t);
+      const suf = el.dataset.suf || '';
+      if (rm) { el.textContent = t + suf; return; }
+      let start = null;
+      const step = (ts) => {
+        if (!start) start = ts;
+        const p = Math.min(1, (ts - start) / 1100);
+        const e = 1 - Math.pow(1 - p, 3);
+        el.textContent = Math.round(t * e) + suf;
+        if (p < 1) rafs.push(requestAnimationFrame(step));
+      };
+      rafs.push(requestAnimationFrame(step));
+    };
 
-        {/* Hero visual: Three.js neural-network scene, with a glass card floating on top */}
-        <div className="relative w-full aspect-square max-w-md mx-auto lg:col-span-2 lg:max-w-none lg:ml-auto lg:aspect-[4/3]">
-          <div className="absolute inset-0 rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-white/40 dark:bg-slate-900/40">
-            <NeuralHero />
-          </div>
-          <div className="absolute bottom-4 left-4 right-4 sm:bottom-6 sm:left-6 sm:right-auto sm:w-72 rounded-xl border border-slate-200 dark:border-slate-800 bg-white/90 dark:bg-slate-900/85 backdrop-blur-md p-5 shadow-xl">
-            <div className="flex items-center gap-2 text-primary-600 dark:text-primary-400 mb-2">
-              <Eye size={16} />
-              <span className="text-[11px] font-bold uppercase tracking-widest">Live Right Now</span>
-            </div>
-            <p className="text-sm text-slate-700 dark:text-slate-300 leading-relaxed">
-              Every answer is being read for substance, not scanned for keywords.
-            </p>
-          </div>
-        </div>
+    // scroll reveal
+    const io = new IntersectionObserver((entries) => {
+      entries.forEach((en) => {
+        if (!en.isIntersecting) return;
+        en.target.classList.add('in');
+        en.target.querySelectorAll('[data-t]').forEach(count);
+        io.unobserve(en.target);
+      });
+    }, { threshold: 0.18 });
+    $$('.rv').forEach((n) => io.observe(n));
+
+    // typing answer
+    const ansEl = $('[data-type]');
+    if (ansEl) {
+      const txt = "I'd measure where the time goes first, add an index on the hot lookup, cache the read path, and only shard once a single node truly can't keep up…";
+      if (rm) { ansEl.textContent = txt; }
+      else {
+        let i = 0;
+        const type = () => {
+          if (i <= txt.length) {
+            ansEl.innerHTML = txt.slice(0, i) + '<span class="caret"></span>';
+            i += 1;
+            timers.push(setTimeout(type, 28));
+          }
+        };
+        timers.push(setTimeout(type, 700));
+      }
+    }
+
+    // hero proctoring checks light up
+    $$('[data-chk] div').forEach((d, n) => {
+      if (rm) { d.classList.add('on'); }
+      else timers.push(setTimeout(() => d.classList.add('on'), 700 + n * 450));
+    });
+
+    // hero meter bars
+    timers.push(setTimeout(() => {
+      $$('.pc-l .bar i').forEach((b) => { b.style.width = b.dataset.w + '%'; });
+    }, rm ? 0 : 900));
+
+    // radar
+    const rc = $('[data-radar]');
+    if (rc) {
+      const x = rc.getContext('2d');
+      let W = 0; let H = 0; let ang = 0;
+      const blips = [];
+      const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+      const rs = () => { W = rc.width = rc.offsetWidth * devicePixelRatio; H = rc.height = rc.offsetHeight * devicePixelRatio; };
+      rs();
+      window.addEventListener('resize', rs);
+      for (let i = 0; i < 5; i += 1) blips.push({ a: Math.random() * 6.28, r: 0.32 + Math.random() * 0.55 });
+      const rdraw = () => {
+        const cx = W / 2; const cy = H * 0.7; const R = Math.min(W / 2, H) * 0.92; const g = css('--green') || '#5aa310';
+        x.clearRect(0, 0, W, H);
+        x.lineWidth = devicePixelRatio; x.strokeStyle = css('--line-2'); x.globalAlpha = 0.65;
+        for (let k = 1; k <= 3; k += 1) { x.beginPath(); x.arc(cx, cy, R * k / 3, Math.PI, 2 * Math.PI); x.stroke(); }
+        x.beginPath(); x.moveTo(cx - R, cy); x.lineTo(cx + R, cy); x.stroke();
+        x.globalAlpha = 1;
+        const gx = cx + Math.cos(-ang) * R; const gy = cy + Math.sin(-ang) * R;
+        const grad = x.createLinearGradient(cx, cy, gx, gy);
+        grad.addColorStop(0, g); grad.addColorStop(1, 'transparent');
+        x.strokeStyle = grad; x.lineWidth = 2.2 * devicePixelRatio;
+        x.beginPath(); x.moveTo(cx, cy); x.lineTo(gx, gy); x.stroke();
+        blips.forEach((b) => {
+          const bx = cx + Math.cos(-b.a) * R * b.r; const by = cy - Math.abs(Math.sin(-b.a)) * R * b.r;
+          const d = ((ang - b.a) % 6.28 + 6.28) % 6.28; const lit = d < 0.6 ? 1 : 0.22;
+          x.globalAlpha = lit; x.fillStyle = g;
+          x.beginPath(); x.arc(bx, by, 3 * devicePixelRatio, 0, 7); x.fill();
+        });
+        x.globalAlpha = 1; ang += 0.018; if (ang > 6.28) ang -= 6.28;
+        if (!rm) rafs.push(requestAnimationFrame(rdraw));
+      };
+      rdraw();
+      const mm = $('[data-matchm]');
+      if (mm && !rm) timers.push(setInterval(() => { mm.textContent = 'MATCH ' + (96 + Math.floor(Math.random() * 4)) + '%'; }, 1600));
+    }
+
+    // scoring ring + bars
+    const rcirc = $('[data-ring]'); const rnum = $('[data-ringnum]');
+    if (rcirc && rnum) {
+      const circ = 326.7; const target = 82;
+      if (rm) { rcirc.style.strokeDashoffset = String(circ * (1 - target / 100)); rnum.textContent = target; }
+      else {
+        timers.push(setTimeout(() => {
+          let st = null;
+          const f = (ts) => {
+            if (!st) st = ts;
+            const p = Math.min(1, (ts - st) / 1300); const e = 1 - Math.pow(1 - p, 3);
+            rcirc.style.strokeDashoffset = String(circ * (1 - (target / 100) * e));
+            rnum.textContent = String(Math.round(target * e));
+            if (p < 1) rafs.push(requestAnimationFrame(f));
+          };
+          rafs.push(requestAnimationFrame(f));
+        }, 700));
+      }
+      timers.push(setTimeout(() => { $$('.rbar .t i').forEach((b) => { b.style.width = b.dataset.w + '%'; }); }, rm ? 0 : 700));
+    }
+
+    // proctoring chips + strike
+    const chips = $$('[data-pchips] .pchip'); const pips = $$('[data-pips] i'); const so = $('[data-strikeout]');
+    if (chips.length && !rm) {
+      let strk = 0;
+      timers.push(setInterval(() => {
+        const idx = Math.floor(Math.random() * chips.length);
+        chips.forEach((c) => c.classList.remove('warn'));
+        chips[idx].classList.add('warn');
+        strk = (strk % 4) + 1;
+        pips.forEach((p, i) => p.classList.toggle('on', i < strk));
+        if (so) so.classList.toggle('show', strk >= 4);
+        timers.push(setTimeout(() => chips[idx].classList.remove('warn'), 1100));
+      }, 1500));
+    }
+
+    // admin log ticker
+    const al = $('[data-alog]');
+    if (al) {
+      const lines = [['00:02', 'g', 'Identity baseline locked'], ['00:14', 'g', 'Entire screen confirmed'], ['02:41', 'w', 'Gaze away 1.1s'],
+        ['04:12', 'w', 'Phone detected 96%'], ['04:13', '', 'Snapshot archived'], ['06:02', 'g', 'Identity re-check OK'], ['08:20', '', 'Answer scored 82']];
+      let ai = 0;
+      const apush = () => {
+        const l = lines[ai % lines.length];
+        const d = document.createElement('div');
+        d.className = 'r ' + l[1];
+        d.innerHTML = '<t>' + l[0] + '</t><span>' + l[2] + '</span>';
+        al.appendChild(d);
+        if (al.children.length > 4) al.removeChild(al.firstChild);
+        ai += 1;
+      };
+      for (let z = 0; z < 4; z += 1) apush();
+      if (!rm) timers.push(setInterval(apush, 2000));
+    }
+
+    // interactive walkthrough
+    const wt = $$('.wtab'); const wp = $$('.wpanel'); const wl = $('[data-wslabel]');
+    const labels = ['device_check', 'identity', 'session', 'report'];
+    if (wt.length) {
+      let wc = 0; let wauto = null;
+      const setW = (n) => {
+        wc = n;
+        wt.forEach((t, i) => t.classList.toggle('on', i === n));
+        wp.forEach((p, i) => p.classList.toggle('on', i === n));
+        if (wl) wl.textContent = labels[n];
+      };
+      const tick = () => setW((wc + 1) % wt.length);
+      const startAuto = () => { if (!rm) { wauto = setInterval(tick, 3400); timers.push(wauto); } };
+      wt.forEach((t) => t.addEventListener('click', () => {
+        setW(parseInt(t.dataset.w, 10));
+        if (wauto) clearInterval(wauto);
+        startAuto();
+      }));
+      startAuto();
+    }
+
+    return () => {
+      timers.forEach((t) => { clearTimeout(t); clearInterval(t); });
+      rafs.forEach((r) => cancelAnimationFrame(r));
+      io.disconnect();
+    };
+  }, []);
+
+  return (
+    <PublicLayout>
+      {/* eslint-disable-next-line react/no-danger */}
+      <style dangerouslySetInnerHTML={{ __html: LANDING_CSS }} />
+      <div className="lp" ref={rootRef}>
+        {/* eslint-disable-next-line react/no-danger */}
+        <div dangerouslySetInnerHTML={{ __html: LANDING_HTML }} />
       </div>
-    </header>
-
-    {/* Problem / Solution */}
-    <section className="py-20 md:py-24 bg-white dark:bg-slate-950">
-      <div className="max-w-6xl mx-auto px-6">
-        <Reveal className="text-center max-w-2xl mx-auto mb-14">
-          <span className="text-xs font-bold uppercase tracking-widest text-primary-600 dark:text-primary-400">The Shift</span>
-          <h2 className="text-3xl font-extrabold text-slate-900 dark:text-white mt-2 mb-4">
-            Practice interviews were never built to actually evaluate you.
-          </h2>
-          <p className="text-slate-600 dark:text-slate-400 text-sm">
-            Most tools check whether you said the right words. This platform was built to check
-            whether you understood the question.
-          </p>
-        </Reveal>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <Reveal delay={60}>
-            <div className="h-full rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/40 p-8 space-y-4">
-              <span className="text-[11px] font-bold uppercase tracking-widest text-slate-400">The Old Way</span>
-              <ul className="space-y-3">
-                {OLD_VS_NEW.map((item) => {
-                  const Icon = item.icon;
-                  return (
-                    <li key={item.old} className="flex items-start gap-3 text-sm text-slate-600 dark:text-slate-400">
-                      <span className="w-5 h-5 rounded-full bg-red-100 dark:bg-red-900/30 text-red-500 flex items-center justify-center shrink-0 mt-0.5">
-                        <Icon size={12} />
-                      </span>
-                      <span>{item.old}</span>
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
-          </Reveal>
-          <Reveal delay={140}>
-            <div className="h-full rounded-2xl border border-primary-200 dark:border-primary-800/60 bg-primary-50/60 dark:bg-primary-950/20 p-8 space-y-4">
-              <span className="text-[11px] font-bold uppercase tracking-widest text-primary-600 dark:text-primary-400">This Platform</span>
-              <ul className="space-y-3">
-                {NEW_WAY.map((item) => {
-                  const Icon = item.icon;
-                  return (
-                    <li key={item.text} className="flex items-start gap-3 text-sm text-slate-700 dark:text-slate-300">
-                      <span className="w-5 h-5 rounded-full bg-accent-100 dark:bg-accent-900/30 text-accent-600 dark:text-accent-400 flex items-center justify-center shrink-0 mt-0.5">
-                        <Icon size={12} />
-                      </span>
-                      <span>{item.text}</span>
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
-          </Reveal>
-        </div>
-      </div>
-    </section>
-
-    {/* Feature showcase */}
-    <section className="py-20 md:py-24 bg-slate-50 dark:bg-slate-900/30 border-y border-slate-100 dark:border-slate-900">
-      <div className="max-w-7xl mx-auto px-6">
-        <Reveal className="text-center max-w-2xl mx-auto mb-16">
-          <span className="text-xs font-bold uppercase tracking-widest text-primary-600 dark:text-primary-400">Capabilities</span>
-          <h2 className="text-3xl font-extrabold text-slate-900 dark:text-white mt-2 mb-4">An end-to-end interviewing system, not a single feature.</h2>
-          <p className="text-slate-600 dark:text-slate-400 text-sm">From signup and identity verification through the live interview to the final scorecard — every stage is built, not bolted on.</p>
-        </Reveal>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-          {FEATURES.map((f, idx) => {
-            const Icon = f.icon;
-            return (
-              <Reveal key={f.title} delay={idx * 60}>
-                <div className="h-full rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/40 p-8 group hover:-translate-y-1 hover:shadow-corporate-hover transition-all duration-300">
-                  <div className="w-12 h-12 rounded-lg bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 flex items-center justify-center mb-6 group-hover:bg-primary-600 group-hover:text-white transition-colors">
-                    <Icon size={24} />
-                  </div>
-                  <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-3">{f.title}</h3>
-                  <p className="text-slate-600 dark:text-slate-400 text-sm leading-relaxed">{f.desc}</p>
-                </div>
-              </Reveal>
-            );
-          })}
-        </div>
-        <div className="mt-12 text-center">
-          <Link to="/features" className="inline-flex items-center gap-1.5 text-sm font-semibold text-primary-600 dark:text-primary-400 hover:gap-2.5 transition-all">
-            Explore every capability in depth <ArrowRight size={16} />
-          </Link>
-        </div>
-      </div>
-    </section>
-
-    {/* Speed callout */}
-    <section className="py-16 bg-white dark:bg-slate-950">
-      <div className="max-w-5xl mx-auto px-6">
-        <Reveal>
-          <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-gradient-to-br from-primary-50 to-accent-50/40 dark:from-primary-950/20 dark:to-accent-950/10 p-8 md:p-10 flex flex-col md:flex-row items-center gap-8">
-            <div className="w-16 h-16 rounded-2xl bg-white dark:bg-slate-900 shadow-corporate flex items-center justify-center shrink-0">
-              <Timer className="text-primary-600 dark:text-primary-400" size={28} />
-            </div>
-            <div>
-              <h3 className="text-xl font-extrabold text-slate-900 dark:text-white mb-2">No lag between questions.</h3>
-              <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed">
-                Scoring runs in the background the instant you finish speaking — you move to the
-                next question immediately, and proctoring keeps watching in real time throughout.
-                The result: an interview that feels paced like a real conversation, not a form.
-              </p>
-            </div>
-          </div>
-        </Reveal>
-      </div>
-    </section>
-
-    {/* Social proof — placeholder structure, clearly labeled */}
-    <section className="py-20 bg-slate-50 dark:bg-slate-900/30 border-y border-slate-100 dark:border-slate-900">
-      <div className="max-w-6xl mx-auto px-6">
-        <Reveal className="text-center max-w-xl mx-auto mb-12">
-          <span className="text-xs font-bold uppercase tracking-widest text-slate-400">Track Record</span>
-          <h2 className="text-2xl font-extrabold text-slate-900 dark:text-white mt-2">
-            Built for Saylani's students — results coming soon.
-          </h2>
-          <p className="text-slate-500 dark:text-slate-500 text-sm mt-3">
-            This platform is actively rolling out. Cohort outcomes and partner placements will
-            appear here as they come in.
-          </p>
-        </Reveal>
-        <Reveal delay={100}>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-            {['Sessions Completed', 'Avg. Feedback Time', 'Proctoring Uptime', 'Partner Placements'].map((label) => (
-              <div key={label} className="rounded-xl border border-dashed border-slate-300 dark:border-slate-700 bg-white/60 dark:bg-slate-900/30 p-6 text-center">
-                <div className="flex items-center justify-center gap-1.5 text-slate-400 dark:text-slate-600 mb-2">
-                  <Building2 size={14} />
-                  <span className="text-[10px] font-bold uppercase tracking-wide">Coming Soon</span>
-                </div>
-                <span className="text-xs font-semibold text-slate-500 dark:text-slate-500">{label}</span>
-              </div>
-            ))}
-          </div>
-        </Reveal>
-      </div>
-    </section>
-
-    {/* CTA band */}
-    <section className="py-20 bg-white dark:bg-slate-950">
-      <Reveal className="max-w-4xl mx-auto px-6 text-center space-y-6">
-        <h2 className="text-3xl font-extrabold text-slate-900 dark:text-white">Ready to prove your readiness?</h2>
-        <p className="text-slate-600 dark:text-slate-400">Start with 5 free interview tokens — no card required.</p>
-        <div className="flex flex-col sm:flex-row gap-4 justify-center">
-          <Link to="/register"><Button size="lg" icon={ArrowRight} iconPosition="right">Enroll Now</Button></Link>
-          <Link to="/pricing"><Button variant="secondary" size="lg">View Pricing</Button></Link>
-        </div>
-      </Reveal>
-    </section>
-  </PublicLayout>
-);
+    </PublicLayout>
+  );
+};
 
 export default LandingPage;

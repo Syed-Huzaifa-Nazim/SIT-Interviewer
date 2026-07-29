@@ -2,6 +2,7 @@ import re
 import base64
 import datetime
 from fastapi import APIRouter, Request, HTTPException, status, Depends
+from sqlalchemy import or_
 from app.database.db import db
 from app.models import (
     User, Token, Transaction, Interview, Feedback, AdminLog,
@@ -584,8 +585,8 @@ async def override_tokens(target_user_id: int, request: Request, user: User = De
 
 def _collect_user_storage_refs(uid, target):
     """Every Supabase Storage object belonging to a user, gathered BEFORE the DB rows
-    disappear (Cascade §4.2): per-answer audio, full-session videos, profile picture.
-    Returns a list of (bucket, path) tuples."""
+    disappear (Cascade §4.2): per-answer audio, full-session videos, proctoring snapshots,
+    profile picture. Returns a list of (bucket, path) tuples."""
     from app.utils.supabase_service import SupabaseService
     refs = []
     interview_ids = [i.id for i in Interview.query.filter_by(user_id=uid).all()]
@@ -599,6 +600,18 @@ def _collect_user_storage_refs(uid, target):
             parsed = SupabaseService.parse_storage_ref(iv.video_path)
             if parsed:
                 refs.append(parsed)
+    # Proctoring images (webcam/screen/termination/identity frames) live in their own
+    # private bucket and are indexed by ProctorSnapshot. They were previously missed here,
+    # so deleting a candidate left every snapshot orphaned in Supabase Storage. Matched on
+    # user_id AND the user's interview ids, so a row whose user_id was already nulled by an
+    # earlier FK 'SET NULL' is still cleaned up.
+    snap_filter = [ProctorSnapshot.user_id == uid]
+    if interview_ids:
+        snap_filter.append(ProctorSnapshot.interview_id.in_(interview_ids))
+    for snap in ProctorSnapshot.query.filter(or_(*snap_filter)).all():
+        parsed = SupabaseService.parse_storage_ref(snap.storage_ref)
+        if parsed:
+            refs.append(parsed)
     parsed = SupabaseService.parse_storage_ref(target.profile_pic_url)
     if parsed:
         refs.append(parsed)
@@ -673,12 +686,23 @@ async def delete_user(target_user_id: int, user: User = Depends(admin_required))
     uid = target.id
     target_name = target.name
     storage_refs = _collect_user_storage_refs(uid, target)
+    # Needed below to clear proctoring snapshots that are indexed by interview as well as
+    # by user; captured before the interviews are cascade-deleted.
+    interview_ids = [i.id for i in Interview.query.filter_by(user_id=uid).all()]
 
     try:
         # Explicitly clear rows not handled by the User relationship cascades.
         Transaction.query.filter_by(user_id=uid).delete(synchronize_session=False)
         CodeSubmission.query.filter_by(user_id=uid).delete(synchronize_session=False)
         SecondInterviewRequest.query.filter_by(user_id=uid).delete(synchronize_session=False)
+        # ProctorSnapshot's user_id FK is ON DELETE SET NULL and has no ORM cascade, so
+        # without this the index rows survived the candidate's deletion as orphans that
+        # kept showing up in the admin snapshot archive. Delete them explicitly (their
+        # storage objects were collected above and are removed after the commit).
+        snap_filter = [ProctorSnapshot.user_id == uid]
+        if interview_ids:
+            snap_filter.append(ProctorSnapshot.interview_id.in_(interview_ids))
+        ProctorSnapshot.query.filter(or_(*snap_filter)).delete(synchronize_session=False)
 
         # Retain-but-anonymize the audit trail (confirmed §4.2 policy).
         _anonymize_user_in_logs(target)
@@ -729,8 +753,9 @@ def _delete_record(model, record_id, admin, label, action, pre_delete=None):
 @admin_bp.delete('/interviews/{interview_id}')
 async def delete_interview(interview_id: int, user: User = Depends(admin_required)):
     """Delete an interview and its questions/responses/report (ORM cascade), plus its
-    stored media — answer audio and session video — from Supabase Storage (Cascade §4).
-    Detaches any feedback / code submissions that referenced it so they aren't orphaned."""
+    stored media — answer audio, session video and proctoring snapshots — from Supabase
+    Storage (Cascade §4). Detaches any feedback / code submissions that referenced it so
+    they aren't orphaned."""
     from app.utils.supabase_service import SupabaseService
     # Collect storage refs before the rows vanish.
     refs = []
@@ -743,10 +768,19 @@ async def delete_interview(interview_id: int, user: User = Depends(admin_require
         parsed = SupabaseService.parse_storage_ref(itv.video_path)
         if parsed:
             refs.append(parsed)
+        # Proctoring images for this interview — previously missed, leaving them orphaned
+        # in the private snapshot bucket after the interview row was gone.
+        for snap in ProctorSnapshot.query.filter_by(interview_id=interview_id).all():
+            parsed = SupabaseService.parse_storage_ref(snap.storage_ref)
+            if parsed:
+                refs.append(parsed)
 
     def _detach(_itv):
         Feedback.query.filter_by(interview_id=interview_id).update({'interview_id': None}, synchronize_session=False)
         CodeSubmission.query.filter_by(interview_id=interview_id).update({'interview_id': None}, synchronize_session=False)
+        # ProctorSnapshot.interview_id is a plain column (no FK cascade), so its index rows
+        # must be removed explicitly or they linger pointing at a deleted interview.
+        ProctorSnapshot.query.filter_by(interview_id=interview_id).delete(synchronize_session=False)
 
     result = _delete_record(Interview, interview_id, user, 'Interview', 'DELETE_INTERVIEW', pre_delete=_detach)
     _delete_storage_refs(refs, f"interview {interview_id}", admin_id=user.id)

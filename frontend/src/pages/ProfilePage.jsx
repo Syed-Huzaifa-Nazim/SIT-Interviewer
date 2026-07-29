@@ -16,8 +16,72 @@ import {
   Briefcase,
   Crown,
   Shield,
-  Camera
+  Camera,
+  Lock,
+  UserCheck,
+  ShieldCheck,
+  FileText,
+  TrendingUp
 } from 'lucide-react';
+
+/**
+ * Badge tiers.
+ *
+ * The backend's /users/achievements endpoint returns each badge with nothing but an
+ * `unlocked` flag — it has no concept of tiers. The five rank tiers already exist here in
+ * the frontend (see getRankBadge below), so a badge's tier is decided here too, mapped by
+ * badge id. That keeps one vocabulary across the page with no backend change.
+ *
+ * A badge whose id is not listed falls back to bronze rather than rendering untiered.
+ */
+const BADGE_TIERS = {
+  welcome: 'bronze',
+  first_interview: 'bronze',
+  resume_analyzed: 'silver',
+  five_interviews: 'gold',
+  high_performer: 'platinum',
+};
+
+const TIER_STYLES = {
+  bronze: {
+    label: 'Bronze',
+    medal: 'bg-gradient-to-br from-orange-300 to-orange-700 text-white',
+    pill: 'bg-orange-500/10 text-orange-700 dark:text-orange-400 border-orange-500/25',
+    dot: 'bg-orange-600',
+  },
+  silver: {
+    label: 'Silver',
+    medal: 'bg-gradient-to-br from-slate-100 to-slate-400 text-slate-700',
+    pill: 'bg-slate-500/10 text-slate-600 dark:text-slate-300 border-slate-400/30',
+    dot: 'bg-slate-400',
+  },
+  gold: {
+    label: 'Gold',
+    medal: 'bg-gradient-to-br from-amber-200 to-amber-600 text-white',
+    pill: 'bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/25',
+    dot: 'bg-amber-500',
+  },
+  platinum: {
+    label: 'Platinum',
+    medal: 'bg-gradient-to-br from-cyan-200 to-cyan-600 text-white',
+    pill: 'bg-cyan-500/10 text-cyan-700 dark:text-cyan-400 border-cyan-500/25',
+    dot: 'bg-cyan-500',
+  },
+};
+
+// Maps the icon name the API sends to the actual lucide component.
+//
+// The API's own names are kept as the keys so no backend change is needed, but two of them
+// are deliberately re-pointed: 'Sparkles' and 'Zap' read as generic AI-slide decoration
+// rather than an assessment product, so they resolve to icons that say what the badge
+// actually means — verified profile, and an upward score trend.
+const BADGE_ICONS = {
+  Sparkles: UserCheck,
+  Award,
+  ShieldCheck,
+  FileText,
+  Zap: TrendingUp,
+};
 
 const ProfilePage = () => {
   const { user, tokens, fetchProfile, setTokens } = useAuth();
@@ -189,6 +253,27 @@ const ProfilePage = () => {
   const rank = getRankBadge(completedCount, averageScore);
   const RankIcon = rank.icon;
 
+  // How far along the candidate is toward the next rank, using the SAME thresholds
+  // getRankBadge applies above so the two can never drift apart.
+  const nextRank = (() => {
+    const ladder = [
+      { name: 'Bronze Aspirant', needCount: 1, needScore: null },
+      { name: 'Silver Practitioner', needCount: 3, needScore: 60 },
+      { name: 'Gold Professional', needCount: 6, needScore: 75 },
+      { name: 'Platinum Elite', needCount: 10, needScore: 90 },
+    ];
+    const next = ladder.find(
+      (step) => completedCount < step.needCount && (step.needScore === null || averageScore < step.needScore)
+    );
+    if (!next) return null;
+
+    const pct = Math.min(100, Math.round((completedCount / next.needCount) * 100));
+    const remaining = Math.max(0, next.needCount - completedCount);
+    return { ...next, pct, remaining };
+  })();
+
+  const unlockedCount = badges.filter((b) => b.unlocked).length;
+
   const pricingTiers = [
     { qty: 5, price: 9.99, popular: false },
     { qty: 10, price: 17.99, popular: true },
@@ -197,6 +282,41 @@ const ProfilePage = () => {
 
   return (
     <div className="space-y-8 max-w-5xl mx-auto">
+      {/* Medallion + badge animations. Scoped to this page and kept out of index.css so the
+          global stylesheet stays untouched. Everything stops under prefers-reduced-motion. */}
+      <style>{`
+        @keyframes rank-halo-spin { to { transform: rotate(360deg); } }
+        @keyframes rank-core-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
+        @keyframes rank-shine-sweep { 0% { left: -60%; } 55%, 100% { left: 130%; } }
+        @keyframes badge-shine-sweep { 0%, 72% { transform: translateX(-100%) skewX(-18deg); }
+                                       88%, 100% { transform: translateX(220%) skewX(-18deg); } }
+
+        .rank-halo {
+          background: conic-gradient(from 0deg, transparent, currentColor, transparent 42%,
+                                     currentColor, transparent 78%);
+          color: rgb(148 163 184 / 0.85);
+          animation: rank-halo-spin 7s linear infinite;
+        }
+        .rank-core { animation: rank-core-bob 3.4s ease-in-out infinite; }
+        .rank-shine {
+          position: absolute; top: 0; left: -60%; width: 45%; height: 100%;
+          background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.55), transparent);
+          transform: skewX(-18deg);
+          animation: rank-shine-sweep 3.6s ease-in-out infinite;
+        }
+        .badge-medal .badge-shine {
+          position: absolute; inset: 0;
+          background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.5), transparent);
+          transform: translateX(-100%) skewX(-18deg);
+          animation: badge-shine-sweep 4.5s ease-in-out infinite;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          .rank-halo, .rank-core, .rank-shine, .badge-medal .badge-shine { animation: none; }
+          .rank-shine, .badge-medal .badge-shine { display: none; }
+        }
+      `}</style>
+
       <PageHeader
         icon={User}
         title="Profile & Account Management"
@@ -341,30 +461,70 @@ const ProfilePage = () => {
           </Card>
 
           {/* Badges and achievements */}
-          <Card className="space-y-6">
-            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+          <Card className="space-y-5">
+            <div className="flex items-center justify-between gap-3 flex-wrap border-b border-slate-200 dark:border-slate-800 pb-3">
               <CardTitle className="mb-0">Achievements & Badges</CardTitle>
               <span className="text-xs text-primary-500 dark:text-primary-400 font-semibold flex items-center gap-1">
                 <Award size={14} />
-                <span>{badges.filter(b => b.unlocked).length} / {badges.length} Unlocked</span>
+                <span>{unlockedCount} / {badges.length} Unlocked</span>
               </span>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {badges.map((badge) => (
-                <div 
-                  key={badge.id} 
-                  className={`p-4 rounded-xl border flex items-center gap-4 transition ${badge.unlocked ? 'bg-primary-500/5 border-primary-500/25' : 'bg-slate-50 dark:bg-slate-900/30 border-slate-200 dark:border-slate-800 opacity-65'}`}
+            {/* Tier legend, so the colour on each medal means something. */}
+            <div className="flex flex-wrap gap-1.5">
+              {Object.entries(TIER_STYLES).map(([key, tier]) => (
+                <span
+                  key={key}
+                  className={`inline-flex items-center gap-1.5 text-[10px] font-bold px-2 py-1 rounded-full border ${tier.pill}`}
                 >
-                  <div className={`p-3 rounded-full ${badge.unlocked ? 'bg-primary-500/10 text-primary-500 dark:text-primary-400' : 'bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-600'} shrink-0`}>
-                    <Award size={20} />
-                  </div>
-                  <div>
-                    <h4 className="font-bold text-sm text-slate-800 dark:text-slate-200">{badge.title}</h4>
-                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-normal">{badge.description}</p>
-                  </div>
-                </div>
+                  <span className={`w-1.5 h-1.5 rounded-full ${tier.dot}`} />
+                  {tier.label}
+                </span>
               ))}
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {badges.map((badge) => {
+                const tier = TIER_STYLES[BADGE_TIERS[badge.id] || 'bronze'];
+                const BadgeIcon = BADGE_ICONS[badge.icon] || Award;
+                return (
+                  <div
+                    key={badge.id}
+                    className={`relative p-4 rounded-xl border flex items-start gap-4 overflow-hidden transition ${
+                      badge.unlocked
+                        ? 'bg-slate-50 dark:bg-slate-900/40 border-slate-200 dark:border-slate-800 hover:-translate-y-0.5 hover:shadow-md'
+                        : 'bg-slate-50 dark:bg-slate-900/30 border-slate-200 dark:border-slate-800 opacity-60'
+                    }`}
+                  >
+                    {!badge.unlocked && (
+                      <Lock size={12} className="absolute top-3 right-3 text-slate-400 dark:text-slate-600" />
+                    )}
+
+                    <div
+                      className={`relative w-11 h-11 rounded-xl shrink-0 flex items-center justify-center overflow-hidden ${
+                        badge.unlocked
+                          ? `${tier.medal} shadow-inner badge-medal`
+                          : 'bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-600'
+                      }`}
+                    >
+                      <BadgeIcon size={19} />
+                      {badge.unlocked && <span className="badge-shine" />}
+                    </div>
+
+                    <div className="min-w-0">
+                      <h4 className="font-bold text-sm text-slate-800 dark:text-slate-200 flex items-center gap-1.5 flex-wrap">
+                        {badge.title}
+                        <span
+                          className={`text-[8.5px] font-black tracking-wider px-1.5 py-0.5 rounded-full border uppercase ${tier.pill}`}
+                        >
+                          {tier.label}
+                        </span>
+                      </h4>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-normal">{badge.description}</p>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </Card>
         </div>
@@ -374,13 +534,51 @@ const ProfilePage = () => {
           
           {/* Dynamic Rank Badge Display Card */}
           <Card className="border border-slate-200 dark:border-slate-800 relative overflow-hidden flex flex-col items-center text-center space-y-4">
-            <div className={`absolute top-0 right-0 w-32 h-32 opacity-10 rounded-full blur-2xl bg-gradient-to-tr ${rank.gradient}`}></div>
-            
-            <div className={`w-14 h-14 rounded-xl bg-gradient-to-br ${rank.color} border shadow-lg flex items-center justify-center`}>
-              <RankIcon size={28} />
+            <div className={`absolute -top-16 left-1/2 -translate-x-1/2 w-48 h-48 opacity-15 rounded-full blur-3xl bg-gradient-to-tr ${rank.gradient}`}></div>
+
+            {/* Animated rank medallion. All CSS — no library, no canvas, and the whole thing
+                stops moving under prefers-reduced-motion (see the style block below). */}
+            <div className="relative w-[124px] h-[124px] rank-medal">
+              {/* Rotating conic halo, masked into a ring by the panel-coloured disc on top. */}
+              <div className="absolute -inset-1.5 rounded-full rank-halo" />
+              <div className="absolute inset-0 rounded-full bg-white dark:bg-slate-900" />
+
+              {/* Progress ring: how far into the current rank the candidate is. */}
+              <svg className="absolute inset-1.5 -rotate-90" viewBox="0 0 112 112">
+                <circle cx="56" cy="56" r="50" fill="none" strokeWidth="5" className="stroke-slate-200 dark:stroke-slate-800" />
+                <circle
+                  cx="56"
+                  cy="56"
+                  r="50"
+                  fill="none"
+                  strokeWidth="5"
+                  strokeLinecap="round"
+                  className={`${rank.color.split(' ').find((c) => c.startsWith('text-')) || 'text-primary-500'} transition-[stroke-dashoffset] duration-1000`}
+                  stroke="currentColor"
+                  strokeDasharray={2 * Math.PI * 50}
+                  strokeDashoffset={(2 * Math.PI * 50) * (1 - (nextRank ? nextRank.pct : 100) / 100)}
+                />
+              </svg>
+
+              {/* Medallion core */}
+              <div
+                className={`absolute inset-[17px] rounded-full bg-gradient-to-br ${rank.gradient} flex flex-col items-center justify-center overflow-hidden rank-core shadow-lg`}
+              >
+                <RankIcon size={30} className="text-white drop-shadow" />
+                <span className="text-[8px] font-black tracking-[0.14em] text-white/85 mt-0.5 uppercase">
+                  {rank.name.split(' ')[0]}
+                </span>
+                <span className="rank-shine" />
+              </div>
+
+              {nextRank && (
+                <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 whitespace-nowrap px-2.5 py-0.5 rounded-full text-[10px] font-bold font-mono bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200">
+                  {nextRank.pct}% to {nextRank.name.split(' ')[0]}
+                </span>
+              )}
             </div>
 
-            <div className="space-y-1">
+            <div className="space-y-1 pt-2">
               <Badge className={rank.badgeClass} size="lg">
                 {rank.name}
               </Badge>
@@ -389,7 +587,27 @@ const ProfilePage = () => {
                 {rank.desc}
               </p>
             </div>
-            
+
+            {/* Progress to the next rank */}
+            {nextRank && (
+              <div className="w-full rounded-xl bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-800 p-3 space-y-2">
+                <div className="flex items-center justify-between text-[10px] font-bold text-slate-500 dark:text-slate-400">
+                  <span>Progress to {nextRank.name}</span>
+                  <span className="font-mono">{completedCount} / {nextRank.needCount}</span>
+                </div>
+                <div className="h-1.5 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
+                  <div
+                    className={`h-full rounded-full bg-gradient-to-r ${rank.gradient} transition-[width] duration-1000`}
+                    style={{ width: `${nextRank.pct}%` }}
+                  />
+                </div>
+                <p className="text-[10px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                  {nextRank.remaining} more completed {nextRank.remaining === 1 ? 'interview' : 'interviews'}
+                  {nextRank.needScore ? `, or a ${nextRank.needScore}% average.` : '.'}
+                </p>
+              </div>
+            )}
+
             <div className="w-full pt-2 border-t border-slate-200 dark:border-slate-800 flex justify-around text-xs font-mono">
               <div>
                 <span className="text-[10px] text-slate-500 block">Completed</span>
@@ -399,6 +617,11 @@ const ProfilePage = () => {
               <div>
                 <span className="text-[10px] text-slate-500 block">Avg Rating</span>
                 <span className="font-bold text-slate-800 dark:text-slate-200">{averageScore}%</span>
+              </div>
+              <div className="border-r border-slate-200 dark:border-slate-800" />
+              <div>
+                <span className="text-[10px] text-slate-500 block">Badges</span>
+                <span className="font-bold text-slate-800 dark:text-slate-200">{unlockedCount}</span>
               </div>
             </div>
           </Card>
