@@ -376,6 +376,15 @@ const InterviewSession = () => {
     setViolationAlert(`PROCTOR WARNING: ${details}`);
     setTimeout(() => setViolationAlert(''), 4000);
 
+    // Bump the strike counter immediately rather than waiting for the server's reply. The
+    // authoritative number still comes from the backend below and overwrites this the moment
+    // it lands — but that round trip crosses regions (app in the US, database in Asia), so
+    // relying on it alone left the alarm sounding while the count sat unchanged for a second
+    // or more. The candidate now sees the strike register at the same instant they're warned.
+    const optimisticCount = violationsCountRef.current + 1;
+    violationsCountRef.current = optimisticCount;
+    setViolationsCount(optimisticCount);
+
     // Capture the webcam frame for THIS violation. Archived per-violation below (every
     // violation — 1, 2, 3, 4 — gets its own snapshot saved to the proctoring DB), and also
     // passed to the proctor-log so the terminating violation still records it on the report.
@@ -396,6 +405,7 @@ const InterviewSession = () => {
         details,
         snapshot_image: snapshot
       });
+      // Reconcile with the authoritative server count (replaces the optimistic bump above).
       const count = res.data.violations_count;
       if (typeof count === 'number') {
         setViolationsCount(count);
@@ -420,6 +430,14 @@ const InterviewSession = () => {
         navigate(`/interview/report/${id}`, { state: { proctorFailed: true }, replace: true });
       }
     } catch (err) {
+      // The strike never reached the server, so undo the optimistic bump rather than leaving
+      // the candidate looking at a count the backend doesn't actually hold. Guarded so a
+      // reply that already corrected the value isn't pulled back down.
+      if (violationsCountRef.current === optimisticCount) {
+        const rolledBack = Math.max(0, optimisticCount - 1);
+        violationsCountRef.current = rolledBack;
+        setViolationsCount(rolledBack);
+      }
       console.error('Failed to log violation to server:', err);
     }
   };
