@@ -172,9 +172,17 @@ const InterviewCodingSandbox = ({ problemId, interviewId, onSubmitAnswer, disabl
         </span>
       </div>
 
-      <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed whitespace-pre-wrap">
-        {problem.prompt}
-      </p>
+      {/* The scenario, not the problem title, is the actual question — so it is rendered as
+          a highlighted block immediately under the heading and above everything else, rather
+          than as small supporting copy next to the editor. */}
+      <div className="rounded-xl border-l-4 border-primary-500 bg-primary-50/60 dark:bg-primary-500/5 border-y border-r border-slate-200 dark:border-slate-800 p-4 md:p-5">
+        <p className="text-[10px] font-bold uppercase tracking-widest text-primary-600 dark:text-primary-400 mb-2">
+          The Scenario
+        </p>
+        <p className="text-sm md:text-[15px] text-slate-700 dark:text-slate-200 leading-relaxed whitespace-pre-wrap">
+          {problem.prompt}
+        </p>
+      </div>
 
       {isSql && problem.schema_display?.length > 0 && (
         <div className="space-y-2">
@@ -197,12 +205,42 @@ const InterviewCodingSandbox = ({ problemId, interviewId, onSubmitAnswer, disabl
         </div>
       )}
 
-      {problem.constraints?.length > 0 && (
-        <ul className="space-y-0.5">
-          {problem.constraints.map((c, i) => (
-            <li key={i} className="text-[11px] font-mono text-slate-500">• {c}</li>
+      {isSql && problem.sample_datasets?.length > 0 && (
+        <div className="space-y-1.5">
+          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Sample Data</p>
+          {problem.sample_datasets.map((d, i) => (
+            <div key={i} className="rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/40 p-2.5 space-y-1">
+              <p className="text-[10px] font-semibold text-slate-500">{d.name}</p>
+              <pre className="whitespace-pre-wrap font-mono text-[10px] text-slate-600 dark:text-slate-300">{d.seed}</pre>
+            </div>
           ))}
-        </ul>
+        </div>
+      )}
+
+      {/* Worked examples — the candidate cannot infer the expected output shape without
+          them, and they were reaching the admin sandbox but not this one. */}
+      {problem.examples?.length > 0 && (
+        <div className="space-y-1.5">
+          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Examples</p>
+          {problem.examples.map((ex, i) => (
+            <div key={i} className="rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/40 p-2.5 font-mono text-[11px] space-y-0.5">
+              <div className="text-slate-700 dark:text-slate-200">Input: {ex.input}</div>
+              <div className="text-primary-600 dark:text-primary-300">Output: {ex.output}</div>
+              {ex.explanation && <div className="text-slate-500">{ex.explanation}</div>}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {problem.constraints?.length > 0 && (
+        <div className="space-y-1">
+          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Constraints</p>
+          <ul className="space-y-0.5">
+            {problem.constraints.map((c, i) => (
+              <li key={i} className="text-[11px] font-mono text-slate-500">• {c}</li>
+            ))}
+          </ul>
+        </div>
       )}
 
       {error && <Alert variant="error" className="text-xs">{error}</Alert>}

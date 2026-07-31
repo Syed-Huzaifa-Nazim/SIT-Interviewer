@@ -144,6 +144,12 @@ const InterviewSession = () => {
   const [sessionTime, setSessionTime] = useState(0);
 
   const activeQuestion = questions[currentIdx];
+  // A hands-on sandbox question is read and answered in writing, so the spoken-question
+  // voice has nothing useful to say about it — `question_text` is only the problem title,
+  // and the actual scenario lives in the sandbox panel. Announcing "Two Sum" aloud (and
+  // offering a mute toggle for it) is noise, so both are suppressed for this question type.
+  const isSandboxQuestion =
+    activeQuestion?.question_type === 'coding_sandbox' && !!activeQuestion?.sandbox_problem_id;
 
   // 1. Setup Session Timers
   useEffect(() => {
@@ -1402,7 +1408,7 @@ const InterviewSession = () => {
   const speakQuestion = () => {
     if ('speechSynthesis' in window && activeQuestion) {
       window.speechSynthesis.cancel();
-      if (isMuted) return;
+      if (isMuted || isSandboxQuestion) return;
       const utterance = new SpeechSynthesisUtterance(activeQuestion.question_text);
       utterance.rate = 0.95;
 
@@ -1419,7 +1425,7 @@ const InterviewSession = () => {
 
   // Speak question automatically by default when it loads or index changes
   useEffect(() => {
-    if (activeQuestion && !isMuted) {
+    if (activeQuestion && !isMuted && !isSandboxQuestion) {
       const timer = setTimeout(() => {
         speakQuestion();
       }, 350);
@@ -1699,32 +1705,36 @@ const InterviewSession = () => {
                 <Badge variant="primary" size="lg" className="capitalize !normal-case">
                   {questionTypeLabel(activeQuestion?.question_type)}
                 </Badge>
-                <button
-                  onClick={() => {
-                    const newMuted = !isMuted;
-                    setIsMuted(newMuted);
-                    if (newMuted) {
-                      if ('speechSynthesis' in window) window.speechSynthesis.cancel();
-                    } else {
-                      setTimeout(() => {
-                        if ('speechSynthesis' in window && activeQuestion) {
-                          window.speechSynthesis.cancel();
-                          const utterance = new SpeechSynthesisUtterance(activeQuestion.question_text);
-                          utterance.rate = 0.95;
-                          window.speechSynthesis.speak(utterance);
-                        }
-                      }, 50);
-                    }
-                  }}
-                  className={`p-1.5 rounded-lg border transition ${
-                    isMuted
-                      ? 'bg-slate-100 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'
-                      : 'bg-primary-600/10 border-primary-500 text-primary-500 dark:text-primary-400 hover:bg-primary-600 hover:text-white'
-                  }`}
-                  title={isMuted ? 'Unmute Recruiter Voice' : 'Mute Recruiter Voice'}
-                >
-                  {isMuted ? <VolumeX size={16} /> : <Volume2 size={16} />}
-                </button>
+                {/* Nothing is spoken for a written coding exercise, so the voice toggle is
+                    hidden rather than left sitting there doing nothing. */}
+                {!isSandboxQuestion && (
+                  <button
+                    onClick={() => {
+                      const newMuted = !isMuted;
+                      setIsMuted(newMuted);
+                      if (newMuted) {
+                        if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+                      } else {
+                        setTimeout(() => {
+                          if ('speechSynthesis' in window && activeQuestion) {
+                            window.speechSynthesis.cancel();
+                            const utterance = new SpeechSynthesisUtterance(activeQuestion.question_text);
+                            utterance.rate = 0.95;
+                            window.speechSynthesis.speak(utterance);
+                          }
+                        }, 50);
+                      }
+                    }}
+                    className={`p-1.5 rounded-lg border transition ${
+                      isMuted
+                        ? 'bg-slate-100 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'
+                        : 'bg-primary-600/10 border-primary-500 text-primary-500 dark:text-primary-400 hover:bg-primary-600 hover:text-white'
+                    }`}
+                    title={isMuted ? 'Unmute Recruiter Voice' : 'Mute Recruiter Voice'}
+                  >
+                    {isMuted ? <VolumeX size={16} /> : <Volume2 size={16} />}
+                  </button>
+                )}
               </div>
 
               <h1 className="text-xl md:text-2xl font-extrabold text-slate-900 dark:text-white leading-relaxed">
@@ -1746,7 +1756,16 @@ const InterviewSession = () => {
               )}
             </div>
 
-            <div className="mt-10 pt-8 border-t border-slate-200 dark:border-slate-800 flex flex-col items-center">
+            {/* The sandbox opens with its own scenario block, which has to read as part of
+                the question rather than as a detached panel — so it sits directly under the
+                title instead of behind the wide divider the answer controls use. */}
+            <div
+              className={`flex flex-col items-center ${
+                isSandboxQuestion
+                  ? 'mt-4'
+                  : 'mt-10 pt-8 border-t border-slate-200 dark:border-slate-800'
+              }`}
+            >
               {/* A coding-sandbox question is answered by writing and running code, so it
                   replaces the voice/text answer controls entirely for that question only.
                   Everything else on the page — proctoring, the per-question timer, the
