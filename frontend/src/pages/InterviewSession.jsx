@@ -122,12 +122,14 @@ const InterviewSession = () => {
   const submittingRef = useRef(false);
 
   // Full-session video recording (DB Integration §2): records the SAME 640×480 proctoring
-  // camera stream (no second camera request), video-only WebM at a modest bitrate. One
+  // camera stream (no second camera request) combined with a mic audio track, so the
+  // recording admins review has the candidate's voice, not just silent video. One
   // contiguous recording per session — if the candidate turns the camera off the recorder
   // ends with it, and we upload whatever was captured up to that point rather than
   // stitching invalid multi-segment WebM files together.
   const sessionRecorderRef = useRef(null);
   const sessionChunksRef = useRef([]);
+  const sessionAudioStreamRef = useRef(null);
   const videoUploadedRef = useRef(false);
   const [savingVideo, setSavingVideo] = useState(false);
 
@@ -594,7 +596,23 @@ const InterviewSession = () => {
         }
         if (!sessionRecorderRef.current) {
           try {
-            const rec = new MediaRecorder(stream, {
+            // Grab a mic track for the session recording itself (separate from the
+            // per-answer audioStreamRef used for STT/Whisper) so the admin's review
+            // recording has the candidate's voice, not silent video. Best-effort: if mic
+            // permission is denied, fall back to video-only rather than blocking the session.
+            if (!sessionAudioStreamRef.current) {
+              try {
+                sessionAudioStreamRef.current = await navigator.mediaDevices.getUserMedia({ audio: true });
+              } catch (e) {
+                console.warn('Session audio unavailable, recording video-only:', e);
+              }
+            }
+            const recordTracks = [
+              ...stream.getVideoTracks(),
+              ...(sessionAudioStreamRef.current ? sessionAudioStreamRef.current.getAudioTracks() : []),
+            ];
+            const recordStream = new MediaStream(recordTracks);
+            const rec = new MediaRecorder(recordStream, {
               mimeType: 'video/webm',
               videoBitsPerSecond: 600_000, // 480p decorative-review quality, ~4.5MB/min
             });
@@ -834,6 +852,10 @@ const InterviewSession = () => {
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop());
       streamRef.current = null;
+    }
+    if (sessionAudioStreamRef.current) {
+      sessionAudioStreamRef.current.getTracks().forEach(track => track.stop());
+      sessionAudioStreamRef.current = null;
     }
     if (videoRef.current) {
       videoRef.current.srcObject = null;
