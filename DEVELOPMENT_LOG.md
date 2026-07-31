@@ -10,6 +10,7 @@ change — see git log / commit messages for full detail on any entry.
 - Tightened the detection loop and doubled how often hand detection runs, so hand/eye/face warnings fire promptly instead of lagging behind the candidate
 - The violation strike count now updates the instant a violation is detected rather than waiting for the cross-region server round trip; the authoritative count still reconciles immediately after, and termination remains server-decided
 - Camera recovery now triggers only on genuine device loss reported by the browser (with a grace period for transient blips) — the earlier frame-progress freeze detection was misreading a busy main thread as a dead camera, causing spurious "reconnecting" states and truncating session recordings to a few seconds
+- Fixed the 4-strike termination silently never firing: deliberate acts (tab switch, focus loss, copy/paste, blocked shortcuts) were sharing the same 5-second same-type throttle built for continuous conditions like "no face detected" — so four quick tab switches only registered two strikes and the count stalled at 3 forever. Discrete violations now count every time; continuous ones keep their throttle
 
 ## 2026-07-28
 - Hardened the Admin Hub's session-recording player: an in-player playback failure (e.g. an expired signed URL) now shows a clear error with a one-click retry instead of a silently frozen video
