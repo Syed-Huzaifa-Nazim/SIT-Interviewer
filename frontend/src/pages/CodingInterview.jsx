@@ -9,13 +9,17 @@ import Spinner from '../components/ui/Spinner';
 import { useAuth } from '../context/AuthContext';
 import {
   Play, Send, RotateCcw, Terminal, Code2, CheckCircle2, XCircle,
-  Clock3, AlertTriangle, ChevronLeft, ListChecks, Loader2,
+  Clock3, AlertTriangle, ChevronLeft, ListChecks, Loader2, Database,
 } from 'lucide-react';
 
 const LANGUAGES = [
   { id: 'python', label: 'Python 3' },
   { id: 'javascript', label: 'JavaScript (Node)' },
 ];
+
+// SQL questions are answered in SQL only — the schema and seed data are part of the
+// question, so offering Python/JS for them would be meaningless.
+const SQL_LANGUAGES = [{ id: 'sql', label: 'SQL (SQLite)' }];
 
 const DIFFICULTY_STYLES = {
   Easy: 'success',
@@ -82,6 +86,83 @@ const CodeEditor = ({ value, onChange, onRun, disabled }) => {
   );
 };
 
+// --- SQL schema + seed data panel ----------------------------------------------
+// A SQL question is unanswerable without seeing what you are querying, so the table
+// structure (and the visible sample dataset) are rendered as part of the question itself.
+const SchemaPanel = ({ schema, datasets }) => {
+  if (!schema?.length) return null;
+  return (
+    <div className="space-y-3">
+      <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+        Database Schema
+      </p>
+      {schema.map((table) => (
+        <div key={table.table} className="rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden">
+          <div className="px-3 py-2 bg-slate-100 dark:bg-slate-900/70 border-b border-slate-200 dark:border-slate-800 font-mono text-xs font-bold text-slate-700 dark:text-slate-200 flex items-center gap-1.5">
+            <Database size={13} className="text-primary-500" /> {table.table}
+          </div>
+          <div className="divide-y divide-slate-100 dark:divide-slate-800/70">
+            {table.columns.map((col) => (
+              <div key={col.name} className="px-3 py-1.5 flex items-center justify-between gap-3 font-mono text-[11px]">
+                <span className="text-slate-700 dark:text-slate-200">{col.name}</span>
+                <span className="flex items-center gap-2">
+                  <span className="text-slate-400 dark:text-slate-500">{col.type}</span>
+                  {col.note && (
+                    <span className="text-[9px] text-primary-600 dark:text-primary-400 uppercase tracking-wide">
+                      {col.note}
+                    </span>
+                  )}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+      {datasets?.length > 0 && datasets[0]?.seed && (
+        <div className="space-y-1.5">
+          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+            Sample Data
+          </p>
+          <pre className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/40 p-3 font-mono text-[10px] leading-relaxed text-slate-600 dark:text-slate-300 whitespace-pre-wrap overflow-x-auto">
+            {datasets[0].seed.replace(/;\s*/g, ';\n')}
+          </pre>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// --- SQL result set rendered as a real table -----------------------------------
+const ResultTable = ({ columns, rows, emptyLabel = 'No rows returned' }) => {
+  if (!rows || rows.length === 0) {
+    return <div className="text-[11px] italic text-slate-400 dark:text-slate-500 py-1">{emptyLabel}</div>;
+  }
+  return (
+    <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-800">
+      <table className="w-full text-[11px] font-mono">
+        <thead>
+          <tr className="bg-slate-100 dark:bg-slate-900/70">
+            {(columns || []).map((c, i) => (
+              <th key={i} className="px-2.5 py-1.5 text-left font-bold text-slate-600 dark:text-slate-300 whitespace-nowrap">{c}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100 dark:divide-slate-800/70">
+          {rows.map((row, ri) => (
+            <tr key={ri}>
+              {row.map((cell, ci) => (
+                <td key={ci} className="px-2.5 py-1.5 text-slate-700 dark:text-slate-200 whitespace-nowrap">
+                  {cell === null ? <span className="text-slate-400 italic">NULL</span> : String(cell)}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+};
+
 // --- Per-test-case result row --------------------------------------------------
 const statusMeta = {
   passed: { icon: CheckCircle2, variant: 'success', label: 'Passed', color: 'text-emerald-500' },
@@ -100,6 +181,9 @@ const TestResultRow = ({ result }) => {
           <Icon size={15} className={meta.color} />
           <span className="font-semibold text-slate-700 dark:text-slate-200">
             {result.hidden ? `Hidden test #${result.index}` : `Sample test #${result.index}`}
+            {!result.hidden && result.scenario && (
+              <span className="ml-1.5 font-normal text-slate-400 dark:text-slate-500">— {result.scenario}</span>
+            )}
           </span>
         </div>
         <div className="flex items-center gap-2">
@@ -110,7 +194,21 @@ const TestResultRow = ({ result }) => {
         </div>
       </div>
 
-      {!result.hidden && (result.input !== undefined) && (
+      {/* SQL tests compare RESULT SETS, so they render as tables rather than a value line. */}
+      {!result.hidden && result.rows !== undefined && (
+        <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="space-y-1">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">Your result</p>
+            <ResultTable columns={result.columns} rows={result.rows} />
+          </div>
+          <div className="space-y-1">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">Expected</p>
+            <ResultTable columns={result.expected_columns?.length ? result.expected_columns : result.columns} rows={result.expected_rows} />
+          </div>
+        </div>
+      )}
+
+      {!result.hidden && result.rows === undefined && (result.input !== undefined) && (
         <div className="mt-2 space-y-1 font-mono text-[11px] text-slate-500 dark:text-slate-400">
           <div><span className="text-slate-400 dark:text-slate-500">Input:</span> {result.input}</div>
           <div><span className="text-slate-400 dark:text-slate-500">Expected:</span> {JSON.stringify(result.expected)}</div>
@@ -165,8 +263,12 @@ const CodingInterview = () => {
       const res = await api.get(`/coding/problems/${problemId}`);
       const p = res.data.problem;
       setProblem(p);
+      // A SQL question can only be answered in SQL, so switch the editor language with the
+      // problem instead of leaving a stale Python/JS selection that could never pass.
+      const effectiveLang = p.language === 'sql' ? 'sql' : (lang === 'sql' ? 'python' : lang);
+      if (effectiveLang !== lang) setLanguage(effectiveLang);
       // Editor loads the boilerplate stub ONLY — never a solution (§1.2).
-      setCode(p.starters?.[lang] ?? '');
+      setCode(p.starters?.[effectiveLang] ?? '');
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to load the coding problem.');
     } finally {
@@ -310,6 +412,10 @@ const CodingInterview = () => {
                   </p>
                 </div>
 
+                {problem.language === 'sql' && (
+                  <SchemaPanel schema={problem.schema_display} datasets={problem.sample_datasets} />
+                )}
+
                 {problem.examples?.length > 0 && (
                   <div className="space-y-2">
                     <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Examples</p>
@@ -355,7 +461,7 @@ const CodingInterview = () => {
                 onChange={(e) => handleLanguageChange(e.target.value)}
                 disabled={!!busy}
               >
-                {LANGUAGES.map((l) => (
+                {(problem?.language === 'sql' ? SQL_LANGUAGES : LANGUAGES).map((l) => (
                   <option key={l.id} value={l.id}>{l.label}</option>
                 ))}
               </select>

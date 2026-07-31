@@ -13,8 +13,9 @@ import json
 from fastapi import APIRouter, Request, HTTPException, Depends
 from app.database.db import db
 from app.models import User, CodeSubmission
-from app.coding.problem_bank import list_problems, get_problem, public_problem
+from app.coding.problem_bank import list_problems, get_problem, public_problem, is_sql_problem
 from app.coding.runner import execute_submission
+from app.coding.sql_runner import execute_sql_submission
 from app.utils.security import admin_required
 
 coding_bp = APIRouter()
@@ -31,6 +32,32 @@ async def get_single_problem(problem_id: str, user: User = Depends(admin_require
     if not problem:
         raise HTTPException(status_code=404, detail="Coding problem not found")
     return {'problem': public_problem(problem)}
+
+
+def _evaluate(problem, language, code, tests):
+    """Route the submission to the right engine.
+
+    SQL queries run against an isolated in-memory SQLite database seeded per test case;
+    every other language goes through the existing subprocess runner. Both return the same
+    result shape, so callers and the frontend need no special-casing.
+    """
+    time_limit = problem.get('time_limit_secs', 5)
+    if is_sql_problem(problem):
+        if language != 'sql':
+            return {
+                'supported': False,
+                'error': "This is a SQL question — select SQL as the language.",
+                'passed': 0, 'total': len(tests), 'score': 0, 'results': [],
+            }
+        return execute_sql_submission(code, problem, tests, time_limit=time_limit)
+
+    if language == 'sql':
+        return {
+            'supported': False,
+            'error': "SQL is only available for SQL questions. Pick Python or JavaScript here.",
+            'passed': 0, 'total': len(tests), 'score': 0, 'results': [],
+        }
+    return execute_submission(code, language, problem['function_name'], tests, time_limit=time_limit)
 
 
 def _load_request(problem_id, language):
@@ -51,10 +78,7 @@ async def run_code(request: Request, user: User = Depends(admin_required)):
     code = data.get('code', '')
 
     sample_tests = [dict(t, hidden=False) for t in problem.get('sample_tests', [])]
-    result = execute_submission(
-        code, language, problem['function_name'], sample_tests,
-        time_limit=problem.get('time_limit_secs', 5)
-    )
+    result = _evaluate(problem, language, code, sample_tests)
     result['mode'] = 'run'
     return result
 
@@ -72,10 +96,7 @@ async def submit_code(request: Request, user: User = Depends(admin_required)):
         [dict(t, hidden=False) for t in problem.get('sample_tests', [])]
         + [dict(t, hidden=True) for t in problem.get('hidden_tests', [])]
     )
-    result = execute_submission(
-        code, language, problem['function_name'], all_tests,
-        time_limit=problem.get('time_limit_secs', 5)
-    )
+    result = _evaluate(problem, language, code, all_tests)
     result['mode'] = 'submit'
 
     # Persist the submission so it is available later in Admin Hub reporting (§1.3).

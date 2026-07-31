@@ -642,10 +642,24 @@ PROBLEMS = [
     },
 ]
 
+# SQL problems live in their own module because their test cases are shaped differently
+# (seeded schema + expected result set, rather than function args + return value). They are
+# appended to the same PROBLEMS list so every existing consumer — list/get/public_problem,
+# the routes, and the frontend — treats them like any other problem.
+from app.coding.sql_problems import SQL_PROBLEMS  # noqa: E402
+
+PROBLEMS = PROBLEMS + SQL_PROBLEMS
+
 _PROBLEM_INDEX = {p["id"]: p for p in PROBLEMS}
 
 # Languages the local runner can actually execute against test cases today.
-EXECUTABLE_LANGUAGES = ["python", "javascript"]
+# 'sql' runs through coding/sql_runner.py (in-memory SQLite), not the subprocess runner.
+EXECUTABLE_LANGUAGES = ["python", "javascript", "sql"]
+
+
+def is_sql_problem(problem):
+    """True when this problem is answered with a SQL query rather than a function."""
+    return (problem or {}).get("language") == "sql"
 
 
 def list_problems():
@@ -658,17 +672,28 @@ def get_problem(problem_id):
 
 
 def public_problem(problem):
-    """Strip anything the candidate must not see (hidden tests)."""
-    return {
+    """Strip anything the candidate must not see (hidden tests, seed/expected rows)."""
+    data = {
         "id": problem["id"],
         "title": problem["title"],
         "difficulty": problem["difficulty"],
         "prompt": problem["prompt"],
         "constraints": problem.get("constraints", []),
         "examples": problem.get("examples", []),
-        "function_name": problem["function_name"],
+        "function_name": problem.get("function_name"),
         "starters": problem["starters"],
         "time_limit_secs": problem.get("time_limit_secs", 5),
         "sample_test_count": len(problem.get("sample_tests", [])),
         "total_test_count": len(problem.get("sample_tests", [])) + len(problem.get("hidden_tests", [])),
+        "language": problem.get("language"),
+        "domains": problem.get("domains", []),
     }
+    if is_sql_problem(problem):
+        # A SQL question is unanswerable without seeing what you are querying, so the table
+        # structure and the visible sample dataset are part of the question itself.
+        data["schema_display"] = problem.get("schema_display", [])
+        data["sample_datasets"] = [
+            {"name": t.get("name", ""), "seed": t.get("seed", "")}
+            for t in problem.get("sample_tests", [])
+        ]
+    return data
