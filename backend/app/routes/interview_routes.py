@@ -215,16 +215,44 @@ async def start_interview(request: Request, user_id: int = Depends(get_current_u
             custom_skills=custom_skills
         )
 
+        # Completed-course candidates open on a hands-on coding-sandbox exercise instead of
+        # a verbal question. It REPLACES the generated first question rather than being added
+        # on top, so the interview length and pacing are unchanged. Scoped deliberately to
+        # completed-course candidates only — Instructor interviews keep their verbal opener,
+        # and Ongoing/mock candidates have no sandbox access at all.
+        opening_problem = None
+        if requesting_user and requesting_user.must_use_otp and not is_instructor:
+            try:
+                from app.coding.problem_bank import pick_opening_problem
+                opening_problem = pick_opening_problem(
+                    job_role=job_role,
+                    course_category=getattr(requesting_user, 'course_category', '') or '',
+                )
+            except Exception as e:
+                # Never block the interview on the sandbox opener — fall back to the
+                # generated verbal question the candidate would otherwise have had.
+                print(f"[coding] Opening sandbox question unavailable: {e}")
+                opening_problem = None
+
         for idx, q_data in enumerate(questions_list):
             q_text = q_data.get('question_text')
             q_type = q_data.get('question_type', 'conceptual')
+            sandbox_problem_id = None
+            code_snippet = q_data.get('code_snippet')  # debugging-format questions only
+
+            if idx == 0 and opening_problem:
+                q_type = 'coding_sandbox'
+                sandbox_problem_id = opening_problem['id']
+                q_text = opening_problem['title']
+                code_snippet = None
 
             question = InterviewQuestion(
                 interview_id=interview.id,
                 question_text=q_text,
                 question_type=q_type,
                 # Only debugging-format questions carry one (Coding Formats §2.2).
-                code_snippet=q_data.get('code_snippet'),
+                code_snippet=code_snippet,
+                sandbox_problem_id=sandbox_problem_id,
                 order_num=idx + 1,
                 time_limit_seconds=question_time_limit(q_type)  # per-question timer (§2)
             )

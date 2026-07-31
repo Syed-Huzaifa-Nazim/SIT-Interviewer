@@ -16,7 +16,36 @@ from app.models import User, CodeSubmission
 from app.coding.problem_bank import list_problems, get_problem, public_problem, is_sql_problem
 from app.coding.runner import execute_submission
 from app.coding.sql_runner import execute_sql_submission
-from app.utils.security import admin_required
+from app.models import InterviewQuestion, Interview
+from app.utils.security import admin_required, get_current_user_id
+
+
+def _assigned_problem_or_403(problem_id, user_id):
+    """Allow a candidate through only for the exact problem their own live interview
+    assigned them.
+
+    The sandbox as a whole stays admin-only (§1.4). This is the single narrow exception that
+    lets a Completed-course candidate solve the coding question their interview opens with —
+    they cannot list problems, and they cannot reach any problem other than the one attached
+    to one of their own interviews.
+    """
+    if not problem_id:
+        raise HTTPException(status_code=403, detail="Not authorised for this problem")
+    owns = (
+        db.session.query(InterviewQuestion.id)
+        .join(Interview, Interview.id == InterviewQuestion.interview_id)
+        .filter(
+            InterviewQuestion.sandbox_problem_id == problem_id,
+            Interview.user_id == user_id,
+        )
+        .first()
+    )
+    if not owns:
+        raise HTTPException(status_code=403, detail="Not authorised for this problem")
+    problem = get_problem(problem_id)
+    if not problem:
+        raise HTTPException(status_code=404, detail="Coding problem not found")
+    return problem
 
 coding_bp = APIRouter()
 
@@ -32,6 +61,66 @@ async def get_single_problem(problem_id: str, user: User = Depends(admin_require
     if not problem:
         raise HTTPException(status_code=404, detail="Coding problem not found")
     return {'problem': public_problem(problem)}
+
+
+# ---- Candidate-facing endpoints (live interview opening question) -------------------
+# Scoped by _assigned_problem_or_403 to the one problem the candidate's own interview
+# assigned them, so the rest of the sandbox stays admin-only.
+
+@coding_bp.get('/interview-problem/{problem_id}')
+async def get_interview_problem(problem_id: str, user_id: int = Depends(get_current_user_id)):
+    problem = _assigned_problem_or_403(problem_id, user_id)
+    return {'problem': public_problem(problem)}
+
+
+@coding_bp.post('/interview-run')
+async def interview_run(request: Request, user_id: int = Depends(get_current_user_id)):
+    """Run the candidate's code against the VISIBLE sample tests only."""
+    data = await request.json() or {}
+    problem = _assigned_problem_or_403(data.get('problem_id'), user_id)
+    language = (data.get('language') or '').lower()
+    sample_tests = [dict(t, hidden=False) for t in problem.get('sample_tests', [])]
+    result = _evaluate(problem, language, data.get('code', ''), sample_tests)
+    result['mode'] = 'run'
+    return result
+
+
+@coding_bp.post('/interview-submit')
+async def interview_submit(request: Request, user_id: int = Depends(get_current_user_id)):
+    """Evaluate against ALL tests and persist the submission against the interview."""
+    data = await request.json() or {}
+    problem = _assigned_problem_or_403(data.get('problem_id'), user_id)
+    language = (data.get('language') or '').lower()
+    code = data.get('code', '')
+    interview_id = data.get('interview_id')
+
+    all_tests = (
+        [dict(t, hidden=False) for t in problem.get('sample_tests', [])]
+        + [dict(t, hidden=True) for t in problem.get('hidden_tests', [])]
+    )
+    result = _evaluate(problem, language, code, all_tests)
+    result['mode'] = 'submit'
+
+    try:
+        submission = CodeSubmission(
+            user_id=user_id,
+            interview_id=interview_id if isinstance(interview_id, int) else None,
+            problem_id=problem['id'],
+            language=language,
+            code=code,
+            passed=result.get('passed', 0),
+            total=result.get('total', 0),
+            score=result.get('score', 0),
+            results=json.dumps(result.get('results', [])),
+        )
+        db.session.add(submission)
+        db.session.commit()
+        result['submission_id'] = submission.id
+    except Exception:
+        db.session.rollback()
+        result['submission_id'] = None
+
+    return result
 
 
 def _evaluate(problem, language, code, tests):

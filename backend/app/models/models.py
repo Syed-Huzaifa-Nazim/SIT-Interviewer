@@ -224,6 +224,10 @@ class InterviewQuestion(db.Model):
     # from question_text so it renders as a monospace block and is NEVER read aloud by the
     # question read-aloud voice.
     code_snippet = db.Column(db.Text, nullable=True)
+    # Set only on a 'coding_sandbox' question: the coding-sandbox problem the candidate must
+    # solve in the live editor. Everything needed to render and grade it is looked up from
+    # the problem bank by this id, so no question content is duplicated into the DB.
+    sandbox_problem_id = db.Column(db.String(100), nullable=True)
     order_num = db.Column(db.Integer, nullable=False)
 
     # Per-question timer (§2). ``time_limit_seconds`` is set at creation from the
@@ -250,6 +254,7 @@ class InterviewQuestion(db.Model):
             'question_text': self.question_text,
             'question_type': self.question_type,
             'code_snippet': self.code_snippet,
+            'sandbox_problem_id': self.sandbox_problem_id,
             'order_num': self.order_num,
             'time_limit_seconds': self.time_limit_seconds or 120,
             'started_at': self.started_at.isoformat() if self.started_at else None,

@@ -71,6 +71,9 @@ QUESTION_TIME_LIMITS = {
     CODING_LOGIC: 180,
     CODING_DEBUG: 180,
     CODING_SCENARIO: 240,
+    # Hands-on sandbox exercise: the candidate actually writes and runs code here rather
+    # than talking through it, so it needs a materially larger budget than a verbal question.
+    'coding_sandbox': 600,
 }
 DEFAULT_QUESTION_TIME_LIMIT = 120
 

@@ -697,3 +697,43 @@ def public_problem(problem):
             for t in problem.get("sample_tests", [])
         ]
     return data
+
+
+# --- Opening-question selection (Completed-course interviews) ----------------------
+# Domain hints that mean a data-oriented candidate, for whom a SQL opener is the most
+# relevant coding exercise. Matched loosely against the candidate's course category and
+# job role so wording differences ("Cloud & Data Engineering", "Data Analyst") still hit.
+_DATA_HINTS = ("data", "sql", "database", "analytic", "warehouse", "etl", "bi ")
+
+
+def pick_opening_problem(job_role="", course_category="", preferred_language=None):
+    """Choose the coding-sandbox problem to open a Completed-course interview with.
+
+    SQL is preferred when the candidate's domain is data-oriented (that is where a query
+    exercise is genuinely relevant); everyone else gets a standard function-implementation
+    problem. Returns None when nothing suitable exists, in which case the caller simply
+    leaves the generated verbal question in place.
+    """
+    haystack = f"{job_role or ''} {course_category or ''}".lower()
+    wants_sql = any(hint in haystack for hint in _DATA_HINTS)
+
+    sql_problems = [p for p in PROBLEMS if is_sql_problem(p)]
+    code_problems = [p for p in PROBLEMS if not is_sql_problem(p)]
+
+    if preferred_language == "sql":
+        pool = sql_problems
+    elif wants_sql and sql_problems:
+        pool = sql_problems
+    else:
+        pool = code_problems
+
+    if not pool:
+        pool = code_problems or sql_problems
+    if not pool:
+        return None
+
+    # Open on an approachable problem: the first question sets the tone, and a Hard opener
+    # would rattle a candidate before the interview has really begun.
+    easy = [p for p in pool if p.get("difficulty") == "Easy"]
+    medium = [p for p in pool if p.get("difficulty") == "Medium"]
+    return (easy or medium or pool)[0]

@@ -18,6 +18,7 @@ import Alert from '../components/ui/Alert';
 import Badge from '../components/ui/Badge';
 import Button from '../components/ui/Button';
 import Spinner from '../components/ui/Spinner';
+import InterviewCodingSandbox from '../components/interview/InterviewCodingSandbox';
 import {
   Mic,
   MicOff,
@@ -1309,7 +1310,12 @@ const InterviewSession = () => {
   };
 
   // ------------------------------------------------------------------ Submit (§2/§3)
-  const submitAnswer = async ({ timedOut = false } = {}) => {
+  // Submit a coding-sandbox answer. The graded code arrives as a plain string, which the
+  // normal text path already knows how to send — going through submitAnswer keeps scoring,
+  // the timer and question advancement identical to every other question type.
+  const submitAnswerWithText = (answerText) => submitAnswer({ overrideText: answerText });
+
+  const submitAnswer = async ({ timedOut = false, overrideText = null } = {}) => {
     if (submittingRef.current) return;
     const question = questions[currentIdx];
     if (!question) return;
@@ -1319,9 +1325,13 @@ const InterviewSession = () => {
     setLoading(true);
     setError('');
 
+    // A sandbox answer is text, never audio — bypass the voice branch even if the session
+    // was left in voice mode, since setInputMode() has not re-rendered yet at this point.
+    const asText = overrideText !== null;
+
     let audioBlob = null;
     let voiceText = '';
-    if (inputMode === 'voice') {
+    if (!asText && inputMode === 'voice') {
       stopMic();
       audioBlob = await finalizeAudioBlob();
       voiceText = liveTranscriptRef.current;
@@ -1339,7 +1349,7 @@ const InterviewSession = () => {
       if (finalSnapshot) formData.append('snapshot_image', finalSnapshot);
     }
 
-    if (inputMode === 'voice') {
+    if (!asText && inputMode === 'voice') {
       if (audioBlob && audioBlob.size > 0) {
         formData.append('audio', audioBlob, 'response.webm');
       }
@@ -1347,8 +1357,8 @@ const InterviewSession = () => {
       formData.append('fallback_text', voiceText || '');
       formData.append('duration', timeLimit && remaining !== null ? (timeLimit - remaining) : 0);
     } else {
-      formData.append('response_text', typedAnswer);
-      formData.append('duration', 0);
+      formData.append('response_text', asText ? overrideText : typedAnswer);
+      formData.append('duration', timeLimit && remaining !== null ? (timeLimit - remaining) : 0);
     }
 
     try {
@@ -1737,7 +1747,24 @@ const InterviewSession = () => {
             </div>
 
             <div className="mt-10 pt-8 border-t border-slate-200 dark:border-slate-800 flex flex-col items-center">
-              {inputMode === 'voice' ? (
+              {/* A coding-sandbox question is answered by writing and running code, so it
+                  replaces the voice/text answer controls entirely for that question only.
+                  Everything else on the page — proctoring, the per-question timer, the
+                  session recording — is untouched and keeps running exactly as before. */}
+              {activeQuestion?.question_type === 'coding_sandbox' && activeQuestion?.sandbox_problem_id ? (
+                <InterviewCodingSandbox
+                  problemId={activeQuestion.sandbox_problem_id}
+                  interviewId={parseInt(id, 10)}
+                  disabled={loading}
+                  onSubmitAnswer={(answerText) => {
+                    // Reuse the normal text-answer submit path so scoring, the timer and
+                    // question advancement all behave identically to any other question.
+                    setInputMode('text');
+                    setTypedAnswer(answerText);
+                    submitAnswerWithText(answerText);
+                  }}
+                />
+              ) : inputMode === 'voice' ? (
                 <div className="flex flex-col items-center space-y-5 w-full max-w-lg">
                   {/* Mic control */}
                   <button
