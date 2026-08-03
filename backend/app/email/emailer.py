@@ -59,15 +59,31 @@ class EmailService:
         daemon thread so API responses are never blocked by SMTP latency.
 
         ``attachments`` is an optional list of dicts with keys ``filename``,
-        ``content`` (raw bytes) and ``mimetype`` (e.g. 'image/jpeg')."""
+        ``content`` (raw bytes) and ``mimetype`` (e.g. 'image/jpeg').
+
+        Returns True/False when sent synchronously (``background=False``), so a caller that
+        needs to know whether delivery actually succeeded can react to it. Background sends
+        return None — the result is not knowable yet at that point.
+
+        SESSION OWNERSHIP CONTRACT: whoever creates a scoped session is the one that
+        removes it. The background branch below spawns the thread, so it removes that
+        thread's session; a synchronous call runs on the CALLER's thread and therefore must
+        leave the caller's session completely alone. Removing a session you did not create
+        detaches the caller's live ORM objects mid-request and surfaces later as a baffling
+        "not bound to a Session" error far from the real cause."""
         if background:
-            threading.Thread(
-                target=cls._deliver_and_log,
-                args=(to_email, subject, html, email_type, user_id, attachments),
-                daemon=True
-            ).start()
-        else:
-            cls._deliver_and_log(to_email, subject, html, email_type, user_id, attachments)
+            def _worker():
+                try:
+                    cls._deliver_and_log(to_email, subject, html, email_type, user_id, attachments)
+                finally:
+                    # This thread created the session (lazily, on first query), so this
+                    # thread returns its connection to the pool.
+                    from app.database.db import db
+                    db.session.remove()
+
+            threading.Thread(target=_worker, daemon=True).start()
+            return None
+        return cls._deliver_and_log(to_email, subject, html, email_type, user_id, attachments)
 
     # ------------------------------------------------------------------ internals
 
@@ -213,8 +229,13 @@ class EmailService:
 
     @classmethod
     def _log(cls, to_email, subject, email_type, user_id, status, error, attempts):
-        """Persist an EmailLog row. Runs on the sender thread, which gets its own
-        scoped session — always removed afterwards so no connection leaks."""
+        """Persist an EmailLog row.
+
+        Deliberately does NOT remove the session: this runs on whichever thread called
+        ``send``, and that caller may still be mid-transaction with live ORM objects.
+        Cleanup belongs to whoever created the session — see the ownership contract on
+        ``send``. Only the commit/rollback for this one row is handled here.
+        """
         from app.database.db import db
         from app.models import EmailLog
         try:
@@ -231,5 +252,3 @@ class EmailService:
         except Exception as log_err:
             db.session.rollback()
             logger.error(f"Could not persist email log for {to_email}: {log_err}")
-        finally:
-            db.session.remove()

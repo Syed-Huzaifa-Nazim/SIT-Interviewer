@@ -16,6 +16,7 @@ from app.routes.notification_routes import notification_bp
 from app.routes.feedback_routes import feedback_bp
 from app.routes.admin_routes import admin_bp
 from app.routes.coding_routes import coding_bp
+from app.routes.bulk_email_routes import bulk_email_bp
 from app.routes.candidate_routes import candidate_bp
 
 def create_app(config_class=Config):
@@ -59,6 +60,7 @@ def create_app(config_class=Config):
     app.include_router(admin_bp, prefix="/api/admin", tags=["Admin"])
     app.include_router(coding_bp, prefix="/api/coding", tags=["Coding Sandbox"])
     app.include_router(candidate_bp, prefix="/api/candidate", tags=["Candidate"])
+    app.include_router(bulk_email_bp, prefix="/api/admin/bulk-email", tags=["Bulk Email"])
 
     # Scratch folder for transient processing only (Whisper temp audio, resume parsing).
     # Nothing is PERSISTED locally (DB Integration §3) — every file written here is

@@ -113,6 +113,57 @@ full-screen under AI proctoring.
     return subject, _base('You are invited to your instructor interview', body)
 
 
+def bulk_invite(name, cnic, otp, subject_override, instructor=False,
+                category=None, deadline_days=None, personalize=True):
+    """Invitation sent by the Bulk Email Module.
+
+    Deliberately built on the same shell and credential box as ``completed_signup`` /
+    ``instructor_invite`` so a bulk-invited candidate receives a visually identical email —
+    the only differences are the admin-chosen subject line and, when personalization is on,
+    the candidate's own category and deadline woven into the copy.
+    """
+    role_line = (
+        'your <b>instructor assessment interview</b>' if instructor
+        else 'your <b>official AI-proctored interview</b>'
+    )
+    greeting = f'Dear {name},' if personalize else 'Dear Candidate,'
+
+    category_line = ''
+    if personalize and category and not instructor:
+        category_line = f'<p>This assessment covers your <b>{category}</b> track.</p>'
+
+    deadline_html = ''
+    if personalize and deadline_days:
+        day_word = 'day' if deadline_days == 1 else 'days'
+        deadline_html = (
+            f'<div style="margin:16px 0;padding:12px 16px;background:#fdecec;border:1px solid #f5b7b7;'
+            f'border-radius:8px;color:#9b2c2c;font-size:12px;">'
+            f'<b>Deadline:</b> these credentials expire in <b>{deadline_days} {day_word}</b>. '
+            f'Please complete your interview before then — after that they will stop working '
+            f'and you will need to be re-invited.'
+            f'</div>'
+        )
+
+    body = f"""
+<p>{greeting}</p>
+<p>You have been invited to take {role_line} on the SMIT Assessment Portal.
+Use the credentials below to sign in:</p>
+{category_line}
+{_credentials_box([('Username (CNIC)', cnic), ('One-Time Password', otp)])}
+<div style="margin:16px 0;padding:12px 16px;background:#fef9ec;border:1px solid #f5d67b;border-radius:8px;color:#8a6d1a;font-size:12px;">
+<b>Important:</b> this password works exactly <b>once</b>. Only log in when you are ready to
+take the interview — a working camera and microphone are required, and the session runs in
+full-screen under AI proctoring.
+</div>
+{deadline_html}
+{_button(Config.APP_BASE_URL + '/login', 'Log in &amp; Start Interview')}
+<p style="color:#64748b;font-size:12px;">After the interview, you will be signed out automatically and these credentials will no longer work.</p>
+"""
+    title = ('You are invited to your instructor interview' if instructor
+             else 'You are invited to your official interview')
+    return subject_override, _base(title, body)
+
+
 def interview_clearance(name):
     """Admin-triggered interview clearance / pass confirmation — Update §5."""
     subject = 'Congratulations — You Have Cleared Your SMIT Interview'
