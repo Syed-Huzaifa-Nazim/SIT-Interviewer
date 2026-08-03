@@ -10,6 +10,7 @@ import SearchBar from '../components/ui/SearchBar';
 import Spinner from '../components/ui/Spinner';
 import Input from '../components/ui/Input';
 import Pagination from '../components/ui/Pagination';
+import BulkEmailModal from '../components/admin/BulkEmailModal';
 import { SIGNUP_CATEGORIES, INTERVIEW_STATUS_LABELS, isInstructorCategory, formatCnic } from '../utils/constants';
 
 const PAGE_SIZE = 10;
@@ -27,7 +28,8 @@ import {
   Trash2,
   AlertTriangle,
   ScanFace,
-  MessageSquare
+  MessageSquare,
+  Mail
 } from 'lucide-react';
 
 const INTERVIEW_STATUS_VARIANTS = {
@@ -46,7 +48,11 @@ const AdminUsersPage = () => {
   const [notice, setNotice] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [page, setPage] = useState(1);
-  useEffect(() => { setPage(1); }, [searchTerm]);
+  // 'enrolled' = people who signed up themselves, 'bulk' = accounts created by the Bulk
+  // Email Module. Together they cover every user, so there is no separate "all" view.
+  const [activeTab, setActiveTab] = useState('enrolled');
+  const [bulkOpen, setBulkOpen] = useState(false);
+  useEffect(() => { setPage(1); }, [searchTerm, activeTab]);
 
   const [overrideUserId, setOverrideUserId] = useState(null);
   const [overrideVal, setOverrideVal] = useState(0);
@@ -246,18 +252,35 @@ const AdminUsersPage = () => {
 
   // Memoized so this only recomputes when the user list or search term actually change —
   // not on every unrelated re-render (e.g. typing in an open modal elsewhere on the page).
+  // Split by origin first: bulk_batch_id is set only on accounts the Bulk Email Module
+  // created, so a null value is exactly "this person signed up themselves".
+  const tabUsers = useMemo(
+    () => users.filter((u) => (activeTab === 'bulk' ? u.bulk_batch_id != null : u.bulk_batch_id == null)),
+    [users, activeTab]
+  );
+
   const filteredUsers = useMemo(() => {
     const q = searchTerm.toLowerCase();
-    return users.filter((u) =>
+    return tabUsers.filter((u) =>
       u.name.toLowerCase().includes(q) ||
       u.email.toLowerCase().includes(q) ||
       u.job_role?.toLowerCase().includes(q) ||
       u.cnic?.toLowerCase().includes(q) ||
       u.course_category?.toLowerCase().includes(q)
     );
-  }, [users, searchTerm]);
+  }, [tabUsers, searchTerm]);
+
+  const enrolledCount = useMemo(() => users.filter((u) => u.bulk_batch_id == null).length, [users]);
+  const bulkCount = users.length - enrolledCount;
 
   const pagedUsers = filteredUsers.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  const tabClass = (tab) =>
+    `px-4 py-2 text-xs font-bold rounded-lg transition cursor-pointer ${
+      activeTab === tab
+        ? 'bg-primary-600 text-white shadow-md'
+        : 'text-slate-500 dark:text-slate-400 hover:bg-slate-200/70 dark:hover:bg-slate-800'
+    }`;
 
   if (loading) {
     return (
@@ -279,6 +302,26 @@ const AdminUsersPage = () => {
 
       {error && <Alert variant="error">{error}</Alert>}
       {notice && <Alert variant="success">{notice}</Alert>}
+
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <button className={tabClass('enrolled')} onClick={() => setActiveTab('enrolled')}>
+            <span className="inline-flex items-center gap-1.5">
+              Enrolled Users
+              <Badge variant="neutral" className="!normal-case">{enrolledCount}</Badge>
+            </span>
+          </button>
+          <button className={tabClass('bulk')} onClick={() => setActiveTab('bulk')}>
+            <span className="inline-flex items-center gap-1.5">
+              Bulk Invited Users
+              <Badge variant="info" className="!normal-case">{bulkCount}</Badge>
+            </span>
+          </button>
+        </div>
+        <Button size="sm" icon={Mail} onClick={() => setBulkOpen(true)}>
+          Bulk Email Module
+        </Button>
+      </div>
 
       <Card padding={false} className="p-4">
         <SearchBar
@@ -739,6 +782,14 @@ const AdminUsersPage = () => {
         </div>,
         document.body
       )}
+
+      {/* Bulk Email Module. Reloads the user list on completion so the newly created
+          accounts appear under the "Bulk Invited Users" tab straight away. */}
+      <BulkEmailModal
+        open={bulkOpen}
+        onClose={() => setBulkOpen(false)}
+        onSent={() => { fetchUsers(true); setActiveTab('bulk'); }}
+      />
     </div>
   );
 };
