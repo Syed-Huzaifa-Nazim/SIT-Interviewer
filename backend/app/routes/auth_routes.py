@@ -287,6 +287,16 @@ async def login(request: Request):
                 detail="Your one-time login credentials have already been used and are no longer valid. "
                        "Please contact the administration if you believe you should have access."
             )
+        # Deadline set by the Bulk Email Module. Only applies when a deadline was actually
+        # issued — otp_expires_at is NULL for every organic signup, instructor signup,
+        # re-interview approval and individual admin invite, so those keep behaving exactly
+        # as before and this branch never runs for them.
+        if user.otp_expires_at and datetime.datetime.utcnow() > user.otp_expires_at:
+            raise HTTPException(
+                status_code=401,
+                detail="Your one-time login credentials have expired. "
+                       "Please contact the administration to be re-invited."
+            )
         if not user.check_otp(password):
             raise invalid_error
     else:

@@ -15,5 +15,6 @@ from app.models.models import (
     SecondInterviewRequest,
     EmailLog,
     RecordingLog,
-    ProctorSnapshot
+    ProctorSnapshot,
+    BulkEmailBatch
 )

@@ -33,6 +33,11 @@ class User(db.Model):
     otp_hash = db.Column(db.String(128), nullable=True)
     otp_used = db.Column(db.Boolean, default=False)
     otp_issued_at = db.Column(db.DateTime, nullable=True)
+    # Deadline after which the OTP stops working, set from the per-row "Deadline" chosen in
+    # the Bulk Email Module. Deliberately nullable and NULL by default: an OTP with no expiry
+    # behaves exactly as it always has, so organic signups, instructor signups, re-interview
+    # approvals and individual admin invites are completely unaffected by this column.
+    otp_expires_at = db.Column(db.DateTime, nullable=True)
 
     # Any access token issued before this moment is rejected (forced logout).
     session_revoked_at = db.Column(db.DateTime, nullable=True)
@@ -48,6 +53,11 @@ class User(db.Model):
     # Free-form notes an admin writes about a candidate (e.g. after reviewing their
     # proctoring snapshot / interview). Admin-only; never exposed to the candidate.
     admin_remarks = db.Column(db.Text, nullable=True)
+
+    # Set when the account was created by the Bulk Email Module rather than by someone
+    # signing up themselves. NULL means an organic signup, which is what separates the
+    # "Enrolled Users" and "Bulk Invited Users" tabs in Manage Users.
+    bulk_batch_id = db.Column(db.Integer, db.ForeignKey('bulk_email_batches.id', ondelete='SET NULL'), nullable=True)
 
     # Relationships
     tokens = db.relationship('Token', backref='user', uselist=False, cascade="all, delete-orphan")
@@ -92,6 +102,8 @@ class User(db.Model):
             'interview_status': self.interview_status or 'not_interviewed',
             'must_use_otp': bool(self.must_use_otp),
             'otp_used': bool(self.otp_used),
+            'otp_expires_at': self.otp_expires_at.isoformat() if self.otp_expires_at else None,
+            'bulk_batch_id': self.bulk_batch_id,
             'last_seen_at': self.last_seen_at.isoformat() if self.last_seen_at else None,
             'clearance_email_sent_at': self.clearance_email_sent_at.isoformat() if self.clearance_email_sent_at else None,
             'hr_invite_sent_at': self.hr_invite_sent_at.isoformat() if self.hr_invite_sent_at else None,
@@ -606,7 +618,7 @@ class ProctorSnapshot(db.Model):
 
 class AdminLog(db.Model):
     __tablename__ = 'admin_logs'
-    
+
     id = db.Column(db.Integer, primary_key=True)
     admin_id = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
     action = db.Column(db.String(100), nullable=False)
@@ -622,4 +634,62 @@ class AdminLog(db.Model):
             'action': self.action,
             'details': self.details,
             'created_at': self.created_at.isoformat() if self.created_at else None
+        }
+
+
+class BulkEmailBatch(db.Model):
+    """One run of the Bulk Email Module: who triggered it, from what file, and how it went.
+
+    Serves two purposes at once — it is the audit trail for a batch of invitations, and it
+    is what the "Bulk Invited Users" tab filters on (via ``User.bulk_batch_id``). Rows are
+    written before sending starts so the admin can poll this record for live progress.
+    """
+    __tablename__ = 'bulk_email_batches'
+
+    id = db.Column(db.Integer, primary_key=True)
+    admin_id = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    file_name = db.Column(db.String(255), nullable=True)
+    subject = db.Column(db.String(255), nullable=False)
+    personalize = db.Column(db.Boolean, default=False)
+
+    # pending → sending → complete. 'complete' covers partial success too; the counts below
+    # say what actually happened, so a single failed recipient never marks the batch failed.
+    status = db.Column(db.String(20), default='pending')
+    total_count = db.Column(db.Integer, default=0)
+    sent_count = db.Column(db.Integer, default=0)
+    failed_count = db.Column(db.Integer, default=0)
+    # JSON list of {row, email, error} for whichever recipients did not go out, so the admin
+    # can see exactly which ones to correct and retry rather than re-sending the whole batch.
+    failures = db.Column(db.Text, nullable=True)
+
+    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+    completed_at = db.Column(db.DateTime, nullable=True)
+
+    admin = db.relationship('User', foreign_keys=[admin_id])
+    # Explicit foreign_keys: User points back here via bulk_batch_id while this table points
+    # at users via admin_id, so SQLAlchemy cannot infer the join on its own.
+    recipients = db.relationship(
+        'User', foreign_keys='User.bulk_batch_id', backref='bulk_batch', lazy='dynamic'
+    )
+
+    def to_dict(self):
+        import json as _json
+        try:
+            failures = _json.loads(self.failures) if self.failures else []
+        except Exception:
+            failures = []
+        return {
+            'id': self.id,
+            'admin_id': self.admin_id,
+            'admin_name': self.admin.name if self.admin else None,
+            'file_name': self.file_name,
+            'subject': self.subject,
+            'personalize': bool(self.personalize),
+            'status': self.status,
+            'total_count': self.total_count or 0,
+            'sent_count': self.sent_count or 0,
+            'failed_count': self.failed_count or 0,
+            'failures': failures,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'completed_at': self.completed_at.isoformat() if self.completed_at else None,
         }
