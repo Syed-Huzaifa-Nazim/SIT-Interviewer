@@ -7,6 +7,7 @@ import tempfile
 import subprocess
 import threading
 from fastapi import APIRouter, Request, HTTPException, status, Depends, UploadFile, File, Form
+from sqlalchemy import func
 from app.database.db import db
 from app.models import (
     User, Token, Transaction, Interview, InterviewQuestion,
@@ -1200,9 +1201,14 @@ async def log_proctoring_violation(interview_id: int, request: Request, user_id:
                 'soft': True
             }
 
-        # Coerce NULL/None (older rows created before this column had data) to 0
-        # before incrementing, otherwise `None + 1` raises and the count never updates.
-        interview.proctor_violations_count = (interview.proctor_violations_count or 0) + 1
+        # Atomic DB-level increment (SET count = COALESCE(count, 0) + 1) instead of a
+        # Python read-modify-write. Two violations landing close together (e.g. a tab switch
+        # firing at the same moment an answer is submitted) could otherwise both read the
+        # same starting count and each write back "+1", silently losing one strike. Flushing
+        # then re-reading the attribute forces SQLAlchemy to pull the true value the database
+        # just computed, rather than trusting the stale Python-side number.
+        interview.proctor_violations_count = func.coalesce(Interview.proctor_violations_count, 0) + 1
+        db.session.flush()
 
         auto_terminate = False
         # Allow exactly 3 warnings. Terminate when violations_count reaches 4 (exceeding 3)

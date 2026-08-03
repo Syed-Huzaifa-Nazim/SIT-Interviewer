@@ -123,14 +123,12 @@ const InterviewSession = () => {
   const submittingRef = useRef(false);
 
   // Full-session video recording (DB Integration §2): records the SAME 640×480 proctoring
-  // camera stream (no second camera request) combined with a mic audio track, so the
-  // recording admins review has the candidate's voice, not just silent video. One
+  // camera stream (no second camera request), video-only WebM at a modest bitrate. One
   // contiguous recording per session — if the candidate turns the camera off the recorder
   // ends with it, and we upload whatever was captured up to that point rather than
   // stitching invalid multi-segment WebM files together.
   const sessionRecorderRef = useRef(null);
   const sessionChunksRef = useRef([]);
-  const sessionAudioStreamRef = useRef(null);
   const videoUploadedRef = useRef(false);
   const [savingVideo, setSavingVideo] = useState(false);
 
@@ -578,9 +576,15 @@ const InterviewSession = () => {
         setCameraLost(false);
 
         // Request webcam stream
+        // Requesting camera + mic together, in the ONE call, so there is only ever a single
+        // permission negotiation (not two sequential ones) — that matters because the second
+        // negotiation was found to stall indefinitely if the tab lost focus while it was
+        // pending (e.g. testing TAB_SWITCH), which silently blocked proctoring/recording from
+        // ever starting. The <video> preview below is `muted`, so carrying an audio track on
+        // it causes no echo/feedback.
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { width: 640, height: 480 },
-          audio: false
+          audio: true
         });
 
         if (!active) {
@@ -615,23 +619,10 @@ const InterviewSession = () => {
         }
         if (!sessionRecorderRef.current) {
           try {
-            // Grab a mic track for the session recording itself (separate from the
-            // per-answer audioStreamRef used for STT/Whisper) so the admin's review
-            // recording has the candidate's voice, not silent video. Best-effort: if mic
-            // permission is denied, fall back to video-only rather than blocking the session.
-            if (!sessionAudioStreamRef.current) {
-              try {
-                sessionAudioStreamRef.current = await navigator.mediaDevices.getUserMedia({ audio: true });
-              } catch (e) {
-                console.warn('Session audio unavailable, recording video-only:', e);
-              }
-            }
-            const recordTracks = [
-              ...stream.getVideoTracks(),
-              ...(sessionAudioStreamRef.current ? sessionAudioStreamRef.current.getAudioTracks() : []),
-            ];
-            const recordStream = new MediaStream(recordTracks);
-            const rec = new MediaRecorder(recordStream, {
+            // `stream` already carries both the video and mic audio tracks (requested
+            // together above), so the recording captures the candidate's voice too —
+            // nothing extra to wire up here.
+            const rec = new MediaRecorder(stream, {
               mimeType: 'video/webm',
               videoBitsPerSecond: 600_000, // 480p decorative-review quality, ~4.5MB/min
             });
@@ -871,10 +862,6 @@ const InterviewSession = () => {
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop());
       streamRef.current = null;
-    }
-    if (sessionAudioStreamRef.current) {
-      sessionAudioStreamRef.current.getTracks().forEach(track => track.stop());
-      sessionAudioStreamRef.current = null;
     }
     if (videoRef.current) {
       videoRef.current.srcObject = null;
@@ -1583,8 +1570,11 @@ const InterviewSession = () => {
       {error && <Alert variant="error">{error}</Alert>}
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* Left Column */}
-        <div className="lg:col-span-4 space-y-6">
+        {/* Left Column — kept sticky on desktop: the coding sandbox on the right can run
+            much taller than this panel (examples, constraints, editor, console), and
+            without this the candidate's own camera feed and violation board would scroll
+            out of view exactly while they're most likely to trip a violation. */}
+        <div className="lg:col-span-4 space-y-6 lg:sticky lg:top-6 lg:self-start">
           <Card className="text-center space-y-4 relative overflow-hidden">
             <div className="absolute top-0 right-0 w-24 h-24 bg-primary-500/5 rounded-full blur-lg pointer-events-none" />
 

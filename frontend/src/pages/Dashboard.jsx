@@ -8,6 +8,7 @@ import Button from "../components/ui/Button";
 import Badge from "../components/ui/Badge";
 import PageHeader from "../components/ui/PageHeader";
 import EmptyState from "../components/ui/EmptyState";
+import Pagination from "../components/ui/Pagination";
 import {
   Play,
   History,
@@ -19,6 +20,8 @@ import {
   FileCheck,
 } from "lucide-react";
 
+const PAGE_SIZE = 5;
+
 const Dashboard = () => {
   const { user, tokens } = useAuth();
   const navigate = useNavigate();
@@ -29,13 +32,14 @@ const Dashboard = () => {
   });
   const [recentInterviews, setRecentInterviews] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [page, setPage] = useState(1);
 
   useEffect(() => {
     const fetchDashboardData = async () => {
       try {
         const statsRes = await api.get("/interviews/stats/summary");
         setStats(statsRes.data);
-        const historyRes = await api.get("/interviews/history?limit=3");
+        const historyRes = await api.get("/interviews/history");
         setRecentInterviews(
           Array.isArray(historyRes.data)
             ? historyRes.data
@@ -49,6 +53,11 @@ const Dashboard = () => {
     };
     fetchDashboardData();
   }, []);
+
+  const pagedInterviews = recentInterviews.slice(
+    (page - 1) * PAGE_SIZE,
+    page * PAGE_SIZE,
+  );
 
   if (loading) {
     return (
@@ -176,7 +185,7 @@ const Dashboard = () => {
 
       <div className="space-y-4">
         {recentInterviews.length > 0 ? (
-          recentInterviews.map((interview) => (
+          pagedInterviews.map((interview) => (
             <Card
               hover
               key={interview.id}
@@ -251,6 +260,15 @@ const Dashboard = () => {
           />
         )}
       </div>
+
+      {recentInterviews.length > PAGE_SIZE && (
+        <Pagination
+          page={page}
+          pageSize={PAGE_SIZE}
+          total={recentInterviews.length}
+          onChange={setPage}
+        />
+      )}
     </div>
   );
 };

@@ -157,95 +157,114 @@ const InterviewCodingSandbox = ({ problemId, interviewId, onSubmitAnswer, disabl
   const lineCount = code.split('\n').length;
   const isSql = problem.language === 'sql';
 
+  const hasDetails =
+    (isSql && (problem.schema_display?.length > 0 || problem.sample_datasets?.length > 0)) ||
+    problem.examples?.length > 0 ||
+    problem.constraints?.length > 0;
+
   return (
     <div className="w-full space-y-4 text-left">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <Badge variant="primary" size="sm">Coding Exercise</Badge>
-          <Badge variant={problem.difficulty === 'Easy' ? 'success' : problem.difficulty === 'Hard' ? 'error' : 'warning'} size="sm">
-            {problem.difficulty}
-          </Badge>
-          {isSql && <Badge variant="info" size="sm">SQL</Badge>}
+      {/* Card 1 — the question itself. Kept short: badges + the scenario, nothing else,
+          so it never forces a scroll on its own. */}
+      <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm p-4 md:p-5 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <Badge variant="primary" size="sm">Coding Exercise</Badge>
+            <Badge variant={problem.difficulty === 'Easy' ? 'success' : problem.difficulty === 'Hard' ? 'error' : 'warning'} size="sm">
+              {problem.difficulty}
+            </Badge>
+            {isSql && <Badge variant="info" size="sm">SQL</Badge>}
+          </div>
+          <span className="text-[11px] text-slate-500">
+            {problem.sample_test_count} sample · {problem.total_test_count} total tests
+          </span>
         </div>
-        <span className="text-[11px] text-slate-500">
-          {problem.sample_test_count} sample · {problem.total_test_count} total tests
-        </span>
+
+        {/* The scenario, not the problem title, is the actual question — so it is rendered as
+            a highlighted block immediately under the heading, on its own. */}
+        <div className="rounded-xl border-l-4 border-primary-500 bg-primary-50/60 dark:bg-primary-500/5 border-y border-r border-slate-200 dark:border-slate-800 p-4 md:p-5">
+          <p className="text-[10px] font-bold uppercase tracking-widest text-primary-600 dark:text-primary-400 mb-2">
+            The Scenario
+          </p>
+          <p className="text-sm md:text-[15px] text-slate-700 dark:text-slate-200 leading-relaxed whitespace-pre-wrap">
+            {problem.prompt}
+          </p>
+        </div>
       </div>
 
-      {/* The scenario, not the problem title, is the actual question — so it is rendered as
-          a highlighted block immediately under the heading and above everything else, rather
-          than as small supporting copy next to the editor. */}
-      <div className="rounded-xl border-l-4 border-primary-500 bg-primary-50/60 dark:bg-primary-500/5 border-y border-r border-slate-200 dark:border-slate-800 p-4 md:p-5">
-        <p className="text-[10px] font-bold uppercase tracking-widest text-primary-600 dark:text-primary-400 mb-2">
-          The Scenario
-        </p>
-        <p className="text-sm md:text-[15px] text-slate-700 dark:text-slate-200 leading-relaxed whitespace-pre-wrap">
-          {problem.prompt}
-        </p>
-      </div>
-
-      {isSql && problem.schema_display?.length > 0 && (
-        <div className="space-y-2">
-          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Database Schema</p>
-          {problem.schema_display.map((t) => (
-            <div key={t.table} className="rounded-lg border border-slate-200 dark:border-slate-800 overflow-hidden">
-              <div className="px-3 py-1.5 bg-slate-100 dark:bg-slate-900/70 font-mono text-[11px] font-bold text-slate-700 dark:text-slate-200 flex items-center gap-1.5">
-                <Database size={12} className="text-primary-500" /> {t.table}
-              </div>
-              <div className="divide-y divide-slate-100 dark:divide-slate-800/70">
-                {t.columns.map((c) => (
-                  <div key={c.name} className="px-3 py-1 flex justify-between font-mono text-[10px]">
-                    <span className="text-slate-700 dark:text-slate-200">{c.name}</span>
-                    <span className="text-slate-400">{c.type}{c.note ? ` · ${c.note}` : ''}</span>
+      {/* Card 2 — supporting reference material (schema, sample data, examples, constraints).
+          Split out from the question card so a long prompt doesn't drag all of this down
+          with it into one endless scroll. Capped at a fixed height with its own scrollbar so
+          a problem with lots of examples/constraints stays contained instead of pushing the
+          editor further down the page. */}
+      {hasDetails && (
+        <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm p-4 md:p-5">
+        <div className="max-h-64 overflow-y-auto space-y-4 pr-1">
+          {isSql && problem.schema_display?.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Database Schema</p>
+              {problem.schema_display.map((t) => (
+                <div key={t.table} className="rounded-lg border border-slate-200 dark:border-slate-800 overflow-hidden">
+                  <div className="px-3 py-1.5 bg-slate-100 dark:bg-slate-900/70 font-mono text-[11px] font-bold text-slate-700 dark:text-slate-200 flex items-center gap-1.5">
+                    <Database size={12} className="text-primary-500" /> {t.table}
                   </div>
+                  <div className="divide-y divide-slate-100 dark:divide-slate-800/70">
+                    {t.columns.map((c) => (
+                      <div key={c.name} className="px-3 py-1 flex justify-between font-mono text-[10px]">
+                        <span className="text-slate-700 dark:text-slate-200">{c.name}</span>
+                        <span className="text-slate-400">{c.type}{c.note ? ` · ${c.note}` : ''}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {isSql && problem.sample_datasets?.length > 0 && (
+            <div className="space-y-1.5">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Sample Data</p>
+              {problem.sample_datasets.map((d, i) => (
+                <div key={i} className="rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/40 p-2.5 space-y-1">
+                  <p className="text-[10px] font-semibold text-slate-500">{d.name}</p>
+                  <pre className="whitespace-pre-wrap font-mono text-[10px] text-slate-600 dark:text-slate-300">{d.seed}</pre>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Worked examples — the candidate cannot infer the expected output shape without
+              them, and they were reaching the admin sandbox but not this one. */}
+          {problem.examples?.length > 0 && (
+            <div className="space-y-1.5">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Examples</p>
+              {problem.examples.map((ex, i) => (
+                <div key={i} className="rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/40 p-2.5 font-mono text-[11px] space-y-0.5">
+                  <div className="text-slate-700 dark:text-slate-200">Input: {ex.input}</div>
+                  <div className="text-primary-600 dark:text-primary-300">Output: {ex.output}</div>
+                  {ex.explanation && <div className="text-slate-500">{ex.explanation}</div>}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {problem.constraints?.length > 0 && (
+            <div className="space-y-1">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Constraints</p>
+              <ul className="space-y-0.5">
+                {problem.constraints.map((c, i) => (
+                  <li key={i} className="text-[11px] font-mono text-slate-500">• {c}</li>
                 ))}
-              </div>
+              </ul>
             </div>
-          ))}
+          )}
         </div>
-      )}
-
-      {isSql && problem.sample_datasets?.length > 0 && (
-        <div className="space-y-1.5">
-          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Sample Data</p>
-          {problem.sample_datasets.map((d, i) => (
-            <div key={i} className="rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/40 p-2.5 space-y-1">
-              <p className="text-[10px] font-semibold text-slate-500">{d.name}</p>
-              <pre className="whitespace-pre-wrap font-mono text-[10px] text-slate-600 dark:text-slate-300">{d.seed}</pre>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Worked examples — the candidate cannot infer the expected output shape without
-          them, and they were reaching the admin sandbox but not this one. */}
-      {problem.examples?.length > 0 && (
-        <div className="space-y-1.5">
-          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Examples</p>
-          {problem.examples.map((ex, i) => (
-            <div key={i} className="rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/40 p-2.5 font-mono text-[11px] space-y-0.5">
-              <div className="text-slate-700 dark:text-slate-200">Input: {ex.input}</div>
-              <div className="text-primary-600 dark:text-primary-300">Output: {ex.output}</div>
-              {ex.explanation && <div className="text-slate-500">{ex.explanation}</div>}
-            </div>
-          ))}
-        </div>
-      )}
-
-      {problem.constraints?.length > 0 && (
-        <div className="space-y-1">
-          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Constraints</p>
-          <ul className="space-y-0.5">
-            {problem.constraints.map((c, i) => (
-              <li key={i} className="text-[11px] font-mono text-slate-500">• {c}</li>
-            ))}
-          </ul>
         </div>
       )}
 
       {error && <Alert variant="error" className="text-xs">{error}</Alert>}
 
-      {/* Editor */}
+      {/* Card 3 — code editor + console. */}
       <div className="rounded-xl overflow-hidden border border-slate-700">
         <div className="px-3 py-2 bg-slate-800 flex items-center justify-between">
           <span className="text-[11px] font-mono text-slate-300">{isSql ? 'SQL (SQLite)' : 'Python 3'}</span>
