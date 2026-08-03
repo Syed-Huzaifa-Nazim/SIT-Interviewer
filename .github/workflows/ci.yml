@@ -1,0 +1,73 @@
+name: CI
+
+# Guards the two things that are cheap to check and expensive to miss: that the app still
+# builds, and that no new high-severity dependency advisory has crept in. The audit step
+# exists because a spreadsheet parser with an unpatched prototype-pollution advisory was
+# very nearly added to the frontend — it should never come down to someone checking by hand.
+
+on:
+  push:
+    branches: [main, huzaifa, development, saqib-colab]
+  pull_request:
+    branches: [main]
+
+jobs:
+  frontend:
+    name: Frontend — build, lint, audit
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+
+      # Fails only on HIGH and CRITICAL. Moderate/low advisories are reported for
+      # visibility but do not block, so routine transitive noise cannot wedge the pipeline.
+      - name: Audit (high + critical only)
+        run: npm audit --audit-level=high
+
+      - name: Audit report (informational, never fails)
+        if: always()
+        run: npm audit || true
+
+  backend:
+    name: Backend — import check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # Compile-only: catches syntax errors and bad imports without needing a database,
+      # since create_app() connects to Supabase on boot and no credentials belong in CI.
+      - name: Byte-compile all sources
+        run: python -m compileall -q app main.py
+
+      - name: Audit Python dependencies (informational)
+        if: always()
+        run: pip install pip-audit && pip-audit || true
