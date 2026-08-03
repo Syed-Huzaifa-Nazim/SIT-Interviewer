@@ -30,6 +30,7 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.3",
     "autoprefixer": "^10.5.2",
+    "better-npm-audit": "^3.11.0",
     "jsdom": "^30.0.0",
     "oxlint": "^1.71.0",
     "postcss": "^8.5.16",
