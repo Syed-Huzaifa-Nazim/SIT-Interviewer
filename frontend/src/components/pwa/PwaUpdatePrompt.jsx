@@ -3,10 +3,12 @@ import { useRegisterSW } from 'virtual:pwa-register/react';
 /**
  * PWA lifecycle UI (progressive enhancement — never a hard dependency).
  *
- * - "New version available" prompt: when a freshly deployed service worker is waiting, we
- *   ask the user to refresh rather than swapping the app out from under them (they could be
- *   mid-interview). Accepting activates the new SW and reloads; dismissing keeps them on the
- *   current version until they choose to reload.
+ * - "New version available" prompt: effectively dormant now. The service worker registers
+ *   with registerType:'autoUpdate' (see vite.config.js), so a new build activates on its
+ *   own and `needRefresh` does not fire — candidates can never be left running a stale
+ *   bundle because they missed a banner, which previously cost real interviews their
+ *   session recording. The branch is kept because it costs nothing and still renders if a
+ *   waiting worker is ever reported.
  * - "Ready to work offline" is shown once, briefly, as a passive confirmation.
  *
  * If service workers are unsupported or registration fails, none of these callbacks fire and

@@ -7,9 +7,16 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      // We drive updates ourselves (prompt-to-refresh) instead of silently swapping the
-      // app out from under a user who might be mid-interview. See PwaUpdatePrompt.jsx.
-      registerType: 'prompt',
+      // Candidates must always run the current build. This was 'prompt' so an update never
+      // swapped the app mid-interview, but that meant a returning candidate kept serving the
+      // OLD cached bundle until they happened to accept a refresh banner — a normal reload,
+      // even a hard one, does not bypass an active service worker. That silently cost real
+      // interviews their session recording after the recording fix had already shipped: the
+      // code was live on the server and the browser was still running the broken version.
+      // A stale build on a one-shot proctored interview is far worse than a reload prompt,
+      // and the worker still only activates on a page load (never mid-session), so the
+      // original mid-interview concern does not apply in practice.
+      registerType: 'autoUpdate',
       // Precache the app shell + brand assets so the installed app opens instantly and the
       // UI shell is available offline. These change only on deploy.
       includeAssets: [
@@ -51,9 +58,14 @@ export default defineConfig({
         navigateFallbackDenylist: [/^\/api\//, /\/[^/?]+\.[^/]+$/],
         // Allow the larger precache entries (the 512px icon, vendor chunks).
         maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
-        // A new SW takes control as soon as the user accepts the refresh prompt.
+        // Both are required for registerType:'autoUpdate' to actually deliver a new build.
+        // skipWaiting was false, which parks a freshly-installed worker in "waiting" until
+        // every tab of the app is closed — so a candidate who kept the tab open would keep
+        // running the old bundle no matter how many times they reloaded. clientsClaim then
+        // lets the activated worker take over existing pages immediately instead of only
+        // controlling the next navigation.
         clientsClaim: true,
-        skipWaiting: false,
+        skipWaiting: true,
         runtimeCaching: [
           {
             // RELIABILITY HARD RULE: every backend call is network-only. Auth, live
