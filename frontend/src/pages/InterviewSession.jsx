@@ -22,7 +22,6 @@ import InterviewCodingSandbox from '../components/interview/InterviewCodingSandb
 import {
   Mic,
   MicOff,
-  Type,
   Send,
   Sparkles,
   Clock,
@@ -1196,8 +1195,7 @@ const InterviewSession = () => {
       setHasRecorded(true);
     } catch (err) {
       console.error('Mic access error:', err);
-      setError('Could not access microphone. Please check permissions or switch to Text Mode.');
-      setInputMode('text');
+      setError('Could not access microphone. Please allow microphone access in your browser and try again — voice is required for this interview.');
     }
   };
 
@@ -1766,14 +1764,14 @@ const InterviewSession = () => {
                   interviewId={parseInt(id, 10)}
                   disabled={loading}
                   onSubmitAnswer={(answerText) => {
-                    // Reuse the normal text-answer submit path so scoring, the timer and
-                    // question advancement all behave identically to any other question.
-                    setInputMode('text');
-                    setTypedAnswer(answerText);
+                    // Reuse the normal text-answer submit path (via overrideText) so scoring,
+                    // the timer and question advancement all behave identically to any other
+                    // question — this bypasses inputMode entirely, so the next question still
+                    // opens in voice mode as normal.
                     submitAnswerWithText(answerText);
                   }}
                 />
-              ) : inputMode === 'voice' ? (
+              ) : (
                 <div className="flex flex-col items-center space-y-5 w-full max-w-lg">
                   {/* Mic control */}
                   <button
@@ -1820,52 +1818,10 @@ const InterviewSession = () => {
                     )}
                   </div>
 
-                  <div className="flex items-center justify-between gap-4 w-full">
-                    <button
-                      onClick={() => { if (micActive) stopMic(); setInputMode('text'); }}
-                      className="text-xs text-primary-500 dark:text-primary-400 hover:text-primary-600 dark:hover:text-primary-300 font-semibold flex items-center gap-1.5 transition"
-                    >
-                      <Type size={14} />
-                      Switch to Typed Input
-                    </button>
-
+                  <div className="flex items-center justify-end gap-4 w-full">
                     <Button
                       onClick={() => submitAnswer({ timedOut: false })}
                       disabled={loading || micActive || (!combinedTranscript && !hasRecorded)}
-                      loading={loading}
-                      size="sm"
-                      icon={Send}
-                      iconPosition="right"
-                    >
-                      {currentIdx + 1 >= questions.length ? 'Submit & Finish' : 'Submit & Next'}
-                    </Button>
-                  </div>
-                </div>
-              ) : (
-                <div className="w-full space-y-4">
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-slate-500 dark:text-slate-400">Type your answer here</label>
-                    <textarea
-                      className="w-full glass-input min-h-36 text-sm resize-none"
-                      placeholder="Explain your approach, reasoning, and any relevant details..."
-                      value={typedAnswer}
-                      onChange={(e) => setTypedAnswer(e.target.value)}
-                      disabled={loading}
-                    />
-                  </div>
-
-                  <div className="flex items-center justify-between gap-4">
-                    <button
-                      onClick={() => setInputMode('voice')}
-                      className="text-xs text-primary-500 dark:text-primary-400 hover:text-primary-600 dark:hover:text-primary-300 font-semibold flex items-center gap-1.5 transition"
-                    >
-                      <Mic size={14} />
-                      Switch to Voice Input
-                    </button>
-
-                    <Button
-                      onClick={() => submitAnswer({ timedOut: false })}
-                      disabled={loading || !typedAnswer.trim()}
                       loading={loading}
                       size="sm"
                       icon={Send}
