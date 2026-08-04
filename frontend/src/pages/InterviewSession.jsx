@@ -436,14 +436,23 @@ const InterviewSession = () => {
         // Give those fire-and-forget uploads a brief moment to reach the server before we
         // tear the session down and navigate away.
         await new Promise((r) => setTimeout(r, 400));
-        // Termination must be immediate — the candidate should not remain on a live,
-        // proctorable session for however long a multi-MB video upload takes (previously
-        // this was `await`ed, making "instant" termination take up to minutes). Fire it off
-        // and let it finish in the background instead: there's no AbortController anywhere
-        // in this app, so navigating away does NOT cancel the in-flight upload — it keeps
-        // running via the browser's own network stack regardless of the component unmounting.
-        uploadSessionVideo();
+        // Close out the recording BEFORE stopping the camera. stopCamera() stops the very
+        // tracks the MediaRecorder is reading from, so a recorder still mid-flush loses its
+        // final chunks and assembles into a sub-1KB blob that the uploader then discards —
+        // which is exactly how terminated sessions were ending up with no video at all.
+        // Flushing is just closing out the WebM container (milliseconds), so termination is
+        // still effectively instant; it is the multi-MB network upload that must not be
+        // awaited, and that still runs in the background below.
+        const finalBlob = await Promise.race([
+          finalizeSessionVideo(),
+          // Never let a wedged recorder hold a violating candidate on a live session.
+          new Promise((r) => setTimeout(() => r(null), 3000)),
+        ]);
         stopCamera();
+        // Fire-and-forget the actual upload: there's no AbortController anywhere in this
+        // app, so navigating away does NOT cancel an in-flight request — it keeps running
+        // via the browser's own network stack regardless of the component unmounting.
+        uploadSessionVideo(finalBlob);
         // Redirect directly with proctor violation flags
         navigate(`/interview/report/${id}`, { state: { proctorFailed: true }, replace: true });
       }
@@ -1272,10 +1281,22 @@ const InterviewSession = () => {
   // Upload the finished session recording with retries (§2.2 reliability). Failures are
   // logged and swallowed — the candidate's flow is never blocked by a lost recording,
   // and the backend leaves video_path NULL so the admin sees the truth.
-  const uploadSessionVideo = async () => {
+  const uploadSessionVideo = async (preFinalizedBlob = undefined) => {
     if (videoUploadedRef.current) return;
-    const blob = await finalizeSessionVideo();
-    if (!blob || blob.size < 1024) return;
+    // The termination path finalizes the recording itself (before it stops the camera) and
+    // hands the finished blob in here, because finalizing after the tracks are stopped
+    // yields a truncated file. Everything else lets this finalize on demand.
+    const blob = preFinalizedBlob !== undefined ? preFinalizedBlob : await finalizeSessionVideo();
+    if (!blob || blob.size < 1024) {
+      // No server-side report is filed here on purpose: by this point the interview is
+      // already marked 'completed', and /proctor-log early-returns on completed sessions,
+      // so any such call would be silently dropped and give false confidence that failures
+      // are being tracked. The admin still sees the truth — video_path stays NULL and no
+      // RecordingLog row exists — and this console error names the cause for anyone
+      // debugging with the candidate's browser open.
+      console.error('Session recording unusable — nothing to upload.', { size: blob?.size ?? null });
+      return;
+    }
     videoUploadedRef.current = true; // one attempt cycle per session
 
     setSavingVideo(true);
