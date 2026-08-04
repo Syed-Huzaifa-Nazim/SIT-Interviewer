@@ -131,6 +131,19 @@ const InterviewSession = () => {
   const videoUploadedRef = useRef(false);
   const [savingVideo, setSavingVideo] = useState(false);
 
+  // Incremental upload state. The recording is sent to the server in slices WHILE the
+  // interview runs, instead of as one large file once it ends. A single end-of-session
+  // upload had to survive starting at the exact moment the candidate was redirected away,
+  // and on longer sessions it routinely did not — the tab closed mid-transfer, nothing
+  // reached the server, and no recording (or even a failure record) existed afterwards.
+  // With slices, only whatever has not been flushed yet can ever be lost.
+  const pendingPartChunksRef = useRef([]);   // captured but not yet uploaded
+  const partIndexRef = useRef(0);            // next slice number
+  const partQueueRef = useRef(Promise.resolve()); // serialises uploads to preserve order
+  const partsUploadedRef = useRef(0);        // slices confirmed stored
+  const partFlushTimerRef = useRef(null);
+  const VIDEO_PART_INTERVAL_MS = 30000;      // worst-case loss window
+
   // Per-question timer (§2)
   const [remaining, setRemaining] = useState(null);
   const [timeLimit, setTimeLimit] = useState(null);
@@ -436,23 +449,21 @@ const InterviewSession = () => {
         // Give those fire-and-forget uploads a brief moment to reach the server before we
         // tear the session down and navigate away.
         await new Promise((r) => setTimeout(r, 400));
-        // Close out the recording BEFORE stopping the camera. stopCamera() stops the very
-        // tracks the MediaRecorder is reading from, so a recorder still mid-flush loses its
-        // final chunks and assembles into a sub-1KB blob that the uploader then discards —
-        // which is exactly how terminated sessions were ending up with no video at all.
-        // Flushing is just closing out the WebM container (milliseconds), so termination is
-        // still effectively instant; it is the multi-MB network upload that must not be
-        // awaited, and that still runs in the background below.
-        const finalBlob = await Promise.race([
-          finalizeSessionVideo(),
-          // Never let a wedged recorder hold a violating candidate on a live session.
-          new Promise((r) => setTimeout(() => r(null), 3000)),
+        // Close the recorder and push the last slice BEFORE stopping the camera —
+        // stopCamera() stops the very tracks the recorder reads from, so a recorder still
+        // mid-flush loses its closing chunks. Everything before this slice is already
+        // stored server-side, so this is seconds of footage, not the whole session, and
+        // the wait is imperceptible.
+        await Promise.race([
+          (async () => { await finalizeSessionVideo(); flushVideoPart(); await partQueueRef.current; })(),
+          // Never let a wedged recorder or a stalled upload hold a violating candidate on
+          // a live session — whatever already reached the server is still assembled below.
+          new Promise((r) => setTimeout(r, 4000)),
         ]);
         stopCamera();
-        // Fire-and-forget the actual upload: there's no AbortController anywhere in this
-        // app, so navigating away does NOT cancel an in-flight request — it keeps running
-        // via the browser's own network stack regardless of the component unmounting.
-        uploadSessionVideo(finalBlob);
+        // Assemble in the background: the slices are already safe in storage, so even if
+        // this request dies with the tab the recording can still be joined afterwards.
+        uploadSessionVideo();
         // Redirect directly with proctor violation flags
         navigate(`/interview/report/${id}`, { state: { proctorFailed: true }, replace: true });
       }
@@ -635,10 +646,17 @@ const InterviewSession = () => {
               videoBitsPerSecond: 600_000, // 480p decorative-review quality, ~4.5MB/min
             });
             rec.ondataavailable = (e) => {
-              if (e.data && e.data.size > 0) sessionChunksRef.current.push(e.data);
+              if (e.data && e.data.size > 0) {
+                sessionChunksRef.current.push(e.data);
+                pendingPartChunksRef.current.push(e.data);
+              }
             };
             rec.start(1000);
             sessionRecorderRef.current = rec;
+            // Ship what has been captured every 30s, so the recording is already almost
+            // entirely on the server before the session ends.
+            if (partFlushTimerRef.current) clearInterval(partFlushTimerRef.current);
+            partFlushTimerRef.current = setInterval(flushVideoPart, VIDEO_PART_INTERVAL_MS);
           } catch (e) {
             console.warn('Session video recording unavailable:', e);
           }
@@ -867,6 +885,12 @@ const InterviewSession = () => {
   }, [cameraOn]);
 
   const stopCamera = () => {
+    // No more frames will be captured, so the periodic slice upload has nothing left to do.
+    // Any already-captured chunks are flushed explicitly by the caller before this point.
+    if (partFlushTimerRef.current) {
+      clearInterval(partFlushTimerRef.current);
+      partFlushTimerRef.current = null;
+    }
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop());
       streamRef.current = null;
@@ -1262,6 +1286,35 @@ const InterviewSession = () => {
 
   // ---------------------------------------------------- Session video (DB Integration §2)
   // Stop the session recorder and assemble everything captured into one WebM blob.
+  // Send everything captured since the last flush as one numbered slice. Uploads are
+  // chained rather than fired in parallel so slices always arrive in order — the server
+  // joins them by index, and an out-of-order join produces an unplayable file.
+  const flushVideoPart = useCallback(() => {
+    const chunks = pendingPartChunksRef.current;
+    if (!chunks.length) return partQueueRef.current;
+    pendingPartChunksRef.current = [];
+    const blob = new Blob(chunks, { type: 'video/webm' });
+    const index = partIndexRef.current++;
+
+    partQueueRef.current = partQueueRef.current.then(async () => {
+      try {
+        const fd = new FormData();
+        fd.append('part_index', String(index));
+        fd.append('video', blob, `part_${index}.webm`);
+        await api.post(`/interviews/${id}/upload-video-part`, fd, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+          timeout: 120000,
+        });
+        partsUploadedRef.current += 1;
+      } catch (err) {
+        // Losing one slice must not stop later ones: the rest of the recording is still
+        // worth keeping, and a gap is far better than no recording at all.
+        console.warn(`Video part ${index} failed to upload:`, err?.response?.status || err.message);
+      }
+    });
+    return partQueueRef.current;
+  }, [id]);
+
   const finalizeSessionVideo = () => {
     return new Promise((resolve) => {
       const rec = sessionRecorderRef.current;
@@ -1281,41 +1334,40 @@ const InterviewSession = () => {
   // Upload the finished session recording with retries (§2.2 reliability). Failures are
   // logged and swallowed — the candidate's flow is never blocked by a lost recording,
   // and the backend leaves video_path NULL so the admin sees the truth.
-  const uploadSessionVideo = async (preFinalizedBlob = undefined) => {
+  const uploadSessionVideo = async () => {
     if (videoUploadedRef.current) return;
-    // The termination path finalizes the recording itself (before it stops the camera) and
-    // hands the finished blob in here, because finalizing after the tracks are stopped
-    // yields a truncated file. Everything else lets this finalize on demand.
-    const blob = preFinalizedBlob !== undefined ? preFinalizedBlob : await finalizeSessionVideo();
-    if (!blob || blob.size < 1024) {
-      // No server-side report is filed here on purpose: by this point the interview is
-      // already marked 'completed', and /proctor-log early-returns on completed sessions,
-      // so any such call would be silently dropped and give false confidence that failures
-      // are being tracked. The admin still sees the truth — video_path stays NULL and no
-      // RecordingLog row exists — and this console error names the cause for anyone
-      // debugging with the candidate's browser open.
-      console.error('Session recording unusable — nothing to upload.', { size: blob?.size ?? null });
-      return;
-    }
-    videoUploadedRef.current = true; // one attempt cycle per session
+    videoUploadedRef.current = true; // one finalize cycle per session
 
     setSavingVideo(true);
     try {
+      // Close the recorder so its last slice is emitted, then push whatever is still
+      // pending. Every earlier slice is already on the server, so this final transfer is
+      // seconds of footage rather than the whole session — which is precisely why it can
+      // now survive the candidate being redirected away.
+      await finalizeSessionVideo();
+      flushVideoPart();
+      await partQueueRef.current;
+
+      if (partsUploadedRef.current === 0) {
+        // Nothing reached the server at all (camera never started, or every slice failed).
+        // There is nothing to assemble, and asking the server to try would just record a
+        // misleading failure.
+        console.error('No session recording slices were stored — nothing to finalize.');
+        return;
+      }
+
       for (let attempt = 1; attempt <= 3; attempt++) {
         try {
-          const fd = new FormData();
-          fd.append('video', blob, 'session.webm');
-          await api.post(`/interviews/${id}/upload-video`, fd, {
-            headers: { 'Content-Type': 'multipart/form-data' },
-            timeout: 180000,
-          });
+          await api.post(`/interviews/${id}/finalize-video`, {}, { timeout: 180000 });
           return;
         } catch (err) {
-          console.warn(`Session video upload attempt ${attempt} failed:`, err?.response?.status || err.message);
+          console.warn(`Finalize attempt ${attempt} failed:`, err?.response?.status || err.message);
           if (attempt < 3) await new Promise((r) => setTimeout(r, 1500 * attempt));
         }
       }
-      console.error('Session video upload failed after retries — recording not stored.');
+      // Even if this never succeeds the footage is not lost: the slices stay in storage and
+      // the session can be assembled later from them.
+      console.error('Could not finalize the session recording — parts remain stored server-side.');
     } finally {
       setSavingVideo(false);
     }

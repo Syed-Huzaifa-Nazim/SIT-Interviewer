@@ -160,6 +160,115 @@ class SupabaseService:
             return f"supabase://{bucket}/{storage_path}"
         return None
 
+    # ---------------------------------------------------------------- chunked recording
+    # A session recording is uploaded in parts WHILE the interview runs, not as one large
+    # file at the end. A single end-of-session upload of tens of MB routinely died in
+    # flight — the candidate reached the report screen and closed the tab long before it
+    # finished, and because nothing had reached the server there was no trace of it either.
+    # Parts are small, land continuously, and are stitched server-side afterwards, so the
+    # most that can ever be lost is the final unflushed slice.
+
+    @staticmethod
+    def _video_parts_prefix(user_id: int, interview_id: int) -> str:
+        # Zero-padded index keeps lexical order identical to numeric order, so parts can be
+        # reassembled straight from a sorted storage listing with no extra bookkeeping.
+        return f"parts/user_{user_id}_int_{interview_id}/"
+
+    @staticmethod
+    def upload_interview_video_part(user_id: int, interview_id: int, part_index: int,
+                                    file_bytes: bytes, content_type: str = 'video/webm') -> str:
+        """Store one slice of an in-progress session recording. Returns its
+        ``supabase://`` reference, or None if the upload failed."""
+        bucket = Config.SUPABASE_VIDEO_BUCKET or 'interview-recordings'
+        prefix = SupabaseService._video_parts_prefix(user_id, interview_id)
+        storage_path = f"{prefix}{part_index:05d}.webm"
+        if SupabaseService._upload_raw(bucket, storage_path, file_bytes, content_type,
+                                       timeout=60, retries=2):
+            return f"supabase://{bucket}/{storage_path}"
+        return None
+
+    @staticmethod
+    def list_interview_video_parts(user_id: int, interview_id: int) -> list:
+        """Names of every stored part for this interview, in playback order."""
+        bucket = Config.SUPABASE_VIDEO_BUCKET or 'interview-recordings'
+        url, key = Config.SUPABASE_URL, Config.SUPABASE_KEY
+        if not url or not key:
+            return []
+        prefix = SupabaseService._video_parts_prefix(user_id, interview_id)
+        try:
+            r = requests.post(
+                f"{url.rstrip('/')}/storage/v1/object/list/{bucket}",
+                headers={"Authorization": f"Bearer {key}", "ApiKey": key,
+                         "Content-Type": "application/json"},
+                json={"prefix": prefix, "limit": 1000,
+                      "sortBy": {"column": "name", "order": "asc"}},
+                timeout=30,
+            )
+            if r.status_code != 200:
+                print(f"Supabase part listing failed: HTTP {r.status_code} {r.text[:150]}")
+                return []
+            # Sorted explicitly rather than trusting the API's ordering — assembling parts
+            # out of order silently produces a corrupt, unplayable file.
+            return sorted(f"{prefix}{o['name']}" for o in r.json() if o.get('name'))
+        except Exception as e:
+            print(f"Supabase part listing exception: {e}")
+            return []
+
+    @staticmethod
+    def download_object(bucket: str, storage_path: str, timeout: int = 60) -> bytes:
+        """Fetch one object's raw bytes, or None on failure."""
+        url, key = Config.SUPABASE_URL, Config.SUPABASE_KEY
+        if not url or not key:
+            return None
+        try:
+            r = requests.get(f"{url.rstrip('/')}/storage/v1/object/{bucket}/{storage_path}",
+                             headers={"Authorization": f"Bearer {key}", "ApiKey": key},
+                             timeout=timeout)
+            if r.status_code == 200:
+                return r.content
+            print(f"Supabase download {bucket}/{storage_path} failed: HTTP {r.status_code}")
+        except Exception as e:
+            print(f"Supabase download exception: {e}")
+        return None
+
+    @staticmethod
+    def assemble_interview_video(user_id: int, interview_id: int) -> str:
+        """Join every stored part into one recording and return its ``supabase://`` ref.
+
+        MediaRecorder timeslice chunks concatenate byte-for-byte into a valid WebM (the
+        first slice carries the header, the rest are clusters), which is exactly what the
+        browser itself does when building a Blob from them — so a plain ordered join is
+        correct here, no transcoding involved. Parts are left in place on failure so a
+        retry is always possible; they are only removed once the joined file is safely
+        stored.
+        """
+        bucket = Config.SUPABASE_VIDEO_BUCKET or 'interview-recordings'
+        parts = SupabaseService.list_interview_video_parts(user_id, interview_id)
+        if not parts:
+            return None
+
+        buf = bytearray()
+        for path in parts:
+            chunk = SupabaseService.download_object(bucket, path)
+            if chunk is None:
+                # A missing middle part would yield a truncated/corrupt file. Better to
+                # keep every part and report failure than to store something unplayable.
+                print(f"[assemble] Missing part {path} for interview {interview_id} — aborting join.")
+                return None
+            buf.extend(chunk)
+
+        if len(buf) < 1024:
+            print(f"[assemble] Joined recording for interview {interview_id} is too small ({len(buf)}B).")
+            return None
+
+        final_ref = SupabaseService.upload_interview_video(user_id, interview_id, bytes(buf))
+        if not final_ref:
+            return None
+
+        for path in parts:
+            SupabaseService.delete_object(bucket, path)
+        return final_ref
+
     @staticmethod
     def upload_proctor_image(user_id: int, interview_id: int, kind: str, file_bytes: bytes,
                              content_type: str = 'image/jpeg') -> str:

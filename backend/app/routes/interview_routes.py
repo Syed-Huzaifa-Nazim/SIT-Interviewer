@@ -352,6 +352,80 @@ async def get_timer(interview_id: int, question_id: int, user_id: int = Depends(
     }
 
 
+@interview_bp.post('/{interview_id}/upload-video-part')
+async def upload_session_video_part(
+    interview_id: int,
+    part_index: int = Form(...),
+    video: UploadFile = File(...),
+    user_id: int = Depends(get_current_user_id)
+):
+    """Store one slice of the session recording while the interview is still running.
+
+    The recording used to be sent as a single file once the session ended, which meant a
+    long interview produced tens of MB that had to survive an upload starting at the exact
+    moment the candidate was being redirected away — and it frequently did not, leaving no
+    recording and (because the request never reached the server) no failure log either.
+    Slices arrive continuously instead, so whatever has already landed is safe no matter
+    how abruptly the candidate leaves.
+    """
+    interview = Interview.query.filter_by(id=interview_id, user_id=user_id).first()
+    if not interview:
+        raise HTTPException(status_code=404, detail="Interview session not found")
+
+    contents = await video.read()
+    if not contents:
+        raise HTTPException(status_code=400, detail="Empty video part")
+    # Generous per-part ceiling: a 30s slice is a couple of MB, so anything near this is a
+    # client bug rather than a real recording.
+    if len(contents) > 25 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Video part too large")
+
+    ref = SupabaseService.upload_interview_video_part(user_id, interview_id, part_index, contents)
+    if not ref:
+        raise HTTPException(status_code=502, detail="Could not store video part")
+    return {'stored': True, 'part_index': part_index, 'bytes': len(contents)}
+
+
+@interview_bp.post('/{interview_id}/finalize-video')
+async def finalize_session_video(interview_id: int, user_id: int = Depends(get_current_user_id)):
+    """Join the uploaded parts into the final recording and attach it to the interview.
+
+    Safe to call more than once and safe to never call at all: the parts remain in storage
+    either way, so a session the candidate abandoned mid-redirect can still be assembled
+    later instead of being lost outright.
+    """
+    interview = Interview.query.filter_by(id=interview_id, user_id=user_id).first()
+    if not interview:
+        raise HTTPException(status_code=404, detail="Interview session not found")
+    if interview.video_path:
+        return {'message': 'Recording already stored for this session', 'stored': True}
+
+    candidate = User.query.get(user_id)
+    final_ref = SupabaseService.assemble_interview_video(user_id, interview_id)
+    if not final_ref:
+        try:
+            db.session.add(RecordingLog(
+                user_id=user_id,
+                candidate_email=candidate.email if candidate else None,
+                interview_id=interview_id, question_id=None, storage_ref=None,
+                status='failed', error='Could not assemble session recording from parts',
+            ))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+        raise HTTPException(status_code=502, detail="Could not assemble the session recording")
+
+    interview.video_path = final_ref
+    db.session.add(RecordingLog(
+        user_id=user_id,
+        candidate_email=candidate.email if candidate else None,
+        interview_id=interview_id, question_id=None,
+        storage_ref=final_ref, status='active',
+    ))
+    db.session.commit()
+    return {'message': 'Session recording stored', 'stored': True}
+
+
 @interview_bp.post('/{interview_id}/upload-video')
 async def upload_session_video(
     interview_id: int,

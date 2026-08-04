@@ -862,6 +862,51 @@ async def delete_proctor_snapshot(snapshot_id: int, user: User = Depends(admin_r
     return {'message': 'Proctoring snapshot deleted'}
 
 
+@admin_bp.post('/interviews/{interview_id}/assemble-recording')
+async def assemble_interview_recording(interview_id: int, user: User = Depends(admin_required)):
+    """Rebuild a session recording from the slices the candidate's browser uploaded.
+
+    The candidate's own finalize call is the normal path, but it runs at the moment they are
+    being redirected away, so it can be missed — a closed tab, a dead connection, a
+    terminated session. The slices are already stored regardless, so this lets an admin
+    recover the footage afterwards instead of it being lost with the session that produced
+    it. Scoped to admins because it acts on another user's interview.
+    """
+    from app.utils.supabase_service import SupabaseService
+    from app.models import RecordingLog
+    interview = Interview.query.get(interview_id)
+    if not interview:
+        raise HTTPException(status_code=404, detail="Interview not found")
+    if interview.video_path:
+        return {'message': 'A recording is already stored for this session', 'stored': True}
+
+    parts = SupabaseService.list_interview_video_parts(interview.user_id, interview_id)
+    if not parts:
+        raise HTTPException(
+            status_code=404,
+            detail="No recording slices exist for this session — nothing to recover."
+        )
+
+    final_ref = SupabaseService.assemble_interview_video(interview.user_id, interview_id)
+    if not final_ref:
+        raise HTTPException(status_code=502, detail="Could not assemble the recording from its slices")
+
+    candidate = User.query.get(interview.user_id)
+    interview.video_path = final_ref
+    db.session.add(RecordingLog(
+        user_id=interview.user_id,
+        candidate_email=candidate.email if candidate else None,
+        interview_id=interview_id, question_id=None,
+        storage_ref=final_ref, status='active',
+    ))
+    db.session.add(AdminLog(
+        admin_id=user.id, action='ASSEMBLE_RECORDING',
+        details=f"Recovered the session recording for Interview ID {interview_id} from {len(parts)} stored slice(s).",
+    ))
+    db.session.commit()
+    return {'message': f'Recording recovered from {len(parts)} slice(s)', 'stored': True}
+
+
 @admin_bp.get('/interviews/{interview_id}/video-url')
 async def get_interview_video_url(interview_id: int, user: User = Depends(admin_required)):
     """Admin-only playback of a session recording (DB Integration §2.2): returns a
