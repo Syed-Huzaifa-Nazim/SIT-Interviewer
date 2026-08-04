@@ -15,6 +15,16 @@ import { Play, Send, Terminal, Database, CheckCircle2, XCircle, Clock3, AlertTri
  * transcript logic in that file is untouched by this feature.
  */
 
+// A candidate isn't necessarily a Python person — someone coming from a web-dev
+// background may only be comfortable in JavaScript. Both are executed by the same
+// backend runner, so offering the choice costs nothing. SQL problems are excluded:
+// the schema/dataset in the prompt is SQL-specific, so there is no "other language" to
+// switch to for those.
+const LANGUAGES = [
+  { id: 'python', label: 'Python 3' },
+  { id: 'javascript', label: 'JavaScript (Node)' },
+];
+
 const statusMeta = {
   passed: { icon: CheckCircle2, variant: 'success', label: 'Passed', color: 'text-emerald-500' },
   failed: { icon: XCircle, variant: 'error', label: 'Failed', color: 'text-red-500' },
@@ -87,6 +97,13 @@ const InterviewCodingSandbox = ({ problemId, interviewId, onSubmitAnswer, disabl
     if (gutterRef.current && textareaRef.current) {
       gutterRef.current.scrollTop = textareaRef.current.scrollTop;
     }
+  };
+
+  const handleLanguageChange = (lang) => {
+    setLanguage(lang);
+    setCode(problem?.starters?.[lang] ?? '');
+    setResult(null);
+    setError('');
   };
 
   const handleKeyDown = (e) => {
@@ -267,7 +284,20 @@ const InterviewCodingSandbox = ({ problemId, interviewId, onSubmitAnswer, disabl
       {/* Card 3 — code editor + console. */}
       <div className="rounded-xl overflow-hidden border border-slate-700">
         <div className="px-3 py-2 bg-slate-800 flex items-center justify-between">
-          <span className="text-[11px] font-mono text-slate-300">{isSql ? 'SQL (SQLite)' : 'Python 3'}</span>
+          {isSql ? (
+            <span className="text-[11px] font-mono text-slate-300">SQL (SQLite)</span>
+          ) : (
+            <select
+              className="text-[11px] font-mono bg-slate-900 text-slate-200 border border-slate-700 rounded-md py-1 px-2 cursor-pointer"
+              value={language}
+              onChange={(e) => handleLanguageChange(e.target.value)}
+              disabled={!!busy || disabled}
+            >
+              {LANGUAGES.map((l) => (
+                <option key={l.id} value={l.id}>{l.label}</option>
+              ))}
+            </select>
+          )}
           <div className="flex gap-2">
             <Button variant="secondary" size="sm" icon={Play} onClick={runTests} disabled={!!busy || disabled}>
               {busy === 'run' ? 'Running…' : 'Run'}
