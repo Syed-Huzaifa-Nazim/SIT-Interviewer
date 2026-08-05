@@ -30,10 +30,25 @@ engine = create_engine(
     db_url,
     pool_pre_ping=True,
     # DATABASE_URL points at Supabase's TRANSACTION pooler (port 6543), which multiplexes
-    # ~200 client connections over a few server ones — so a modest per-process pool is
-    # plenty and stays far under any cap even with two developers plus background threads.
-    pool_size=5,
-    max_overflow=5,
+    # ~200 client connections over a few server ones, so the ceiling here is ours to choose
+    # rather than the database's.
+    #
+    # This was pool_size=5/max_overflow=5. Ten connections is plenty for "two developers
+    # plus background threads", which is what it was sized for — but the app runs as a
+    # SINGLE uvicorn process, so that same ten is the entire concurrency budget for every
+    # candidate at once. Under a real cohort it ran dry and threw
+    #   TimeoutError: QueuePool limit of size 5 overflow 5 reached, connection timed out
+    # on ordinary traffic (heartbeats, /users/profile, admin polling). Because the auth
+    # bootstrap call is one of the requests that blocks, the app never leaves its loading
+    # state and candidates just sit on a blank page mid-interview — the pool is a single
+    # shared failure point, so a handful of slow requests stalls everyone, not just the
+    # candidate who caused it.
+    #
+    # 60 concurrent checkouts stays far below the pooler's ~200 client-connection budget
+    # while leaving headroom for a full cohort plus the background email/scoring threads,
+    # which take their own sessions and would otherwise compete with live interviews.
+    pool_size=25,
+    max_overflow=35,
     # Recycle idle connections so the pooler doesn't hold a server slot indefinitely.
     pool_recycle=300,
     pool_timeout=30,
