@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import api from '../services/api';
 import PageHeader from '../components/ui/PageHeader';
 import Card from '../components/ui/Card';
@@ -10,7 +11,7 @@ import Pagination from '../components/ui/Pagination';
 
 const PAGE_SIZE = 10;
 import EmptyState from '../components/ui/EmptyState';
-import { ClipboardCheck, CheckCircle2, XCircle, ShieldAlert } from 'lucide-react';
+import { ClipboardCheck, CheckCircle2, XCircle, ShieldAlert, ArrowRight } from 'lucide-react';
 
 /**
  * Second-Interview Approval Queue (§4.3): pending re-interview requests with the
@@ -132,6 +133,14 @@ const AdminApprovalsPage = () => {
                       </span>
                     )}
                   </div>
+                  <div className="flex flex-wrap gap-x-4 gap-y-1 pt-1.5">
+                    {/* Profile hub link removed from the UI (backlogged, not deleted). */}
+                    {req.first_interview_id && (
+                      <Link to={`/interview/report/${req.first_interview_id}`} className="inline-flex items-center gap-1 text-[11px] font-bold text-primary-600 dark:text-primary-400 hover:underline">
+                        View First Interview <ArrowRight size={11} />
+                      </Link>
+                    )}
+                  </div>
                 </div>
 
                 <div className="flex items-center gap-2.5 shrink-0">
@@ -176,6 +185,7 @@ const AdminApprovalsPage = () => {
                   <th className="py-3 font-bold">Decision</th>
                   <th className="py-3 font-bold">Decided By</th>
                   <th className="py-3 font-bold">Decided At</th>
+                  <th className="py-3 font-bold text-right">Links</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
@@ -191,6 +201,16 @@ const AdminApprovalsPage = () => {
                     </td>
                     <td className="py-3">{req.decided_by_name || '—'}</td>
                     <td className="py-3">{fmtDate(req.decided_at)}</td>
+                    <td className="py-3 text-right">
+                      <div className="flex items-center justify-end gap-3">
+                        {/* Profile hub link removed from the UI (backlogged, not deleted). */}
+                        {req.first_interview_id && (
+                          <Link to={`/interview/report/${req.first_interview_id}`} className="text-[11px] font-bold text-primary-600 dark:text-primary-400 hover:underline">
+                            Report
+                          </Link>
+                        )}
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>

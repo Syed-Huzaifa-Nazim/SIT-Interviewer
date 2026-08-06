@@ -8,7 +8,7 @@ import Button from '../ui/Button';
 import Spinner from '../ui/Spinner';
 import {
   Mail, X, UploadCloud, FileSpreadsheet, Download, Send,
-  CheckCircle2, AlertTriangle, Loader2, Trash2,
+  CheckCircle2, AlertTriangle, Loader2, Trash2, UserPlus, Plus,
 } from 'lucide-react';
 
 /**
@@ -141,6 +141,16 @@ const BulkEmailModal = ({ open, onClose, onSent }) => {
       return;
     }
     setRows(mapped);
+  };
+
+  // Manual entry: append one blank, editable row to the SAME preview table a file upload
+  // would populate — no file needed for a handful of recipients typed in by hand.
+  const addManualRow = () => {
+    const dd = config?.default_deadline_days ?? 2;
+    setValidation(null);
+    setBatch(null);
+    setError('');
+    setRows((prev) => [...prev, { name: '', email: '', cnic: '', category: '', course_status: '', deadline_days: dd }]);
   };
 
   const parseCsv = (file) =>
@@ -293,7 +303,11 @@ const BulkEmailModal = ({ open, onClose, onSent }) => {
   const validCount = validation?.valid_count ?? 0;
   const allValid = rows.length > 0 && validCount === rows.length;
   const canSend = allValid && subject.trim() && !sending && !validating;
-  const inputCls = 'w-full bg-transparent text-xs outline-none focus:ring-0 border-none p-0 text-slate-700 dark:text-slate-200';
+  // Cells are always-visible bordered boxes (not just on hover/focus) so a freshly added
+  // BLANK manual row still reads as an editable form/grid instead of empty whitespace —
+  // the transparent/borderless style this replaced only looked fine when a file upload
+  // had already filled every cell with text.
+  const inputCls = 'w-full bg-white dark:bg-slate-900 text-xs outline-none border border-slate-200 dark:border-slate-700 focus:ring-2 focus:ring-primary-500/40 focus:border-primary-500 rounded-md px-2 py-1.5 text-slate-700 dark:text-slate-200 transition placeholder:text-slate-400 dark:placeholder:text-slate-600 placeholder:font-normal';
 
   return createPortal(
     <div className="fixed inset-0 z-50 bg-slate-950/60 dark:bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
@@ -306,7 +320,7 @@ const BulkEmailModal = ({ open, onClose, onSent }) => {
             <div>
               <h3 className="font-extrabold text-base text-slate-900 dark:text-white">Bulk Email Module</h3>
               <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                Admin Hub · Send interview invitations to a batch of candidates via file import
+                Admin Hub · Send interview invitations via file import or manual entry
               </p>
             </div>
           </div>
@@ -446,6 +460,24 @@ const BulkEmailModal = ({ open, onClose, onSent }) => {
                       <FileSpreadsheet size={12} /> {fileName} — {rows.length} row{rows.length === 1 ? '' : 's'} detected
                     </p>
                   )}
+
+                  {/* Manual entry: a couple of recipients don't need a spreadsheet — this
+                      just appends a blank, editable row to the same preview table below. */}
+                  <div className="flex items-center gap-2 text-[10px] text-slate-400 dark:text-slate-500">
+                    <div className="flex-1 h-px bg-slate-200 dark:bg-slate-800" />
+                    OR
+                    <div className="flex-1 h-px bg-slate-200 dark:bg-slate-800" />
+                  </div>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    icon={UserPlus}
+                    onClick={addManualRow}
+                    fullWidth
+                  >
+                    Add Recipient Manually
+                  </Button>
                 </div>
               </div>
 
@@ -504,24 +536,26 @@ const BulkEmailModal = ({ open, onClose, onSent }) => {
                           const bad = validation && !rowValid(idx);
                           return (
                             <React.Fragment key={idx}>
-                              <tr className={`border-b border-slate-100 dark:border-slate-800/70 ${bad ? 'bg-red-50/70 dark:bg-red-500/5' : ''}`}>
-                                <td className="py-1.5 px-2 text-slate-400">{idx + 1}</td>
-                                <td className="py-1.5 px-2"><input className={inputCls} value={r.name} onChange={(e) => updateCell(idx, 'name', e.target.value)} /></td>
-                                <td className="py-1.5 px-2"><input className={`${inputCls} font-mono`} value={r.email} onChange={(e) => updateCell(idx, 'email', e.target.value)} /></td>
-                                <td className="py-1.5 px-2"><input className={`${inputCls} font-mono`} value={r.cnic} onChange={(e) => updateCell(idx, 'cnic', e.target.value)} /></td>
-                                <td className="py-1.5 px-2">
+                              <tr className={`border-b border-slate-100 dark:border-slate-800/70 ${
+                                bad ? 'bg-red-50/70 dark:bg-red-500/5' : idx % 2 === 1 ? 'bg-slate-50/60 dark:bg-slate-900/20' : ''
+                              }`}>
+                                <td className="py-1.5 px-2 text-slate-400 font-mono text-center">{idx + 1}</td>
+                                <td className="py-1.5 px-1.5"><input className={inputCls} placeholder="Full name" value={r.name} onChange={(e) => updateCell(idx, 'name', e.target.value)} /></td>
+                                <td className="py-1.5 px-1.5"><input className={`${inputCls} font-mono`} placeholder="name@example.com" value={r.email} onChange={(e) => updateCell(idx, 'email', e.target.value)} /></td>
+                                <td className="py-1.5 px-1.5"><input className={`${inputCls} font-mono`} placeholder="42101-1234567-1" value={r.cnic} onChange={(e) => updateCell(idx, 'cnic', e.target.value)} /></td>
+                                <td className="py-1.5 px-1.5">
                                   <select className={`${inputCls} cursor-pointer`} value={r.category} onChange={(e) => updateCell(idx, 'category', e.target.value)}>
-                                    <option value="">—</option>
+                                    <option value="">Select…</option>
                                     {(config?.categories || []).map((c) => <option key={c} value={c}>{c}</option>)}
                                   </select>
                                 </td>
-                                <td className="py-1.5 px-2">
+                                <td className="py-1.5 px-1.5">
                                   <select className={`${inputCls} cursor-pointer`} value={r.course_status} onChange={(e) => updateCell(idx, 'course_status', e.target.value)}>
-                                    <option value="">—</option>
+                                    <option value="">Select…</option>
                                     {(config?.course_statuses || []).map((s) => <option key={s} value={s}>{s}</option>)}
                                   </select>
                                 </td>
-                                <td className="py-1.5 px-2">
+                                <td className="py-1.5 px-1.5">
                                   <select className={`${inputCls} cursor-pointer`} value={r.deadline_days} onChange={(e) => updateCell(idx, 'deadline_days', Number(e.target.value))}>
                                     {(config?.deadline_choices || []).map((d) => <option key={d} value={d}>{d} Days</option>)}
                                   </select>
@@ -543,6 +577,17 @@ const BulkEmailModal = ({ open, onClose, onSent }) => {
                             </React.Fragment>
                           );
                         })}
+                        <tr>
+                          <td colSpan={8} className="p-0">
+                            <button
+                              type="button"
+                              onClick={addManualRow}
+                              className="w-full flex items-center justify-center gap-1.5 py-2.5 text-[11px] font-bold text-primary-600 dark:text-primary-400 hover:bg-primary-50 dark:hover:bg-primary-500/10 transition border-t border-dashed border-slate-200 dark:border-slate-700"
+                            >
+                              <Plus size={13} /> Add Row
+                            </button>
+                          </td>
+                        </tr>
                       </tbody>
                     </table>
                   </div>

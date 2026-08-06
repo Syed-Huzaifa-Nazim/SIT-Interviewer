@@ -594,7 +594,11 @@ class ProctorSnapshot(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
     # Denormalized so the archive stays readable even after the candidate is deleted.
     candidate_email = db.Column(db.String(120), nullable=True)
-    interview_id = db.Column(db.Integer, nullable=True)
+    # ON DELETE SET NULL (not CASCADE): delete_user()/delete_interview() in admin_routes.py
+    # already hand-delete these rows and their storage files explicitly, so this FK is a
+    # referential-integrity safety net, not a new delete path.
+    interview_id = db.Column(db.Integer, db.ForeignKey('interviews.id', ondelete='SET NULL'), nullable=True)
+    interview = db.relationship('Interview', backref=db.backref('proctor_snapshots', lazy='dynamic'))
     # 'termination' = webcam frame at auto-termination; 'screen' = a monitored screenshot.
     kind = db.Column(db.String(20), default='termination')
     # Short human label, e.g. the violation reason or 'periodic'.

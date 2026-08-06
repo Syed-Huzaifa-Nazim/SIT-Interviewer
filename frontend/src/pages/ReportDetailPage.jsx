@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useParams, Link } from 'react-router-dom';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
@@ -14,6 +15,7 @@ import {
   BookOpen,
   Calendar,
   ChevronLeft,
+  ChevronRight,
   Printer,
   AlertCircle,
   ThumbsUp,
@@ -22,7 +24,8 @@ import {
   ShieldAlert,
   MessageSquare,
   Activity,
-  UserCheck
+  UserCheck,
+  X
 } from 'lucide-react';
 
 const ReportDetailPage = () => {
@@ -56,6 +59,73 @@ const ReportDetailPage = () => {
     } finally {
       setVideoLoading(false);
     }
+  };
+
+  // Integrity Audit Trail → snapshot gallery (admin only): every archived webcam/screen
+  // capture for this specific interview, browsable via a slider. Loaded once the report
+  // arrives so clicking any audit log entry can jump straight to its closest-in-time snapshot.
+  const [auditSnapshots, setAuditSnapshots] = useState([]);
+  const [snapshotModalOpen, setSnapshotModalOpen] = useState(false);
+  const [snapshotIndex, setSnapshotIndex] = useState(0);
+  const [snapshotUrlCache, setSnapshotUrlCache] = useState({});
+  const [snapshotUrlLoading, setSnapshotUrlLoading] = useState(false);
+  const [snapshotUrlError, setSnapshotUrlError] = useState('');
+
+  useEffect(() => {
+    if (!data || user?.role !== 'admin') return;
+    let cancelled = false;
+    api.get('/admin/proctor-snapshots', { params: { interview_id: data.interview.id } })
+      .then((res) => { if (!cancelled) setAuditSnapshots(res.data || []); })
+      .catch(() => { if (!cancelled) setAuditSnapshots([]); });
+    return () => { cancelled = true; };
+  }, [data, user?.role]);
+
+  // Fetch (and cache) the short-lived signed URL for whichever snapshot is on screen.
+  useEffect(() => {
+    if (!snapshotModalOpen) return;
+    const snap = auditSnapshots[snapshotIndex];
+    if (!snap || snapshotUrlCache[snap.id]) return;
+    setSnapshotUrlLoading(true);
+    setSnapshotUrlError('');
+    api.get(`/admin/proctor-snapshots/${snap.id}/url`)
+      .then((res) => setSnapshotUrlCache((prev) => ({ ...prev, [snap.id]: res.data.image_url })))
+      .catch(() => setSnapshotUrlError('Could not load this snapshot image.'))
+      .finally(() => setSnapshotUrlLoading(false));
+  }, [snapshotModalOpen, snapshotIndex, auditSnapshots, snapshotUrlCache]);
+
+  // Thumbnail strip on the Compliance tab (replaces the old single giant image): preload
+  // signed URLs for the first few snapshots as soon as the list arrives, so the thumbnails
+  // render immediately instead of each needing its own click-triggered fetch.
+  const THUMB_COUNT = 4;
+  const [thumbUrlCache, setThumbUrlCache] = useState({});
+  useEffect(() => {
+    if (auditSnapshots.length === 0) return;
+    const toFetch = auditSnapshots.slice(0, THUMB_COUNT).filter((s) => !thumbUrlCache[s.id]);
+    toFetch.forEach((snap) => {
+      api.get(`/admin/proctor-snapshots/${snap.id}/url`)
+        .then((res) => setThumbUrlCache((prev) => ({ ...prev, [snap.id]: res.data.image_url })))
+        .catch(() => {});
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [auditSnapshots]);
+
+  // Jump the slider to whichever archived snapshot was captured closest in time to the
+  // clicked audit-log entry — logs and snapshots aren't directly linked by ID, but both
+  // carry timestamps, so nearest-in-time is the closest honest match.
+  const openSnapshotModal = (log) => {
+    if (auditSnapshots.length > 0) {
+      const logTime = new Date(log.timestamp).getTime();
+      let bestIdx = 0;
+      let bestDiff = Infinity;
+      auditSnapshots.forEach((s, i) => {
+        const diff = Math.abs(new Date(s.captured_at).getTime() - logTime);
+        if (diff < bestDiff) { bestDiff = diff; bestIdx = i; }
+      });
+      setSnapshotIndex(bestIdx);
+    } else {
+      setSnapshotIndex(0);
+    }
+    setSnapshotModalOpen(true);
   };
 
   const [rating, setRating] = useState(5);
@@ -237,6 +307,10 @@ const ReportDetailPage = () => {
 
   const verdict = getVerdict(report.overall_score);
 
+  // Whether the Session Recording card renders at all — drives whether it sits inline
+  // next to the Webcam Audit snapshot card, or the snapshot card takes the full width.
+  const showVideoCard = user?.role === 'admin' && interview.has_video;
+
   // SVG Radial Gauge Geometry
   const radius = 42;
   const strokeWidth = 6;
@@ -267,11 +341,11 @@ const ReportDetailPage = () => {
       {/* Screen Control Toolbar */}
       <div className="no-print flex items-center justify-between gap-4">
         <Link
-          to="/history"
+          to={user?.role === 'admin' ? '/admin/interviews' : '/history'}
           className="flex items-center gap-1.5 text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white transition text-xs font-bold"
         >
           <ChevronLeft size={16} />
-          Back to Assessment History
+          {user?.role === 'admin' ? 'Back to Mock Sessions Auditor' : 'Back to Assessment History'}
         </Link>
 
         <Button variant="secondary" size="sm" icon={Printer} onClick={handlePrint}>
@@ -371,7 +445,8 @@ const ReportDetailPage = () => {
           { id: 'overview', label: 'Overview Metrics', icon: Activity },
           { id: 'transcript', label: 'Q&A Transcript', icon: BookOpen },
           { id: 'compliance', label: 'Compliance Audit', icon: ShieldAlert, badge: proctorLogsList.length || (interview.is_proctor_failed ? '!' : null) },
-          { id: 'feedback', label: 'User Remarks', icon: MessageSquare }
+          { id: 'feedback', label: 'User Remarks', icon: MessageSquare },
+          ...(user?.role === 'admin' ? [{ id: 'admin', label: 'Admin Tools', icon: UserCheck }] : []),
         ].map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
@@ -580,13 +655,47 @@ const ReportDetailPage = () => {
 
       {/* TAB 3: COMPLIANCE & AUDIT */}
       <div className={`space-y-6 ${activeTab === 'compliance' ? 'block' : 'hidden print:block'}`}>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-start">
-          {/* Violation Snapshots */}
-          <Card className="md:col-span-2 space-y-4 print:shadow-none print:border-slate-300">
+        <div className={`grid grid-cols-1 lg:grid-cols-3 gap-6 items-start`}>
+          {/* Webcam Audit snapshot — sits inline with Session Recording when both are
+              present; otherwise takes the space Session Recording would have used. */}
+          <Card className={`space-y-4 print:shadow-none print:border-slate-300 ${showVideoCard ? '' : 'lg:col-span-2'}`}>
             <h3 className="font-bold text-sm text-slate-800 dark:text-slate-200 border-b border-slate-200 dark:border-slate-800/80 pb-3 print:border-slate-300">
               Webcam Audit snapshot
             </h3>
-            {report.snapshot_image ? (
+            {user?.role === 'admin' && auditSnapshots.length > 0 ? (
+              // Admin view: a compact thumbnail strip instead of one blown-up image —
+              // click any thumbnail to open it full-size in the slider gallery below.
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {auditSnapshots.slice(0, THUMB_COUNT).map((snap, idx) => (
+                    <button
+                      key={snap.id}
+                      type="button"
+                      onClick={() => { setSnapshotIndex(idx); setSnapshotModalOpen(true); }}
+                      className="relative aspect-video rounded-lg overflow-hidden border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-950 hover:border-primary-400 dark:hover:border-primary-600 transition"
+                      title={`${snap.kind === 'termination' ? 'Webcam' : 'Screen'} · ${new Date(snap.captured_at).toLocaleTimeString()}`}
+                    >
+                      {thumbUrlCache[snap.id] ? (
+                        <img src={thumbUrlCache[snap.id]} alt="Archived proctoring thumbnail" className="w-full h-full object-cover" />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center">
+                          <Spinner size="sm" />
+                        </div>
+                      )}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { setSnapshotIndex(0); setSnapshotModalOpen(true); }}
+                  className="text-[11px] font-bold text-primary-600 dark:text-primary-400 hover:underline"
+                >
+                  {auditSnapshots.length > THUMB_COUNT
+                    ? `View all ${auditSnapshots.length} snapshots →`
+                    : 'Open in full-size viewer →'}
+                </button>
+              </div>
+            ) : report.snapshot_image ? (
               <div className="space-y-4">
                 <div className="relative aspect-video rounded-xl bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm">
                   <img
@@ -614,54 +723,61 @@ const ReportDetailPage = () => {
                 </p>
               </div>
             )}
-
-            {/* Full-session recording — admin only (§2.2). Rendered directly below the
-                snapshot: click to fetch a short-lived signed URL from the PRIVATE
-                interview-recordings bucket, then play inline. */}
-            {user?.role === 'admin' && interview.has_video && (
-              <div className="space-y-3 pt-4 border-t border-slate-200 dark:border-slate-800/80 no-print">
-                <h4 className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider font-sans">Session Recording</h4>
-                {videoUrl && !videoPlaybackError ? (
-                  <video
-                    controls
-                    src={videoUrl}
-                    className="w-full rounded-xl bg-black max-h-[420px]"
-                    // Playback failed inside the element (expired signed URL, codec, network
-                    // drop). Surface it with a retry instead of leaving a silently-frozen player.
-                    onError={() => setVideoPlaybackError('The recording could not be played — the secure link may have expired. Retry to generate a fresh one.')}
-                  />
-                ) : (
-                  <div className="p-6 text-center border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-xl space-y-3">
-                    <p className="text-xs text-slate-500 dark:text-slate-400">
-                      A full-session camera recording is stored for this interview.
-                    </p>
-                    {(videoError || videoPlaybackError) && (
-                      <Alert variant="error" className="text-xs">{videoError || videoPlaybackError}</Alert>
-                    )}
-                    <Button
-                      size="sm"
-                      loading={videoLoading}
-                      onClick={() => { setVideoUrl(''); setVideoPlaybackError(''); loadSessionVideo(); }}
-                    >
-                      {videoLoading
-                        ? 'Preparing secure link...'
-                        : (videoPlaybackError ? 'Retry Playback' : 'Play Session Recording')}
-                    </Button>
-                  </div>
-                )}
-              </div>
-            )}
           </Card>
 
+          {/* Full-session recording — admin only (§2.2), now its own card inline next to
+              the snapshot instead of stacked below it. Click to fetch a short-lived signed
+              URL from the PRIVATE interview-recordings bucket, then play inline. */}
+          {showVideoCard && (
+            <Card className="space-y-3 no-print print:hidden">
+              <h3 className="font-bold text-sm text-slate-800 dark:text-slate-200 border-b border-slate-200 dark:border-slate-800/80 pb-3">
+                Session Recording
+              </h3>
+              {videoUrl && !videoPlaybackError ? (
+                <video
+                  controls
+                  src={videoUrl}
+                  className="w-full rounded-xl bg-black max-h-[420px]"
+                  // Playback failed inside the element (expired signed URL, codec, network
+                  // drop). Surface it with a retry instead of leaving a silently-frozen player.
+                  onError={() => setVideoPlaybackError('The recording could not be played — the secure link may have expired. Retry to generate a fresh one.')}
+                />
+              ) : (
+                <div className="p-6 text-center border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-xl space-y-3">
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    A full-session camera recording is stored for this interview.
+                  </p>
+                  {(videoError || videoPlaybackError) && (
+                    <Alert variant="error" className="text-xs">{videoError || videoPlaybackError}</Alert>
+                  )}
+                  <Button
+                    size="sm"
+                    loading={videoLoading}
+                    onClick={() => { setVideoUrl(''); setVideoPlaybackError(''); loadSessionVideo(); }}
+                  >
+                    {videoLoading
+                      ? 'Preparing secure link...'
+                      : (videoPlaybackError ? 'Retry Playback' : 'Play Session Recording')}
+                  </Button>
+                </div>
+              )}
+            </Card>
+          )}
+
           {/* Audit Logs */}
-          <Card className="space-y-4 print:shadow-none print:border-slate-300">
+          <Card className={`space-y-4 print:shadow-none print:border-slate-300 ${showVideoCard ? '' : 'lg:col-span-1'}`}>
             <h3 className="font-bold text-sm text-slate-800 dark:text-slate-200 border-b border-slate-200 dark:border-slate-800/80 pb-3 print:border-slate-300">
               Integrity Audit Trail
             </h3>
             {proctorLogsList.length > 0 ? (
               <div className="divide-y divide-slate-100 dark:divide-slate-800 pr-1 max-h-[400px] overflow-y-auto">
                 {proctorLogsList.map((log, idx) => (
-                  <div key={idx} className="py-3 flex flex-col gap-1 text-xs">
+                  <div
+                    key={idx}
+                    className={`py-3 flex flex-col gap-1 text-xs ${user?.role === 'admin' ? 'cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-900/40 rounded-lg px-2 -mx-2 transition no-print' : ''}`}
+                    onClick={user?.role === 'admin' ? () => openSnapshotModal(log) : undefined}
+                    title={user?.role === 'admin' ? 'View archived snapshots for this session' : undefined}
+                  >
                     <div className="flex items-center gap-1.5 justify-between">
                       <Badge variant={getLogBadgeVariant(log.type)} className="!text-[8px] font-extrabold uppercase py-0 px-1 rounded">
                         {log.type.replace('_', ' ')}
@@ -682,6 +798,108 @@ const ReportDetailPage = () => {
           </Card>
         </div>
       </div>
+
+      {/* Integrity Snapshot Gallery modal — every archived webcam/screen capture for THIS
+          candidate's session, browsable via a slider. Opened from an Integrity Audit Trail
+          entry (admin only). */}
+      {snapshotModalOpen && createPortal(
+        <div
+          className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={() => setSnapshotModalOpen(false)}
+        >
+          <div
+            className="w-full max-w-2xl glass-panel rounded-2xl border border-primary-500/30 shadow-2xl relative"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between p-5 pb-3 border-b border-slate-200 dark:border-slate-800">
+              <h3 className="font-extrabold text-sm text-slate-900 dark:text-white flex items-center gap-2">
+                <ShieldAlert size={16} className="text-primary-400" />
+                Integrity Snapshot Gallery
+              </h3>
+              <button
+                onClick={() => setSnapshotModalOpen(false)}
+                className="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 rounded-lg"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              {auditSnapshots.length === 0 ? (
+                <div className="p-10 text-center text-xs text-slate-500 dark:text-slate-400 italic">
+                  No archived snapshots are on file for this candidate's session.
+                </div>
+              ) : (
+                <>
+                  <div className="relative aspect-video rounded-xl bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 overflow-hidden flex items-center justify-center">
+                    {snapshotUrlLoading ? (
+                      <Spinner label="Loading snapshot..." />
+                    ) : snapshotUrlError ? (
+                      <p className="text-xs text-red-500 px-4 text-center">{snapshotUrlError}</p>
+                    ) : (
+                      <img
+                        src={snapshotUrlCache[auditSnapshots[snapshotIndex]?.id]}
+                        alt="Archived proctoring snapshot"
+                        className="w-full h-full object-contain"
+                      />
+                    )}
+                    <Badge
+                      variant={auditSnapshots[snapshotIndex]?.kind === 'termination' ? 'error' : 'info'}
+                      className="absolute top-2 left-2 !text-[8px] font-bold rounded"
+                    >
+                      {auditSnapshots[snapshotIndex]?.kind === 'termination' ? 'Webcam Frame' : 'Screen Capture'}
+                    </Badge>
+                    {auditSnapshots.length > 1 && (
+                      <>
+                        <button
+                          onClick={() => setSnapshotIndex((i) => (i - 1 + auditSnapshots.length) % auditSnapshots.length)}
+                          className="absolute left-2 top-1/2 -translate-y-1/2 p-2 rounded-full bg-slate-900/60 text-white hover:bg-slate-900/80 transition"
+                        >
+                          <ChevronLeft size={16} />
+                        </button>
+                        <button
+                          onClick={() => setSnapshotIndex((i) => (i + 1) % auditSnapshots.length)}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 p-2 rounded-full bg-slate-900/60 text-white hover:bg-slate-900/80 transition"
+                        >
+                          <ChevronRight size={16} />
+                        </button>
+                      </>
+                    )}
+                  </div>
+
+                  {auditSnapshots.length > 1 && (
+                    <input
+                      type="range"
+                      min={0}
+                      max={auditSnapshots.length - 1}
+                      step={1}
+                      value={snapshotIndex}
+                      onChange={(e) => setSnapshotIndex(parseInt(e.target.value, 10))}
+                      className="w-full accent-primary-600 cursor-pointer"
+                    />
+                  )}
+
+                  <div className="flex items-center justify-between text-[10px] text-slate-500 dark:text-slate-400 font-sans">
+                    <span>
+                      {auditSnapshots[snapshotIndex]?.captured_at
+                        ? new Date(auditSnapshots[snapshotIndex].captured_at).toLocaleString()
+                        : ''}
+                    </span>
+                    <span>{snapshotIndex + 1} / {auditSnapshots.length}</span>
+                  </div>
+
+                  {auditSnapshots[snapshotIndex]?.label && (
+                    <p className="text-xs text-slate-600 dark:text-slate-300 font-sans">
+                      {auditSnapshots[snapshotIndex].label}
+                    </p>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
 
       {/* TAB 4: USER REMARKS */}
       <div className={`space-y-6 ${activeTab === 'feedback' ? 'block' : 'hidden print:block'}`}>
@@ -747,6 +965,36 @@ const ReportDetailPage = () => {
           )}
         </Card>
       </div>
+
+      {/* Admin Tools — cross-links to the LLM scoring breakdown and the proctoring
+          snapshot gallery for this specific session, so an admin reviewing a report
+          never has to leave it and manually re-search elsewhere. (The candidate Profile
+          hub link is backlogged, not deleted — /admin/users/:userId still works.) */}
+      {user?.role === 'admin' && (
+        <div className={`space-y-4 no-print ${activeTab === 'admin' ? 'block' : 'hidden'}`}>
+          <Card className="space-y-3">
+            <CardTitle className="border-b border-slate-200 dark:border-slate-800 pb-3">
+              Admin Tools
+            </CardTitle>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <Link
+                to={`/admin/scoring?interview_id=${interview.id}`}
+                className="p-4 border border-slate-200 dark:border-slate-800 rounded-xl hover:border-primary-400 dark:hover:border-primary-600 transition flex flex-col gap-1"
+              >
+                <span className="text-xs font-bold text-slate-900 dark:text-slate-200">LLM Scoring Breakdown</span>
+                <span className="text-[10px] text-slate-500 dark:text-slate-400">Per-question score, confidence, and rationale for this session.</span>
+              </Link>
+              <Link
+                to={`/admin/logs?tab=snapshots&interview_id=${interview.id}`}
+                className="p-4 border border-slate-200 dark:border-slate-800 rounded-xl hover:border-primary-400 dark:hover:border-primary-600 transition flex flex-col gap-1"
+              >
+                <span className="text-xs font-bold text-slate-900 dark:text-slate-200">Proctoring Snapshots</span>
+                <span className="text-[10px] text-slate-500 dark:text-slate-400">Every archived webcam/screen image captured during this session.</span>
+              </Link>
+            </div>
+          </Card>
+        </div>
+      )}
 
     </div>
   );

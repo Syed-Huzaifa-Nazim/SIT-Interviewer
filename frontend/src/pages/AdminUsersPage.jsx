@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import api from '../services/api';
 import PageHeader from '../components/ui/PageHeader';
 import Card from '../components/ui/Card';
@@ -29,7 +30,10 @@ import {
   AlertTriangle,
   ScanFace,
   MessageSquare,
-  Mail
+  Mail,
+  History,
+  Filter,
+  Check
 } from 'lucide-react';
 
 const INTERVIEW_STATUS_VARIANTS = {
@@ -41,18 +45,153 @@ const INTERVIEW_STATUS_VARIANTS = {
   reinterview_rejected: 'error',
 };
 
+// Shared select styling for the profile-editor form fields below.
+const selectClass = 'w-full glass-input text-sm appearance-none cursor-pointer';
+
+// One checkbox row inside a column filter dropdown, with a live count of how many users
+// in the current tab (Enrolled/Bulk) + search match that value.
+const FilterCheckbox = ({ checked, onChange, label, count }) => (
+  <label className="flex items-center justify-between gap-3 py-2 px-2.5 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-900/50 active:scale-[0.99] cursor-pointer transition-all duration-150">
+    <span className="flex items-center gap-2.5 text-xs font-semibold text-slate-700 dark:text-slate-300">
+      <span className={`w-4 h-4 rounded flex items-center justify-center border transition-all duration-200 shrink-0 ${
+        checked
+          ? 'bg-primary-600 border-primary-600 scale-105'
+          : 'border-slate-300 dark:border-slate-600'
+      }`}>
+        {checked && <Check size={11} className="text-white animate-check-pop" strokeWidth={3} />}
+      </span>
+      <input type="checkbox" checked={checked} onChange={onChange} className="hidden" />
+      {label}
+    </span>
+    <span className="text-[10px] text-slate-400 dark:text-slate-500 font-mono tabular-nums">{count}</span>
+  </label>
+);
+
+// Apply the three column facets + free-text search to a user list. Shared by the live
+// table filter so the visible rows and the per-column counts can never drift apart.
+const applyFilterSet = (list, { course, istatus, access }, search) => {
+  const q = search.toLowerCase();
+  return list.filter((u) => {
+    if (course.length && !course.includes(u.course_category)) return false;
+    if (istatus.length && !istatus.includes(u.interview_status)) return false;
+    if (access.length && !access.includes(u.status)) return false;
+    return (
+      u.name.toLowerCase().includes(q) ||
+      u.email.toLowerCase().includes(q) ||
+      u.job_role?.toLowerCase().includes(q) ||
+      u.cnic?.toLowerCase().includes(q) ||
+      u.course_category?.toLowerCase().includes(q)
+    );
+  });
+};
+
+// Excel-style column-header filter: click the funnel icon on a column to get a
+// checklist dropdown of that column's values (with live counts) instead of a separate
+// filters panel elsewhere on the page.
+const ColumnFilter = ({ label, options, selected, isOpen, onToggleOpen, onToggleValue, onClear }) => (
+  <div className="relative inline-block">
+    <button
+      type="button"
+      onClick={onToggleOpen}
+      className={`inline-flex items-center gap-1.5 font-bold transition ${
+        selected.length > 0 ? 'text-primary-600 dark:text-primary-400' : 'hover:text-slate-700 dark:hover:text-slate-200'
+      }`}
+    >
+      {label}
+      <Filter size={11} className={selected.length > 0 ? 'fill-current' : ''} />
+    </button>
+    {isOpen && (
+      <>
+        {/* Invisible full-screen backdrop closes the dropdown on any outside click —
+            `fixed` escapes the table's overflow-x-auto ancestor regardless of nesting. */}
+        <div className="fixed inset-0 z-10" onClick={onToggleOpen} />
+        <div className="absolute left-0 top-full mt-2 z-20 w-56 max-h-72 overflow-y-auto bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-2xl p-2 normal-case font-normal animate-fade-in">
+          <div className="flex items-center justify-between px-1.5 pb-1.5 mb-1 border-b border-slate-100 dark:border-slate-800">
+            <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wide">Filter by {label}</span>
+            {selected.length > 0 && (
+              <button type="button" onClick={onClear} className="text-[10px] font-bold text-primary-600 dark:text-primary-400 hover:underline">
+                Clear
+              </button>
+            )}
+          </div>
+          {options.map((opt) => (
+            <FilterCheckbox
+              key={opt.value}
+              label={opt.label}
+              count={opt.count}
+              checked={selected.includes(opt.value)}
+              onChange={() => onToggleValue(opt.value)}
+            />
+          ))}
+        </div>
+      </>
+    )}
+  </div>
+);
+
 const AdminUsersPage = () => {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const [searchTerm, setSearchTerm] = useState('');
-  const [page, setPage] = useState(1);
+
+  // Filter/tab/page/batch state lives in the URL (not plain useState) so a filtered view is
+  // itself linkable/bookmarkable/shareable, and so navigating into a user's profile and back
+  // returns to exactly the view the admin left instead of resetting it.
+  const [searchParams, setSearchParams] = useSearchParams();
   // 'enrolled' = people who signed up themselves, 'bulk' = accounts created by the Bulk
   // Email Module. Together they cover every user, so there is no separate "all" view.
-  const [activeTab, setActiveTab] = useState('enrolled');
+  const activeTab = searchParams.get('tab') === 'bulk' ? 'bulk' : 'enrolled';
+  const searchTerm = searchParams.get('q') || '';
+  const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10) || 1);
+  const batchFilter = searchParams.get('batch') ? Number(searchParams.get('batch')) : null;
+  // Column filters (applied state) — multi-select facets stored as comma lists. Living in
+  // the URL means a filtered view survives a refresh and can be shared/bookmarked, same as
+  // every other filter on this page.
+  const courseFilters = useMemo(
+    () => (searchParams.get('course') ? searchParams.get('course').split(',').filter(Boolean) : []),
+    [searchParams]
+  );
+  const istatusFilters = useMemo(
+    () => (searchParams.get('istatus') ? searchParams.get('istatus').split(',').filter(Boolean) : []),
+    [searchParams]
+  );
+  const accessFilters = useMemo(
+    () => (searchParams.get('access') ? searchParams.get('access').split(',').filter(Boolean) : []),
+    [searchParams]
+  );
+  const hasAnyFilter = courseFilters.length + istatusFilters.length + accessFilters.length > 0;
+
+  // Merge a patch into the current URL search params. `replace: true` so filtering/paging
+  // doesn't spam browser history — Back should leave the page, not just undo one keystroke.
+  const patchParams = (patch) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      Object.entries(patch).forEach(([k, v]) => {
+        if (v === null || v === '' || v === undefined) next.delete(k);
+        else next.set(k, String(v));
+      });
+      return next;
+    }, { replace: true });
+  };
+
+  const setSearchTerm = (val) => patchParams({ q: val, page: null });
+  const setActiveTab = (tab) => patchParams({ tab, page: null });
+  const setPage = (p) => patchParams({ page: p > 1 ? p : null });
+
+  // Excel-style column filters: only one dropdown open at a time, applied live (no
+  // separate "Apply" step) — each checkbox click commits straight to the URL.
+  const [openColumnFilter, setOpenColumnFilter] = useState(null); // null | 'course' | 'istatus' | 'access'
+  const toggleColumnFilter = (key) => setOpenColumnFilter((prev) => (prev === key ? null : key));
+  const toggleFilterValue = (param, current, val) => {
+    const next = current.includes(val) ? current.filter((v) => v !== val) : [...current, val];
+    patchParams({ [param]: next.length ? next.join(',') : null, page: null });
+  };
+
+  const [batchHistoryOpen, setBatchHistoryOpen] = useState(false);
+  const [batchHistory, setBatchHistory] = useState([]);
+  const [batchHistoryLoading, setBatchHistoryLoading] = useState(false);
   const [bulkOpen, setBulkOpen] = useState(false);
-  useEffect(() => { setPage(1); }, [searchTerm, activeTab]);
 
   const [overrideUserId, setOverrideUserId] = useState(null);
   const [overrideVal, setOverrideVal] = useState(0);
@@ -97,6 +236,17 @@ const AdminUsersPage = () => {
     const poll = setInterval(() => fetchUsers(true), 15000);
     return () => clearInterval(poll);
   }, []);
+
+  // Bulk-email batch history: the backend endpoint already existed, unused by the frontend
+  // until now — surfaces it so a batch can be cross-linked to the users it created.
+  useEffect(() => {
+    if (!batchHistoryOpen) return;
+    setBatchHistoryLoading(true);
+    api.get('/admin/bulk-email/batches')
+      .then((res) => setBatchHistory(res.data?.batches || []))
+      .catch(() => setBatchHistory([]))
+      .finally(() => setBatchHistoryLoading(false));
+  }, [batchHistoryOpen]);
 
   const handleToggleBan = async (userId) => {
     setActionLoading(true);
@@ -254,21 +404,38 @@ const AdminUsersPage = () => {
   // not on every unrelated re-render (e.g. typing in an open modal elsewhere on the page).
   // Split by origin first: bulk_batch_id is set only on accounts the Bulk Email Module
   // created, so a null value is exactly "this person signed up themselves".
-  const tabUsers = useMemo(
-    () => users.filter((u) => (activeTab === 'bulk' ? u.bulk_batch_id != null : u.bulk_batch_id == null)),
-    [users, activeTab]
+  const tabUsers = useMemo(() => {
+    const byTab = users.filter((u) => (activeTab === 'bulk' ? u.bulk_batch_id != null : u.bulk_batch_id == null));
+    return batchFilter == null ? byTab : byTab.filter((u) => u.bulk_batch_id === batchFilter);
+  }, [users, activeTab, batchFilter]);
+
+  const filteredUsers = useMemo(
+    () => applyFilterSet(
+      tabUsers,
+      { course: courseFilters, istatus: istatusFilters, access: accessFilters },
+      searchTerm
+    ),
+    [tabUsers, searchTerm, courseFilters, istatusFilters, accessFilters]
   );
 
-  const filteredUsers = useMemo(() => {
-    const q = searchTerm.toLowerCase();
-    return tabUsers.filter((u) =>
-      u.name.toLowerCase().includes(q) ||
-      u.email.toLowerCase().includes(q) ||
-      u.job_role?.toLowerCase().includes(q) ||
-      u.cnic?.toLowerCase().includes(q) ||
-      u.course_category?.toLowerCase().includes(q)
-    );
-  }, [tabUsers, searchTerm]);
+  // Per-option counts shown next to each checkbox — computed against the current tab +
+  // search only, deliberately ignoring the OTHER draft facets, so ticking one box never
+  // makes the rest of the list's counts jump around underneath the admin.
+  const courseCounts = useMemo(() => {
+    const counts = {};
+    tabUsers.forEach((u) => { if (u.course_category) counts[u.course_category] = (counts[u.course_category] || 0) + 1; });
+    return counts;
+  }, [tabUsers]);
+  const istatusCounts = useMemo(() => {
+    const counts = {};
+    tabUsers.forEach((u) => { counts[u.interview_status] = (counts[u.interview_status] || 0) + 1; });
+    return counts;
+  }, [tabUsers]);
+  const accessCounts = useMemo(() => {
+    const counts = {};
+    tabUsers.forEach((u) => { counts[u.status] = (counts[u.status] || 0) + 1; });
+    return counts;
+  }, [tabUsers]);
 
   const enrolledCount = useMemo(() => users.filter((u) => u.bulk_batch_id == null).length, [users]);
   const bulkCount = users.length - enrolledCount;
@@ -289,8 +456,6 @@ const AdminUsersPage = () => {
       </Card>
     );
   }
-
-  const selectClass = 'w-full glass-input text-sm appearance-none cursor-pointer';
 
   return (
     <div className="space-y-6">
@@ -318,28 +483,95 @@ const AdminUsersPage = () => {
             </span>
           </button>
         </div>
-        <Button size="sm" icon={Mail} onClick={() => setBulkOpen(true)}>
-          Bulk Email Module
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="secondary" size="sm" icon={History} onClick={() => setBatchHistoryOpen(true)}>
+            Batch History
+          </Button>
+          <Button size="sm" icon={Mail} onClick={() => setBulkOpen(true)}>
+            Bulk Email Module
+          </Button>
+        </div>
       </div>
 
+      {batchFilter != null && (
+        <Alert variant="info">
+          Showing only accounts created by bulk-email batch #{batchFilter}.{' '}
+          <button
+            type="button"
+            className="font-bold underline"
+            onClick={() => patchParams({ batch: null, page: null })}
+          >
+            Clear filter
+          </button>
+        </Alert>
+      )}
+
       <Card padding={false} className="p-4">
-        <SearchBar
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          placeholder="Search by name, email, CNIC, category, or role..."
-        />
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+          <div className="flex-1">
+            <SearchBar
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="Search by name, email, CNIC, category, or role..."
+            />
+          </div>
+          {hasAnyFilter && (
+            <button
+              type="button"
+              onClick={() => patchParams({ course: null, istatus: null, access: null, page: null })}
+              className="text-xs font-bold text-slate-500 dark:text-slate-400 hover:text-red-500 transition shrink-0"
+            >
+              Clear all column filters
+            </button>
+          )}
+        </div>
       </Card>
 
       <Card>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs border-collapse">
             <thead>
+              {/* Excel-style column filters: click the funnel icon on Course / Interview
+                  Status / Access to get a checklist dropdown right at the column, instead
+                  of a separate filters panel elsewhere on the page. */}
               <tr className="text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800">
                 <th className="py-3 font-bold">User Details</th>
-                <th className="py-3 font-bold">Course</th>
-                <th className="py-3 font-bold">Interview Status</th>
-                <th className="py-3 font-bold">Access</th>
+                <th className="py-3 font-bold">
+                  <ColumnFilter
+                    label="Course"
+                    options={SIGNUP_CATEGORIES.map((cat) => ({ value: cat, label: cat, count: courseCounts[cat] || 0 }))}
+                    selected={courseFilters}
+                    isOpen={openColumnFilter === 'course'}
+                    onToggleOpen={() => toggleColumnFilter('course')}
+                    onToggleValue={(val) => toggleFilterValue('course', courseFilters, val)}
+                    onClear={() => patchParams({ course: null, page: null })}
+                  />
+                </th>
+                <th className="py-3 font-bold">
+                  <ColumnFilter
+                    label="Interview Status"
+                    options={Object.entries(INTERVIEW_STATUS_LABELS).map(([value, label]) => ({ value, label, count: istatusCounts[value] || 0 }))}
+                    selected={istatusFilters}
+                    isOpen={openColumnFilter === 'istatus'}
+                    onToggleOpen={() => toggleColumnFilter('istatus')}
+                    onToggleValue={(val) => toggleFilterValue('istatus', istatusFilters, val)}
+                    onClear={() => patchParams({ istatus: null, page: null })}
+                  />
+                </th>
+                <th className="py-3 font-bold">
+                  <ColumnFilter
+                    label="Access"
+                    options={[
+                      { value: 'active', label: 'Active', count: accessCounts.active || 0 },
+                      { value: 'banned', label: 'Banned', count: accessCounts.banned || 0 },
+                    ]}
+                    selected={accessFilters}
+                    isOpen={openColumnFilter === 'access'}
+                    onToggleOpen={() => toggleColumnFilter('access')}
+                    onToggleValue={(val) => toggleFilterValue('access', accessFilters, val)}
+                    onClear={() => patchParams({ access: null, page: null })}
+                  />
+                </th>
                 <th className="py-3 font-bold text-center">Tokens</th>
                 <th className="py-3 font-bold text-right">Actions</th>
               </tr>
@@ -365,7 +597,18 @@ const AdminUsersPage = () => {
                           }`}
                           title={item.online ? 'Online now' : 'Offline'}
                         />
-                        <div className="font-bold text-slate-900 dark:text-slate-200">{item.name}</div>
+                        {/* Name jumps straight to the candidate's latest interview report —
+                            that's the thing an admin needs on almost every click. The fuller
+                            profile hub (all interviews, snapshots, approval history) is one
+                            click away via the arrow-up icon in Actions, for the less common
+                            case of reviewing history rather than the newest result. */}
+                        <Link
+                          to={item.latest_interview_id ? `/interview/report/${item.latest_interview_id}` : `/admin/users/${item.id}`}
+                          className="font-bold text-slate-900 dark:text-slate-200 hover:text-primary-600 dark:hover:text-primary-400 hover:underline"
+                          title={item.latest_interview_id ? 'View latest interview report' : 'No interview yet — view profile'}
+                        >
+                          {item.name}
+                        </Link>
                       </div>
                       <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">{item.email}</div>
                       {item.cnic && (
@@ -413,6 +656,9 @@ const AdminUsersPage = () => {
 
                     <td className="py-4 text-right">
                       <div className="flex justify-end gap-2">
+                        {/* Full Profile hub link removed from the UI (backlogged, not
+                            deleted) — /admin/users/:userId and AdminUserProfilePage.jsx
+                            still exist and work, just aren't linked to from here anymore. */}
                         <Button
                           variant="secondary"
                           size="sm"
@@ -420,7 +666,7 @@ const AdminUsersPage = () => {
                           onClick={() => openEditor(item)}
                           disabled={actionLoading}
                           className="!p-2 !rounded-lg"
-                          title="Edit Full Profile"
+                          title="Quick Edit Profile"
                         />
                         {(item.course_status === 'completed' || isInstructorCategory(item.course_category)) && (
                           <Button
@@ -777,6 +1023,62 @@ const AdminUsersPage = () => {
               >
                 Confirm
               </Button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* Batch History: surfaces the previously-unused GET /admin/bulk-email/batches
+          endpoint. Each row links back to the users that batch created. */}
+      {batchHistoryOpen && createPortal(
+        <div className="fixed inset-0 z-50 bg-slate-950/60 dark:bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-2xl glass-panel rounded-2xl border border-primary-500/30 shadow-2xl relative flex flex-col max-h-[85vh]">
+            <div className="flex items-center justify-between p-6 pb-3 shrink-0 border-b border-slate-200 dark:border-slate-800">
+              <h3 className="font-extrabold text-base text-slate-900 dark:text-white flex items-center gap-2">
+                <History className="text-primary-400" size={17} />
+                <span>Bulk Email Batch History</span>
+              </h3>
+              <button type="button" onClick={() => setBatchHistoryOpen(false)} className="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 rounded-lg">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-6 space-y-3">
+              {batchHistoryLoading ? (
+                <Spinner label="Loading batch history..." />
+              ) : batchHistory.length === 0 ? (
+                <p className="text-xs text-slate-500 dark:text-slate-400 italic">No bulk-email batches have been sent yet.</p>
+              ) : (
+                batchHistory.map((b) => (
+                  <div key={b.id} className="p-3.5 border border-slate-200 dark:border-slate-800 rounded-xl flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-xs font-bold text-slate-900 dark:text-slate-200">{b.subject}</div>
+                      <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
+                        {b.file_name || 'manual entry'} · {fmtDate(b.created_at)}
+                      </div>
+                      <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
+                        <b className="text-slate-700 dark:text-slate-300">{b.sent_count}</b>/{b.total_count} sent
+                        {b.failed_count > 0 && <span className="text-red-500"> · {b.failed_count} failed</span>}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <Badge variant={b.status === 'complete' ? 'success' : b.status === 'sending' ? 'warning' : 'neutral'}>
+                        {b.status}
+                      </Badge>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => {
+                          setBatchHistoryOpen(false);
+                          patchParams({ tab: 'bulk', batch: b.id, page: null });
+                        }}
+                      >
+                        View Recipients
+                      </Button>
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
           </div>
         </div>,

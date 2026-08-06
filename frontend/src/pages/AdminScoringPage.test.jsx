@@ -12,6 +12,7 @@ import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { MemoryRouter } from 'react-router-dom'
 
 vi.mock('../services/api', () => ({
   default: { get: vi.fn() },
@@ -108,12 +109,20 @@ beforeEach(() => {
   api.get.mockReset()
 })
 
+// The drill-in now reads/writes ?interview_id= via useSearchParams, which requires a
+// Router context — rendering the bare component without one throws.
+const renderPage = () => render(
+  <MemoryRouter>
+    <AdminScoringPage />
+  </MemoryRouter>
+)
+
 describe('AdminScoringPage', () => {
   it('shows a loading state before the analytics arrive', () => {
     // covers TC-ADM-016 (loading path)
     api.get.mockReturnValue(new Promise(() => {})) // never resolves
 
-    render(<AdminScoringPage />)
+    renderPage()
 
     expect(screen.getByText(/loading scoring analytics/i)).toBeInTheDocument()
   })
@@ -122,7 +131,7 @@ describe('AdminScoringPage', () => {
     // covers TC-ADM-016
     api.get.mockResolvedValue({ data: analyticsFixture })
 
-    render(<AdminScoringPage />)
+    renderPage()
 
     expect(await screen.findByText('10')).toBeInTheDocument() // evaluations
     expect(screen.getByText('72.5%')).toBeInTheDocument() // avg score
@@ -133,7 +142,7 @@ describe('AdminScoringPage', () => {
     // covers TC-ADM-019 / TC-AI-015 — the UI half of the anti-fabrication rule.
     api.get.mockResolvedValue({ data: analyticsFixture })
 
-    render(<AdminScoringPage />)
+    renderPage()
 
     const flaggedCard = (await screen.findByText(/flagged for review/i)).closest('div')
     expect(flaggedCard).toHaveTextContent('3')
@@ -143,7 +152,7 @@ describe('AdminScoringPage', () => {
     // covers TC-ADM-016
     api.get.mockResolvedValue({ data: analyticsFixture })
 
-    render(<AdminScoringPage />)
+    renderPage()
 
     expect(await screen.findByText('Ayesha Khan')).toBeInTheDocument()
     expect(screen.getByText('Bilal Ahmed')).toBeInTheDocument()
@@ -153,7 +162,7 @@ describe('AdminScoringPage', () => {
     // covers TC-ADM-019 — per-interview flagged counts must be distinguishable at a glance.
     api.get.mockResolvedValue({ data: analyticsFixture })
 
-    render(<AdminScoringPage />)
+    renderPage()
 
     const flaggedRow = (await screen.findByText('Ayesha Khan')).closest('tr')
     expect(flaggedRow).toHaveTextContent('2')
@@ -166,7 +175,7 @@ describe('AdminScoringPage', () => {
     // covers TC-ADM-021 — an empty dataset must not crash the dashboard.
     api.get.mockResolvedValue({ data: emptyFixture })
 
-    render(<AdminScoringPage />)
+    renderPage()
 
     expect(await screen.findByText(/no completed interviews to analyse yet/i)).toBeInTheDocument()
     expect(screen.getByText(/no completed interviews with scored answers yet/i)).toBeInTheDocument()
@@ -176,7 +185,7 @@ describe('AdminScoringPage', () => {
     // covers TC-ADM-016 (failure path) — a failed load must be reported, not left blank.
     api.get.mockRejectedValue(new Error('network down'))
 
-    render(<AdminScoringPage />)
+    renderPage()
 
     expect(await screen.findByText(/failed to load scoring analytics/i)).toBeInTheDocument()
   })
@@ -217,7 +226,7 @@ describe('AdminScoringPage', () => {
       })
     })
 
-    render(<AdminScoringPage />)
+    renderPage()
 
     await user.click(await screen.findByText('Ayesha Khan'))
 
@@ -253,7 +262,7 @@ describe('AdminScoringPage', () => {
       })
     })
 
-    render(<AdminScoringPage />)
+    renderPage()
     await user.click(await screen.findByText('Ayesha Khan'))
 
     expect(await screen.findByText(/flagged for manual review/i)).toBeInTheDocument()
@@ -278,7 +287,7 @@ describe('AdminScoringPage', () => {
       })
     })
 
-    render(<AdminScoringPage />)
+    renderPage()
     await user.click(await screen.findByText('Ayesha Khan'))
     await user.click(await screen.findByRole('button', { name: /back to scoring analytics/i }))
 

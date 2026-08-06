@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Link, NavLink } from 'react-router-dom';
+import { Link, NavLink, useLocation } from 'react-router-dom';
 import BrandLogo from '../components/layout/BrandLogo';
 import ThemeToggle from '../components/layout/ThemeToggle';
 import { Menu, X } from 'lucide-react';
@@ -20,6 +20,7 @@ export const PUBLIC_NAV_LINKS = [
  */
 const PublicLayout = ({ children }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const location = useLocation();
 
   const linkClass = ({ isActive }) =>
     `whitespace-nowrap transition cursor-pointer ${
@@ -84,7 +85,10 @@ const PublicLayout = ({ children }) => {
         )}
       </nav>
 
-      <main className="flex-1">{children}</main>
+      {/* Keyed by path so switching between marketing pages (Landing → Features →
+          Pricing, etc.) replays a smooth entrance instead of the next page snapping
+          in instantly — same pattern already used by DashboardLayout/AdminLayout. */}
+      <main key={location.pathname} className="flex-1 animate-fade-in">{children}</main>
 
       {/* Footer */}
       <footer className="border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 py-12 text-xs text-slate-500">

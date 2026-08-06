@@ -31,6 +31,7 @@ import AdminDashboard from './pages/AdminDashboard';
 import InterviewSetup from './pages/InterviewSetup';
 import AdminLayout from './layouts/AdminLayout';
 import AdminUsersPage from './pages/AdminUsersPage';
+import AdminUserProfilePage from './pages/AdminUserProfilePage';
 import AdminInterviewsPage from './pages/AdminInterviewsPage';
 import AdminScoringPage from './pages/AdminScoringPage';
 import AdminTransactionsPage from './pages/AdminTransactionsPage';
@@ -108,6 +109,17 @@ const InterviewReportRoute = () => {
     return <OfficialThankYou />;
   }
   if (!user) return <Navigate to="/login" replace />;
+  // An admin reviewing a candidate's report from the Admin Hub stays inside the Admin
+  // Portal shell (same sidebar/header) instead of switching to the candidate's
+  // DashboardLayout — that swap felt like leaving the app entirely rather than a smooth
+  // in-portal navigation. Candidates viewing their own report are unaffected.
+  if (user.role === 'admin') {
+    return (
+      <AdminLayout>
+        <ReportDetailPage />
+      </AdminLayout>
+    );
+  }
   return (
     <ProtectedRoute>
       <ReportDetailPage />
@@ -231,16 +243,24 @@ function App() {
                 </AdminRoute>
               } 
             />
-            <Route 
-              path="/admin/users" 
+            <Route
+              path="/admin/users"
               element={
                 <AdminRoute>
                   <AdminUsersPage />
                 </AdminRoute>
-              } 
+              }
             />
-            <Route 
-              path="/admin/interviews" 
+            <Route
+              path="/admin/users/:userId"
+              element={
+                <AdminRoute>
+                  <AdminUserProfilePage />
+                </AdminRoute>
+              }
+            />
+            <Route
+              path="/admin/interviews"
               element={
                 <AdminRoute>
                   <AdminInterviewsPage />
@@ -287,6 +307,11 @@ function App() {
                 </AdminRoute>
               }
             />
+
+            {/* A stale/typo'd /admin/... URL should stay inside the admin portal (and still
+                redirect a non-admin to /dashboard via AdminRoute) rather than falling through
+                to the global catch-all below and ejecting the admin to the public landing page. */}
+            <Route path="/admin/*" element={<AdminRoute><Navigate to="/admin" replace /></AdminRoute>} />
 
             {/* Catch-all Fallback */}
             <Route path="*" element={<Navigate to="/" replace />} />
