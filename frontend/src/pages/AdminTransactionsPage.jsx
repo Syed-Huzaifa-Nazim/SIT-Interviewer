@@ -1,22 +1,30 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import api from '../services/api';
-import PageHeader from '../components/ui/PageHeader';
-import Card from '../components/ui/Card';
 import Alert from '../components/ui/Alert';
-import Badge from '../components/ui/Badge';
-import SearchBar from '../components/ui/SearchBar';
-import Spinner from '../components/ui/Spinner';
-import DeleteButton from '../components/ui/DeleteButton';
 import Pagination from '../components/ui/Pagination';
+import DeleteButton from '../components/ui/DeleteButton';
+import { cn } from '@/lib/utils';
+import { Badge } from '@/components/shadcn/badge';
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/shadcn/table';
+import { StaggerRow } from '@/components/shadcn/motion';
+import { StatCard, StatGrid } from '@/components/shadcn/stat-card';
 import {
-  Coins,
-  TrendingUp,
-  TrendingDown,
-  Gift,
-  AlertTriangle
-} from 'lucide-react';
+  AdminPageHeader,
+  AdminSearch,
+  AdminEmpty,
+  AdminPageSkeleton,
+  AdminTableCard,
+} from '@/components/shadcn/page';
+import { Coins, TrendingUp, TrendingDown, Gift, AlertTriangle, Wallet } from 'lucide-react';
 
 const PAGE_SIZE = 10;
+
+const TYPE_CONFIG = {
+  purchase: { variant: 'success', Icon: TrendingUp },
+  consumption: { variant: 'destructive', Icon: TrendingDown },
+  admin_adjustment: { variant: 'warning', Icon: AlertTriangle },
+};
+const typeConfig = (type) => TYPE_CONFIG[type] || { variant: 'secondary', Icon: Gift };
 
 const AdminTransactionsPage = () => {
   const [transactions, setTransactions] = useState([]);
@@ -24,14 +32,16 @@ const AdminTransactionsPage = () => {
   const [error, setError] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [page, setPage] = useState(1);
-  useEffect(() => { setPage(1); }, [searchTerm]);
-  const paged = (arr) => arr.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  useEffect(() => {
+    setPage(1);
+  }, [searchTerm]);
 
   useEffect(() => {
     const fetchTransactions = async () => {
       try {
         const res = await api.get('/admin/transactions');
-        setTransactions(res.data);
+        setTransactions(res.data || []);
       } catch (err) {
         console.error(err);
         setError('Failed to fetch system transaction logs.');
@@ -52,124 +62,135 @@ const AdminTransactionsPage = () => {
     }
   };
 
-  const filteredTransactions = transactions.filter((t) => {
-    return (
-      t.user_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      t.user_email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      t.transaction_type.toLowerCase().includes(searchTerm.toLowerCase())
+  const filtered = useMemo(() => {
+    const q = searchTerm.toLowerCase();
+    if (!q) return transactions;
+    return transactions.filter((t) =>
+      [t.user_name, t.user_email, t.transaction_type]
+        .filter(Boolean)
+        .some((v) => String(v).toLowerCase().includes(q))
     );
-  });
+  }, [transactions, searchTerm]);
 
-  const getTypeConfig = (type) => {
-    switch (type) {
-      case 'purchase':
-        return { variant: 'success', Icon: TrendingUp };
-      case 'consumption':
-        return { variant: 'error', Icon: TrendingDown };
-      case 'admin_adjustment':
-        return { variant: 'warning', Icon: AlertTriangle };
-      default:
-        return { variant: 'default', Icon: Gift };
-    }
-  };
+  const totals = useMemo(
+    () =>
+      transactions.reduce(
+        (acc, t) => {
+          if (t.transaction_type === 'purchase') acc.revenue += t.amount || 0;
+          const delta = t.tokens_added || 0;
+          if (delta > 0) acc.granted += delta;
+          else acc.consumed += Math.abs(delta);
+          return acc;
+        },
+        { revenue: 0, granted: 0, consumed: 0 }
+      ),
+    [transactions]
+  );
 
-  if (loading) {
-    return (
-      <Card className="text-center max-w-md mx-auto my-12">
-        <Spinner label="Loading transactions log..." />
-      </Card>
-    );
-  }
+  const paged = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  if (loading) return <AdminPageSkeleton rows={6} cols={6} />;
 
   return (
     <div className="space-y-6">
-      <PageHeader
+      <AdminPageHeader
         icon={Coins}
         title="Transactions Auditor"
-        subtitle="Track token additions, deductions, purchases, and manual overrides."
-      />
+        subtitle="Token grants, deductions, purchases and manual overrides."
+      >
+        <AdminSearch
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          placeholder="Search by candidate name, email, or transaction type…"
+        />
+      </AdminPageHeader>
 
       {error && <Alert variant="error">{error}</Alert>}
 
-      <Card padding={false} className="p-4">
-        <SearchBar
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          placeholder="Search by candidate name, email, or transaction type..."
-        />
-      </Card>
+      <StatGrid cols={3}>
+        <StatCard index={0} label="Gross Revenue" value={totals.revenue} prefix="$" decimals={2} icon={Wallet} tone="success" />
+        <StatCard index={1} label="Tokens Granted" value={totals.granted} icon={TrendingUp} tone="primary" />
+        <StatCard index={2} label="Tokens Consumed" value={totals.consumed} icon={TrendingDown} tone="warning" />
+      </StatGrid>
 
-      <Card>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs border-collapse">
-            <thead>
-              <tr className="text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800">
-                <th className="py-3 font-bold">Candidate Details</th>
-                <th className="py-3 font-bold">Transaction Type</th>
-                <th className="py-3 font-bold text-center">Amount (USD)</th>
-                <th className="py-3 font-bold text-center">Tokens Delta</th>
-                <th className="py-3 font-bold text-right">Timestamp</th>
-                <th className="py-3 font-bold text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-              {filteredTransactions.length === 0 ? (
-                <tr>
-                  <td colSpan="6" className="py-8 text-center text-slate-500 dark:text-slate-400 text-xs">
-                    No token transaction records found.
-                  </td>
-                </tr>
-              ) : (
-                paged(filteredTransactions).map((item) => {
-                  const { variant, Icon: TypeIcon } = getTypeConfig(item.transaction_type);
-                  const isAddition = item.tokens_added > 0;
-
+      <AdminTableCard>
+        {filtered.length === 0 ? (
+          <AdminEmpty
+            icon={Coins}
+            title={searchTerm ? 'No transactions match your search' : 'No transactions recorded'}
+            message={
+              searchTerm
+                ? 'Try a different candidate name, email or type.'
+                : 'Token purchases and adjustments will appear here.'
+            }
+            filtered={!!searchTerm}
+            onClear={() => setSearchTerm('')}
+          />
+        ) : (
+          <>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Candidate</TableHead>
+                  <TableHead>Type</TableHead>
+                  <TableHead className="text-center">Amount</TableHead>
+                  <TableHead className="text-center">Tokens</TableHead>
+                  <TableHead className="hidden text-right md:table-cell">Timestamp</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {paged.map((item, i) => {
+                  const { variant, Icon } = typeConfig(item.transaction_type);
+                  const delta = item.tokens_added || 0;
+                  const isAddition = delta > 0;
                   return (
-                    <tr key={item.id} className="text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-900/40 transition-colors">
-                      <td className="py-4">
-                        <div className="font-bold text-slate-900 dark:text-slate-200">{item.user_name}</div>
-                        <div className="text-[10px] text-slate-500 dark:text-slate-400">{item.user_email}</div>
-                      </td>
-
-                      <td className="py-4">
-                        <Badge variant={variant}>
-                          <TypeIcon size={10} />
-                          {item.transaction_type.replace('_', ' ')}
+                    <StaggerRow
+                      key={item.id}
+                      index={i}
+                      className="border-b border-border transition-colors hover:bg-accent/60"
+                    >
+                      <TableCell>
+                        <div className="font-semibold text-foreground">{item.user_name}</div>
+                        <div className="text-[11px] text-muted-foreground">{item.user_email}</div>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={variant} size="sm" className="capitalize">
+                          <Icon />
+                          {String(item.transaction_type).replace(/_/g, ' ')}
                         </Badge>
-                      </td>
-
-                      <td className="py-4 text-center font-mono font-bold text-slate-900 dark:text-slate-200">
+                      </TableCell>
+                      <TableCell className="text-center font-mono font-bold text-foreground">
                         {item.amount > 0 ? `$${item.amount.toFixed(2)}` : '—'}
-                      </td>
-
-                      <td className="py-4 text-center font-mono font-bold">
-                        <span className={isAddition ? 'text-emerald-500 dark:text-emerald-400' : 'text-red-500 dark:text-red-400'}>
-                          {isAddition ? `+${item.tokens_added}` : item.tokens_added}
+                      </TableCell>
+                      <TableCell className="text-center font-mono font-bold">
+                        <span className={isAddition ? 'text-emerald-600 dark:text-emerald-400' : 'text-destructive'}>
+                          {isAddition ? `+${delta}` : delta}
                         </span>
-                      </td>
-
-                      <td className="py-4 text-right text-slate-500 dark:text-slate-400 font-mono text-[10px]">
+                      </TableCell>
+                      <TableCell className="hidden text-right font-mono text-[11px] text-muted-foreground md:table-cell">
                         {new Date(item.created_at).toLocaleString()}
-                      </td>
-
-                      <td className="py-4">
+                      </TableCell>
+                      <TableCell>
                         <div className="flex justify-end">
                           <DeleteButton
                             onConfirm={() => handleDelete(item.id)}
-                            confirmMessage={`Delete this ${item.transaction_type.replace('_', ' ')} transaction record permanently?`}
+                            confirmMessage={`Delete this ${String(item.transaction_type).replace(/_/g, ' ')} record permanently?`}
                             title="Delete Transaction"
                           />
                         </div>
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </StaggerRow>
                   );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-        <Pagination page={page} total={filteredTransactions.length} onChange={setPage} />
-      </Card>
+                })}
+              </TableBody>
+            </Table>
+            <div className={cn('border-t border-border px-3')}>
+              <Pagination page={page} total={filtered.length} onChange={setPage} />
+            </div>
+          </>
+        )}
+      </AdminTableCard>
     </div>
   );
 };

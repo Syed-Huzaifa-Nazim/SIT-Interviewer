@@ -1,13 +1,15 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import api from '../services/api';
-import PageHeader from '../components/ui/PageHeader';
-import Card from '../components/ui/Card';
 import Alert from '../components/ui/Alert';
-import Badge from '../components/ui/Badge';
-import Button from '../components/ui/Button';
-import Spinner from '../components/ui/Spinner';
 import { INTERVIEW_STATUS_LABELS } from '../utils/constants';
+import { cn } from '@/lib/utils';
+import { Badge, StatusBadge } from '@/components/shadcn/badge';
+import { Button } from '@/components/shadcn/button';
+import { Avatar, AvatarImage, AvatarFallback, initialsOf, Separator } from '@/components/shadcn/misc';
+import { StaggerItem, Reveal, AuroraBackdrop } from '@/components/shadcn/motion';
+import { scoreColor } from '@/components/shadcn/chart';
+import { AdminEmpty, AdminPageSkeleton } from '@/components/shadcn/page';
 import {
   ChevronLeft,
   UserCircle,
@@ -17,23 +19,24 @@ import {
   ArrowRight,
   ShieldAlert,
   Calendar,
+  Mail,
+  IdCard,
 } from 'lucide-react';
 
 const INTERVIEW_STATUS_VARIANTS = {
-  not_interviewed: 'neutral',
+  not_interviewed: 'secondary',
   invited: 'info',
   interview_completed: 'success',
   reinterview_pending: 'warning',
-  reinterview_approved: 'primary',
-  reinterview_rejected: 'error',
+  reinterview_approved: 'default',
+  reinterview_rejected: 'destructive',
 };
 
 /**
- * Admin Hub — single candidate profile: read-only identity + three cross-linked sections
- * (Interviews, Proctoring Snapshots, Approval History) so an admin investigating one
- * candidate never has to leave and manually re-search elsewhere. Editing and video
- * playback deliberately stay where they already work (the AdminUsersPage quick-edit
- * modal, and the interview report page respectively) rather than being duplicated here.
+ * Admin Hub — one candidate, with their interviews, proctoring evidence and approval
+ * history cross-linked in one place so an investigation never has to leave and re-search.
+ * Editing and video playback deliberately stay where they already work (the Manage Users
+ * quick-edit, and the report page) rather than being duplicated here.
  */
 const AdminUserProfilePage = () => {
   const { userId } = useParams();
@@ -65,180 +68,286 @@ const AdminUserProfilePage = () => {
       })
       .catch((err) => {
         if (cancelled) return;
-        setError(err.response?.data?.detail || err.response?.data?.message || 'Failed to load this candidate profile.');
+        setError(
+          err.response?.data?.detail || err.response?.data?.message || 'Failed to load this candidate profile.'
+        );
       })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [userId]);
+
+  const allApprovals = useMemo(
+    () =>
+      [...(approvals.pending || []), ...(approvals.decided || [])].sort(
+        (a, b) => new Date(b.requested_at) - new Date(a.requested_at)
+      ),
+    [approvals]
+  );
+
+  // Grouped by interview so the list shows one row per session rather than one per image.
+  const snapshotGroups = useMemo(() => {
+    const byInterview = new Map();
+    snapshots.forEach((s) => {
+      const key = s.interview_id ?? 'unlinked';
+      if (!byInterview.has(key)) byInterview.set(key, []);
+      byInterview.get(key).push(s);
+    });
+    return Array.from(byInterview.entries());
+  }, [snapshots]);
+
+  const bestScore = useMemo(() => {
+    const scored = interviews.filter((i) => typeof i.overall_score === 'number');
+    return scored.length ? Math.max(...scored.map((i) => i.overall_score)) : null;
+  }, [interviews]);
 
   const fmtDate = (iso) => (iso ? new Date(iso).toLocaleString() : '—');
 
-  if (loading) {
-    return (
-      <Card className="text-center max-w-md mx-auto my-12">
-        <Spinner label="Loading candidate profile..." />
-      </Card>
-    );
-  }
+  if (loading) return <AdminPageSkeleton rows={4} cols={3} />;
 
   if (error || !user) {
     return (
-      <div className="space-y-4 max-w-lg mx-auto my-12">
+      <div className="mx-auto my-12 max-w-lg space-y-4">
         <Alert variant="error">{error || 'Candidate not found.'}</Alert>
-        <Button variant="secondary" size="sm" icon={ChevronLeft} onClick={() => navigate('/admin/users')}>
-          Back to Manage Users
+        <Button variant="outline" size="sm" onClick={() => navigate('/admin/users')}>
+          <ChevronLeft /> Back to Manage Users
         </Button>
       </div>
     );
   }
 
-  const allApprovals = [...approvals.pending, ...approvals.decided]
-    .sort((a, b) => new Date(b.requested_at) - new Date(a.requested_at));
-
   return (
     <div className="space-y-6">
-      <button
-        onClick={() => navigate('/admin/users')}
-        className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 transition"
-      >
-        <ChevronLeft size={14} /> Back to Manage Users
-      </button>
+      <Button variant="ghost" size="sm" asChild className="-ml-2">
+        <Link to="/admin/users">
+          <ChevronLeft /> Back to Manage Users
+        </Link>
+      </Button>
 
-      <PageHeader
-        icon={UserCircle}
-        title={user.name}
-        subtitle={`${user.email}${user.cnic ? ` · ${user.cnic}` : ''}`}
-        action={
-          <div className="flex items-center gap-2 flex-wrap justify-end">
-            <Badge variant={user.status === 'active' ? 'success' : 'error'}>{user.status}</Badge>
-            <Badge variant={INTERVIEW_STATUS_VARIANTS[user.interview_status] || 'neutral'}>
+      {/* --------------------------------------------------------- identity card */}
+      <div className="relative overflow-hidden rounded-2xl border border-border bg-card p-5 lg:p-6">
+        <AuroraBackdrop />
+        <div className="relative flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex min-w-0 items-center gap-4">
+            <Avatar className="size-14 border border-border">
+              {user.profile_pic_url && <AvatarImage src={user.profile_pic_url} alt={user.name} />}
+              <AvatarFallback className="text-base">{initialsOf(user.name)}</AvatarFallback>
+            </Avatar>
+            <div className="min-w-0">
+              <h1 className="truncate text-xl font-extrabold tracking-tight text-foreground lg:text-2xl">
+                {user.name}
+              </h1>
+              <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                <span className="inline-flex items-center gap-1.5">
+                  <Mail className="size-3.5" />
+                  {user.email}
+                </span>
+                {user.cnic && (
+                  <span className="inline-flex items-center gap-1.5 font-mono">
+                    <IdCard className="size-3.5" />
+                    {user.cnic}
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+            {user.online ? (
+              <StatusBadge variant="success" pulse>
+                Online
+              </StatusBadge>
+            ) : (
+              <Badge variant="secondary">Offline</Badge>
+            )}
+            <Badge variant={user.status === 'active' ? 'success' : 'destructive'}>{user.status}</Badge>
+            <Badge variant={INTERVIEW_STATUS_VARIANTS[user.interview_status] || 'secondary'}>
               {INTERVIEW_STATUS_LABELS[user.interview_status] || user.interview_status}
             </Badge>
           </div>
-        }
-      />
+        </div>
 
-      {/* Interviews */}
-      <Card>
-        <h3 className="text-sm font-extrabold text-slate-800 dark:text-slate-200 mb-4 flex items-center gap-2">
-          <Video size={15} className="text-primary-500" /> Interviews
-          {interviews.length > 0 && <Badge variant="neutral">{interviews.length}</Badge>}
-        </h3>
-        {interviews.length === 0 ? (
-          <p className="text-xs text-slate-500 dark:text-slate-400 italic py-2">No interviews on record for this candidate.</p>
-        ) : (
-          <div className="space-y-2.5">
-            {interviews.map((itv) => (
-              <div key={itv.id} className="p-3.5 border border-slate-200 dark:border-slate-800 rounded-xl flex items-center justify-between gap-3 flex-wrap">
-                <div>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-bold text-slate-900 dark:text-slate-200 capitalize">{itv.job_role}</span>
-                    <Badge variant={itv.status === 'completed' ? 'success' : 'warning'}>{itv.status}</Badge>
-                    {itv.is_proctor_failed && (
-                      <Badge variant="error"><ShieldAlert size={10} className="mr-1" />Terminated</Badge>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-1 text-[10px] text-slate-500 dark:text-slate-400 mt-1">
-                    <Calendar size={10} />
-                    <span>{fmtDate(itv.created_at)}</span>
-                    {itv.status === 'completed' && itv.overall_score != null && (
-                      <span className="font-mono font-bold text-primary-600 dark:text-primary-400">· {itv.overall_score}%</span>
-                    )}
-                  </div>
-                </div>
-                {itv.status === 'completed' ? (
-                  <Link
-                    to={`/interview/report/${itv.id}`}
-                    className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary-600 dark:text-primary-400 hover:underline shrink-0"
-                  >
-                    View Report <ArrowRight size={12} />
-                  </Link>
-                ) : (
-                  <span className="text-[10px] text-slate-500 dark:text-slate-400 italic shrink-0">Awaiting completion</span>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </Card>
+        <Separator className="relative my-4" />
 
-      {/* Proctoring Snapshots */}
-      <Card>
-        <h3 className="text-sm font-extrabold text-slate-800 dark:text-slate-200 mb-4 flex items-center gap-2">
-          <ScanFace size={15} className="text-primary-500" /> Proctoring Snapshots
-          {snapshots.length > 0 && <Badge variant="neutral">{snapshots.length}</Badge>}
-        </h3>
-        {snapshots.length === 0 ? (
-          <p className="text-xs text-slate-500 dark:text-slate-400 italic py-2">No archived snapshots for this candidate.</p>
-        ) : (
-          <div className="space-y-2">
-            {(() => {
-              // Group by interview so one linked row per session, not one per image.
-              const byInterview = new Map();
-              snapshots.forEach((s) => {
-                const key = s.interview_id ?? 'unlinked';
-                if (!byInterview.has(key)) byInterview.set(key, []);
-                byInterview.get(key).push(s);
-              });
-              return Array.from(byInterview.entries()).map(([interviewId, group]) => (
-                <div key={interviewId} className="p-3 border border-slate-200 dark:border-slate-800 rounded-xl flex items-center justify-between gap-3">
-                  <div className="text-xs text-slate-600 dark:text-slate-300">
-                    <b className="text-slate-900 dark:text-slate-200">{group.length}</b> snapshot{group.length !== 1 ? 's' : ''}
-                    {interviewId !== 'unlinked' ? <> for interview #{interviewId}</> : <span className="text-slate-400 italic"> (not linked to a specific interview)</span>}
-                  </div>
-                  <Link
-                    to={interviewId !== 'unlinked' ? `/admin/logs?tab=snapshots&interview_id=${interviewId}` : '/admin/logs?tab=snapshots'}
-                    className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary-600 dark:text-primary-400 hover:underline shrink-0"
-                  >
-                    View <ArrowRight size={12} />
-                  </Link>
-                </div>
-              ));
-            })()}
-          </div>
-        )}
-      </Card>
+        <dl className="relative grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <Fact label="Interviews" value={interviews.length} />
+          <Fact
+            label="Best Score"
+            value={bestScore === null ? '—' : `${bestScore}%`}
+            color={bestScore === null ? undefined : scoreColor(bestScore)}
+          />
+          <Fact label="Snapshots" value={snapshots.length} />
+          <Fact label="Tokens" value={user.tokens_available ?? 0} />
+        </dl>
+      </div>
 
-      {/* Approval History */}
-      <Card>
-        <h3 className="text-sm font-extrabold text-slate-800 dark:text-slate-200 mb-4 flex items-center gap-2">
-          <ClipboardCheck size={15} className="text-primary-500" /> Approval History
-          {allApprovals.length > 0 && <Badge variant="neutral">{allApprovals.length}</Badge>}
-        </h3>
-        {allApprovals.length === 0 ? (
-          <p className="text-xs text-slate-500 dark:text-slate-400 italic py-2">No second-interview requests from this candidate.</p>
-        ) : (
-          <div className="space-y-2.5">
-            {allApprovals.map((req) => (
-              <div key={req.id} className="p-3.5 border border-slate-200 dark:border-slate-800 rounded-xl flex items-center justify-between gap-3 flex-wrap">
-                <div>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <Badge variant={req.status === 'approved' ? 'success' : req.status === 'rejected' ? 'error' : 'warning'}>
-                      {req.status}
-                    </Badge>
-                    <span className="text-[10px] text-slate-500 dark:text-slate-400">Requested {fmtDate(req.requested_at)}</span>
-                  </div>
-                  {req.decided_at && (
-                    <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-1">
-                      Decided {fmtDate(req.decided_at)} by {req.decided_by_name || 'an admin'}
+      {/* ------------------------------------------------------------ interviews */}
+      <Reveal>
+        <Section icon={Video} title="Interviews" count={interviews.length}>
+          {interviews.length === 0 ? (
+            <AdminEmpty icon={Video} title="No interviews on record" message="This candidate has not sat an interview yet." />
+          ) : (
+            <div className="space-y-2.5">
+              {interviews.map((itv, idx) => (
+                <StaggerItem key={itv.id} index={idx}>
+                  <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border p-3.5 transition-colors hover:border-primary/30">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-bold capitalize text-foreground">{itv.job_role}</span>
+                        <Badge variant={itv.status === 'completed' ? 'success' : 'warning'} size="sm">
+                          {itv.status}
+                        </Badge>
+                        {itv.is_proctor_failed && (
+                          <Badge variant="destructive" size="sm">
+                            <ShieldAlert /> Terminated
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                        <Calendar className="size-3" />
+                        {fmtDate(itv.created_at)}
+                        {itv.status === 'completed' && itv.overall_score != null && (
+                          <span className="font-mono font-bold" style={{ color: scoreColor(itv.overall_score) }}>
+                            · {itv.overall_score}%
+                          </span>
+                        )}
+                      </div>
                     </div>
-                  )}
+                    {itv.status === 'completed' ? (
+                      <Button variant="outline" size="sm" asChild className="shrink-0">
+                        <Link to={`/interview/report/${itv.id}`}>
+                          View Report <ArrowRight />
+                        </Link>
+                      </Button>
+                    ) : (
+                      <span className="shrink-0 text-[11px] italic text-muted-foreground">Awaiting completion</span>
+                    )}
+                  </div>
+                </StaggerItem>
+              ))}
+            </div>
+          )}
+        </Section>
+      </Reveal>
+
+      {/* ------------------------------------------------------------- snapshots */}
+      <Reveal>
+        <Section icon={ScanFace} title="Proctoring Snapshots" count={snapshots.length}>
+          {snapshotGroups.length === 0 ? (
+            <AdminEmpty icon={ScanFace} title="No archived snapshots" message="Nothing was captured for this candidate." />
+          ) : (
+            <div className="space-y-2">
+              {snapshotGroups.map(([interviewId, group]) => (
+                <div
+                  key={interviewId}
+                  className="flex items-center justify-between gap-3 rounded-xl border border-border p-3 transition-colors hover:border-primary/30"
+                >
+                  <p className="text-xs text-muted-foreground">
+                    <b className="text-foreground">{group.length}</b> snapshot{group.length === 1 ? '' : 's'}
+                    {interviewId !== 'unlinked' ? (
+                      <> for interview #{interviewId}</>
+                    ) : (
+                      <span className="italic"> (not linked to a specific interview)</span>
+                    )}
+                  </p>
+                  <Button variant="ghost" size="sm" asChild className="shrink-0">
+                    <Link
+                      to={
+                        interviewId !== 'unlinked'
+                          ? `/admin/logs?tab=snapshots&interview_id=${interviewId}`
+                          : '/admin/logs?tab=snapshots'
+                      }
+                    >
+                      View <ArrowRight />
+                    </Link>
+                  </Button>
                 </div>
-                {req.first_interview_id && (
-                  <Link
-                    to={`/interview/report/${req.first_interview_id}`}
-                    className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary-600 dark:text-primary-400 hover:underline shrink-0"
-                  >
-                    View First Interview <ArrowRight size={12} />
-                  </Link>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </Card>
+              ))}
+            </div>
+          )}
+        </Section>
+      </Reveal>
+
+      {/* -------------------------------------------------------------- approvals */}
+      <Reveal>
+        <Section icon={ClipboardCheck} title="Approval History" count={allApprovals.length}>
+          {allApprovals.length === 0 ? (
+            <AdminEmpty
+              icon={ClipboardCheck}
+              title="No second-interview requests"
+              message="This candidate has not asked for another attempt."
+            />
+          ) : (
+            <div className="space-y-2.5">
+              {allApprovals.map((req, idx) => (
+                <StaggerItem key={req.id} index={idx}>
+                  <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border p-3.5">
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge
+                          size="sm"
+                          variant={
+                            req.status === 'approved'
+                              ? 'success'
+                              : req.status === 'rejected'
+                                ? 'destructive'
+                                : 'warning'
+                          }
+                        >
+                          {req.status}
+                        </Badge>
+                        <span className="text-[11px] text-muted-foreground">
+                          Requested {fmtDate(req.requested_at)}
+                        </span>
+                      </div>
+                      {req.decided_at && (
+                        <p className="mt-1 text-[11px] text-muted-foreground">
+                          Decided {fmtDate(req.decided_at)} by {req.decided_by_name || 'an admin'}
+                        </p>
+                      )}
+                    </div>
+                    {req.first_interview_id && (
+                      <Button variant="ghost" size="sm" asChild className="shrink-0">
+                        <Link to={`/interview/report/${req.first_interview_id}`}>
+                          First interview <ArrowRight />
+                        </Link>
+                      </Button>
+                    )}
+                  </div>
+                </StaggerItem>
+              ))}
+            </div>
+          )}
+        </Section>
+      </Reveal>
     </div>
   );
 };
+
+const Section = ({ icon: Icon, title, count, children }) => (
+  <section className="rounded-xl border border-border bg-card p-5">
+    <h3 className="mb-4 flex items-center gap-2 text-sm font-extrabold text-foreground">
+      <Icon className="size-4 text-primary" /> {title}
+      {count > 0 && (
+        <Badge variant="secondary" size="sm">
+          {count}
+        </Badge>
+      )}
+    </h3>
+    {children}
+  </section>
+);
+
+const Fact = ({ label, value, color }) => (
+  <div className="rounded-lg border border-border bg-muted/40 px-3 py-2">
+    <dt className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{label}</dt>
+    <dd className={cn('mt-0.5 text-lg font-extrabold text-foreground')} style={color ? { color } : undefined}>
+      {value}
+    </dd>
+  </div>
+);
 
 export default AdminUserProfilePage;

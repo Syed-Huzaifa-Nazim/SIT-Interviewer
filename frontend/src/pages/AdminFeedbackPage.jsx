@@ -1,18 +1,19 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import api from '../services/api';
-import PageHeader from '../components/ui/PageHeader';
-import Card from '../components/ui/Card';
 import Alert from '../components/ui/Alert';
-import Badge from '../components/ui/Badge';
-import SearchBar from '../components/ui/SearchBar';
-import Spinner from '../components/ui/Spinner';
 import DeleteButton from '../components/ui/DeleteButton';
+import { cn } from '@/lib/utils';
+import { Badge } from '@/components/shadcn/badge';
+import { Separator } from '@/components/shadcn/misc';
+import { StaggerItem } from '@/components/shadcn/motion';
+import { StatCard, StatGrid } from '@/components/shadcn/stat-card';
 import {
-  MessageSquare,
-  Star,
-  Calendar,
-  AlertTriangle
-} from 'lucide-react';
+  AdminPageHeader,
+  AdminSearch,
+  AdminEmpty,
+  AdminPageSkeleton,
+} from '@/components/shadcn/page';
+import { MessageSquare, Star, Calendar, AlertTriangle, ThumbsUp } from 'lucide-react';
 
 const AdminFeedbackPage = () => {
   const [feedbacks, setFeedbacks] = useState([]);
@@ -24,7 +25,7 @@ const AdminFeedbackPage = () => {
     const fetchFeedbacks = async () => {
       try {
         const res = await api.get('/admin/feedback');
-        setFeedbacks(res.data);
+        setFeedbacks(res.data || []);
       } catch (err) {
         console.error(err);
         setError('Failed to fetch platform feedbacks.');
@@ -45,105 +46,143 @@ const AdminFeedbackPage = () => {
     }
   };
 
-  const filteredFeedbacks = feedbacks.filter((f) => {
-    return (
-      f.user_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      f.user_email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      f.feedback_text.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (f.issues_reported && f.issues_reported.toLowerCase().includes(searchTerm.toLowerCase()))
+  const filtered = useMemo(() => {
+    const q = searchTerm.toLowerCase();
+    if (!q) return feedbacks;
+    return feedbacks.filter((f) =>
+      [f.user_name, f.user_email, f.feedback_text, f.issues_reported]
+        .filter(Boolean)
+        .some((v) => String(v).toLowerCase().includes(q))
     );
-  });
+  }, [feedbacks, searchTerm]);
 
-  if (loading) {
-    return (
-      <Card className="text-center max-w-md mx-auto my-12">
-        <Spinner label="Loading platform feedbacks..." />
-      </Card>
-    );
-  }
+  // Surfaced up front because they are the reason to open this page: an average tells you
+  // whether the platform is working, and the issue count is the queue that needs action.
+  const stats = useMemo(() => {
+    if (!feedbacks.length) return { avg: null, withIssues: 0, positive: 0 };
+    const total = feedbacks.reduce((s, f) => s + (f.rating || 0), 0);
+    return {
+      avg: total / feedbacks.length,
+      withIssues: feedbacks.filter((f) => f.issues_reported).length,
+      positive: feedbacks.filter((f) => (f.rating || 0) >= 4).length,
+    };
+  }, [feedbacks]);
+
+  if (loading) return <AdminPageSkeleton rows={4} cols={3} />;
 
   return (
     <div className="space-y-6">
-      <PageHeader
+      <AdminPageHeader
         icon={MessageSquare}
-        title="Candidate Feedbacks"
-        subtitle="Review candidate experiences, star ratings, and reported bugs."
-      />
+        title="Candidate Feedback"
+        subtitle="Star ratings, written remarks and reported technical issues."
+      >
+        <AdminSearch
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          placeholder="Search by candidate, keywords, or reported issue…"
+        />
+      </AdminPageHeader>
 
       {error && <Alert variant="error">{error}</Alert>}
 
-      <Card padding={false} className="p-4">
-        <SearchBar
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          placeholder="Search by candidate, content keywords, or issues..."
+      <StatGrid cols={3}>
+        <StatCard
+          index={0}
+          label="Average Rating"
+          formatted={stats.avg === null ? '—' : `${stats.avg.toFixed(1)} / 5`}
+          icon={Star}
+          tone={stats.avg >= 4 ? 'success' : stats.avg >= 3 ? 'warning' : 'danger'}
+          hint={`${feedbacks.length} submission${feedbacks.length === 1 ? '' : 's'}`}
         />
-      </Card>
+        <StatCard index={1} label="Positive (4★+)" value={stats.positive} icon={ThumbsUp} tone="success" />
+        <StatCard
+          index={2}
+          label="Issues Reported"
+          value={stats.withIssues}
+          icon={AlertTriangle}
+          tone={stats.withIssues > 0 ? 'danger' : 'neutral'}
+          hint={stats.withIssues > 0 ? 'needs review' : 'nothing outstanding'}
+        />
+      </StatGrid>
 
-      <div className="space-y-4">
-        {filteredFeedbacks.length === 0 ? (
-          <Card className="text-center py-12">
-            <p className="text-slate-500 dark:text-slate-400 text-xs">No mock feedbacks found matching your search.</p>
-          </Card>
-        ) : (
-          filteredFeedbacks.map((item) => (
-            <Card key={item.id} variant="interactive" className="space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 border-b border-slate-200 dark:border-slate-800 pb-3">
-                <div className="space-y-0.5">
-                  <h4 className="font-bold text-sm text-slate-900 dark:text-slate-200">{item.user_name}</h4>
-                  <span className="text-[10px] text-slate-500 dark:text-slate-400 block">{item.user_email}</span>
-                </div>
-
-                <div className="flex items-center gap-4 shrink-0">
-                  <div className="flex items-center gap-0.5 text-yellow-500">
-                    {[...Array(5)].map((_, i) => (
-                      <Star
-                        key={i}
-                        size={12}
-                        fill={i < item.rating ? 'currentColor' : 'none'}
-                        className={i < item.rating ? 'text-yellow-500' : 'text-slate-300 dark:text-slate-700'}
-                      />
-                    ))}
+      {filtered.length === 0 ? (
+        <div className="rounded-xl border border-border bg-card">
+          <AdminEmpty
+            icon={MessageSquare}
+            title={searchTerm ? 'No feedback matches your search' : 'No feedback yet'}
+            message={
+              searchTerm
+                ? 'Try a different candidate name, keyword or issue.'
+                : 'Candidate remarks will appear here once interviews are completed.'
+            }
+            filtered={!!searchTerm}
+            onClear={() => setSearchTerm('')}
+          />
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+          {filtered.map((item, idx) => (
+            <StaggerItem key={item.id} index={idx}>
+              <article className="flex h-full flex-col rounded-xl border border-border bg-card p-4 transition-colors hover:border-primary/30">
+                <header className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <h4 className="truncate text-sm font-bold text-foreground">{item.user_name}</h4>
+                    <span className="block truncate text-[11px] text-muted-foreground">{item.user_email}</span>
                   </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <Stars rating={item.rating} />
+                    <DeleteButton
+                      onConfirm={() => handleDelete(item.id)}
+                      confirmMessage={`Delete this feedback from ${item.user_name} permanently?`}
+                      title="Delete Feedback"
+                    />
+                  </div>
+                </header>
 
-                  <span className="text-[10px] text-slate-500 dark:text-slate-400 font-semibold flex items-center gap-1">
-                    <Calendar size={10} />
-                    {new Date(item.created_at).toLocaleDateString()}
-                  </span>
+                <Separator className="my-3" />
 
-                  <DeleteButton
-                    onConfirm={() => handleDelete(item.id)}
-                    confirmMessage={`Delete this feedback from ${item.user_name} permanently?`}
-                    title="Delete Feedback"
-                  />
-                </div>
-              </div>
+                {item.issues_reported && (
+                  <div className="mb-3 flex items-start gap-2 rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2">
+                    <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-destructive" />
+                    <p className="text-[11px] leading-relaxed text-destructive">
+                      <span className="font-bold">Reported issue: </span>
+                      {item.issues_reported}
+                    </p>
+                  </div>
+                )}
 
-              {item.issues_reported && (
-                <Alert variant="error" className="max-w-lg">
-                  <span className="font-bold">Reported Technical Glitch:</span> {item.issues_reported}
-                </Alert>
-              )}
-
-              <div className="space-y-1.5">
-                <span className="text-[9px] text-slate-500 dark:text-slate-400 uppercase tracking-widest block font-bold">Review Comment</span>
-                <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed font-medium whitespace-pre-wrap">
+                <p className="flex-1 whitespace-pre-wrap text-xs font-medium leading-relaxed text-muted-foreground">
                   &ldquo;{item.feedback_text || 'No review remarks provided.'}&rdquo;
                 </p>
-              </div>
 
-              <div className="pt-2 flex items-center gap-2">
-                <span className="text-[9px] text-slate-500 dark:text-slate-400 font-semibold">Target Prep focus:</span>
-                <Badge variant="default" className="capitalize">
-                  {item.job_role}
-                </Badge>
-              </div>
-            </Card>
-          ))
-        )}
-      </div>
+                <footer className="mt-3 flex items-center justify-between gap-2 pt-2">
+                  <Badge variant="secondary" size="sm" className="capitalize">
+                    {item.job_role || 'unspecified'}
+                  </Badge>
+                  <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
+                    <Calendar className="size-3" />
+                    {new Date(item.created_at).toLocaleDateString()}
+                  </span>
+                </footer>
+              </article>
+            </StaggerItem>
+          ))}
+        </div>
+      )}
     </div>
   );
 };
+
+const Stars = ({ rating = 0 }) => (
+  <span className="flex items-center gap-0.5" aria-label={`${rating} out of 5`}>
+    {Array.from({ length: 5 }).map((_, i) => (
+      <Star
+        key={i}
+        className={cn('size-3', i < rating ? 'fill-amber-400 text-amber-400' : 'text-muted-foreground/25')}
+      />
+    ))}
+  </span>
+);
 
 export default AdminFeedbackPage;
