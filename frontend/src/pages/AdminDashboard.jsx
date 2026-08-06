@@ -1,33 +1,64 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Link as RouterLink } from 'react-router-dom';
 import api from '../services/api';
-import PageHeader from '../components/ui/PageHeader';
-import StatCard from '../components/ui/StatCard';
-import Card, { CardHeader, CardTitle } from '../components/ui/Card';
+import {
+  AreaChart,
+  Area,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Cell,
+  PieChart,
+  Pie,
+} from 'recharts';
+import { cn } from '@/lib/utils';
+import { Button } from '@/components/shadcn/button';
+import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardAction } from '@/components/shadcn/card';
+import { Badge, StatusBadge } from '@/components/shadcn/badge';
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/shadcn/table';
+import { Separator, Skeleton, Tooltip as Hint } from '@/components/shadcn/misc';
+import { StatCard, StatGrid } from '@/components/shadcn/stat-card';
+import { Reveal, StaggerRow, AuroraBackdrop, GradientBorderCard } from '@/components/shadcn/motion';
+import {
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+  scoreColor,
+} from '@/components/shadcn/chart';
 import Alert from '../components/ui/Alert';
-import Badge from '../components/ui/Badge';
-import Button from '../components/ui/Button';
-import Spinner from '../components/ui/Spinner';
 import Pagination from '../components/ui/Pagination';
-
-const PAGE_SIZE = 10;
 import {
   Users,
   Video,
-  DollarSign,
   Coins,
   MessageSquare,
   Activity,
   ShieldAlert,
   CheckCircle,
   Unlock,
-  Sparkles,
-  RefreshCw
+  RefreshCw,
+  ArrowRight,
+  TrendingUp,
+  AlertTriangle,
+  Star,
 } from 'lucide-react';
+
+const PAGE_SIZE = 10;
+const TREND_DAYS = 14;
+
+/** Local YYYY-MM-DD key. Deliberately not toISOString(), which converts to UTC and would
+ *  file an evening interview under the following day for admins in PKT (UTC+5). */
+const dayKey = (d) => {
+  const dt = new Date(d);
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+};
 
 const AdminDashboard = () => {
   const [stats, setStats] = useState(null);
   const [users, setUsers] = useState([]);
+  const [interviews, setInterviews] = useState([]);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -35,25 +66,30 @@ const AdminDashboard = () => {
   const [success, setSuccess] = useState('');
   const [page, setPage] = useState(1);
 
-  const loadDashboardData = async () => {
+  const loadDashboardData = useCallback(async () => {
     try {
       setError('');
-      const statsRes = await api.get('/admin/stats');
+      // Fetched together rather than in sequence: three round trips to Mumbai run back to
+      // back is a visibly slower dashboard than three in flight at once.
+      const [statsRes, usersRes, interviewsRes] = await Promise.all([
+        api.get('/admin/stats'),
+        api.get('/admin/users'),
+        api.get('/admin/interviews'),
+      ]);
       setStats(statsRes.data);
-
-      const usersRes = await api.get('/admin/users');
       setUsers(usersRes.data || []);
+      setInterviews(interviewsRes.data || []);
     } catch (err) {
       console.error(err);
       setError('Failed to fetch platform metrics and statistics.');
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     loadDashboardData();
-  }, []);
+  }, [loadDashboardData]);
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -77,205 +113,504 @@ const AdminDashboard = () => {
     }
   };
 
+  /* ----------------------------------------------------------------- derived data */
+
+  // The /admin/stats endpoint returns counts only, so the trends below are derived from
+  // the interview list the page already loads — no extra endpoint, and the numbers cannot
+  // disagree with the table underneath them.
+  const trend = useMemo(() => {
+    const buckets = new Map();
+    for (let i = TREND_DAYS - 1; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      buckets.set(dayKey(d), {
+        date: dayKey(d),
+        label: d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' }),
+        completed: 0,
+        terminated: 0,
+      });
+    }
+    interviews.forEach((iv) => {
+      if (!iv.created_at) return;
+      const bucket = buckets.get(dayKey(iv.created_at));
+      if (!bucket) return; // older than the window
+      if (iv.is_proctor_failed) bucket.terminated += 1;
+      else if (iv.status === 'completed') bucket.completed += 1;
+    });
+    return Array.from(buckets.values());
+  }, [interviews]);
+
+  const scoreBands = useMemo(() => {
+    const bands = [
+      { band: '0–39', min: 0, max: 39, count: 0, color: scoreColor(10) },
+      { band: '40–59', min: 40, max: 59, count: 0, color: scoreColor(45) },
+      { band: '60–79', min: 60, max: 79, count: 0, color: scoreColor(65) },
+      { band: '80–100', min: 80, max: 100, count: 0, color: scoreColor(90) },
+    ];
+    interviews.forEach((iv) => {
+      if (iv.overall_score === null || iv.overall_score === undefined) return;
+      const b = bands.find((x) => iv.overall_score >= x.min && iv.overall_score <= x.max);
+      if (b) b.count += 1;
+    });
+    return bands;
+  }, [interviews]);
+
+  const outcomes = useMemo(() => {
+    let completed = 0;
+    let terminated = 0;
+    let active = 0;
+    interviews.forEach((iv) => {
+      if (iv.is_proctor_failed) terminated += 1;
+      else if (iv.status === 'completed') completed += 1;
+      else active += 1;
+    });
+    return [
+      { name: 'Completed', value: completed, fill: 'var(--color-chart-2)' },
+      { name: 'Terminated', value: terminated, fill: '#dc2626' },
+      { name: 'In progress', value: active, fill: 'var(--color-chart-3)' },
+    ].filter((d) => d.value > 0);
+  }, [interviews]);
+
+  const avgScore = useMemo(() => {
+    const scored = interviews.filter((i) => typeof i.overall_score === 'number');
+    if (!scored.length) return null;
+    return scored.reduce((sum, i) => sum + i.overall_score, 0) / scored.length;
+  }, [interviews]);
+
+  const last7 = trend.slice(-7).reduce((s, d) => s + d.completed, 0);
+  const prev7 = trend.slice(0, 7).reduce((s, d) => s + d.completed, 0);
+  const weekDelta = last7 - prev7;
+
+  const flaggedUsers = users.filter((u) => u.status === 'banned');
+  const pagedFlagged = flaggedUsers.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const onlineCount = users.filter((u) => u.online).length;
+
+  /* ------------------------------------------------------------------- rendering */
+
   if (loading) {
     return (
-      <Card className="text-center max-w-md mx-auto my-12">
-        <Spinner label="Loading administrative metrics..." />
-      </Card>
+      <div className="space-y-8">
+        <Skeleton className="h-28 w-full rounded-2xl" />
+        <StatGrid>
+          {[0, 1, 2, 3].map((i) => (
+            <StatCard key={i} loading />
+          ))}
+        </StatGrid>
+        <div className="grid gap-6 lg:grid-cols-3">
+          <Skeleton className="h-80 rounded-xl lg:col-span-2" />
+          <Skeleton className="h-80 rounded-xl" />
+        </div>
+      </div>
     );
   }
 
-  const flaggedUsers = users.filter(u => u.status === 'banned');
-  const pagedFlagged = flaggedUsers.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-
   return (
     <div className="space-y-8">
-      <PageHeader
-        icon={Sparkles}
-        title="Interviewer.AI Admin Hub"
-        subtitle="Real-time statistics, token pools, and student integrity proctor monitoring."
-        action={
-          <div className="flex items-center gap-3">
-            <div className="text-[10px] text-slate-500 dark:text-slate-400 font-sans border border-slate-200 dark:border-slate-800 px-3 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-950">
-              Global System: <span className="text-emerald-500 dark:text-emerald-400 font-bold">Online</span>
+      {/* ------------------------------------------------------------------ hero */}
+      <div className="relative overflow-hidden rounded-2xl border border-border bg-card p-6 lg:p-8">
+        <AuroraBackdrop />
+        <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <div className="mb-2 flex flex-wrap items-center gap-2">
+              <StatusBadge variant="success" pulse>
+                System Online
+              </StatusBadge>
+              {onlineCount > 0 && (
+                <Badge variant="info">
+                  {onlineCount} candidate{onlineCount === 1 ? '' : 's'} online
+                </Badge>
+              )}
             </div>
-            <Button variant="secondary" size="sm" icon={RefreshCw} loading={refreshing} onClick={handleRefresh}>
-              Refresh
-            </Button>
+            <h1 className="text-2xl font-extrabold tracking-tight text-foreground lg:text-3xl">
+              Admin Control Center
+            </h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Live intake metrics, integrity monitoring and candidate throughput.
+            </p>
           </div>
-        }
-      />
+          <Button variant="outline" onClick={handleRefresh} disabled={refreshing} className="shrink-0 self-start">
+            <RefreshCw className={cn('size-4', refreshing && 'animate-spin')} />
+            {refreshing ? 'Refreshing…' : 'Refresh'}
+          </Button>
+        </div>
+      </div>
 
       {error && <Alert variant="error">{error}</Alert>}
       {success && <Alert variant="success">{success}</Alert>}
 
+      {/* ----------------------------------------------------------------- tiles */}
       {stats && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-          <RouterLink to="/admin/users" className="block">
+        <StatGrid>
+          <RouterLink to="/admin/users" className="block focus-visible:outline-none">
             <StatCard
-              title="Registered Students"
+              index={0}
+              label="Registered Candidates"
               value={stats.users.total}
-              subtext={`${stats.users.active} Active • ${stats.users.banned} Flagged`}
               icon={Users}
-              color="primary"
+              tone="primary"
+              hint={`${stats.users.active} active · ${stats.users.banned} flagged`}
             />
           </RouterLink>
-          <RouterLink to="/admin/interviews" className="block">
+          <RouterLink to="/admin/interviews" className="block focus-visible:outline-none">
             <StatCard
-              title="Intake Completed"
+              index={1}
+              label="Interviews Completed"
               value={stats.interviews.completed}
-              subtext={`${stats.interviews.daily} taken in last 24h`}
               icon={Video}
-              color="violet"
+              tone="success"
+              delta={weekDelta}
+              deltaGood="up"
+              hint={`${stats.interviews.daily} in last 24h`}
             />
           </RouterLink>
-          <RouterLink to="/admin/transactions" className="block">
+          <RouterLink to="/admin/scoring" className="block focus-visible:outline-none">
             <StatCard
-              title="Platform Revenue"
-              value={`$${stats.revenue.total}`}
-              subtext="Stripe gross sales"
-              icon={DollarSign}
-              color="success"
+              index={2}
+              label="Average Score"
+              formatted={
+                avgScore === null ? '—' : <span style={{ color: scoreColor(avgScore) }}>{avgScore.toFixed(1)}%</span>
+              }
+              icon={TrendingUp}
+              tone="accent"
+              hint={`${interviews.filter((i) => typeof i.overall_score === 'number').length} scored`}
             />
           </RouterLink>
-          <RouterLink to="/admin/transactions" className="block">
+          <RouterLink to="/admin/transactions" className="block focus-visible:outline-none">
             <StatCard
-              title="Tokens Consumed"
+              index={3}
+              label="Tokens Consumed"
               value={stats.tokens.total_consumed}
-              subtext={`${stats.tokens.total_available} available in pool`}
               icon={Coins}
-              color="warning"
+              tone="warning"
+              hint={`${stats.tokens.total_available} available in pool`}
             />
           </RouterLink>
-        </div>
+        </StatGrid>
       )}
 
-      <Card className="relative overflow-hidden space-y-4">
-        <div className="absolute top-0 right-0 w-32 h-32 bg-red-500/5 rounded-full blur-2xl pointer-events-none" />
-        <CardHeader className="flex items-center justify-between gap-2 pb-3 mb-0 border-slate-200 dark:border-slate-800">
-          <div className="flex items-center gap-2">
-            <ShieldAlert className="text-red-400 shrink-0" size={20} />
-            <CardTitle className="text-base mb-0">Proctor Security & Ban Audit Alerts</CardTitle>
-          </div>
-          <RouterLink to="/admin/users" className="text-xs text-primary-500 dark:text-primary-400 hover:underline shrink-0">
-            Manage Users
-          </RouterLink>
-        </CardHeader>
-
-        {flaggedUsers.length === 0 ? (
-          <div className="py-6 text-center text-slate-500 dark:text-slate-400 text-xs">
-            <CheckCircle className="mx-auto text-emerald-500/30 mb-2" size={24} />
-            All candidate compliance profiles are clean. No active locks or day-bans.
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse text-xs">
-              <thead>
-                <tr className="border-b border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400">
-                  <th className="py-3 font-semibold">Student Detail</th>
-                  <th className="py-3 font-semibold">Job Focus</th>
-                  <th className="py-3 font-semibold">Status Reason</th>
-                  <th className="py-3 font-semibold text-right">Action</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                {pagedFlagged.map(student => (
-                  <tr key={student.id} className="hover:bg-slate-50 dark:hover:bg-slate-900/40 transition-colors">
-                    <td className="py-3.5">
-                      <span className="font-bold text-slate-900 dark:text-slate-200 block">{student.name}</span>
-                      <span className="text-[10px] text-slate-500 dark:text-slate-400">{student.email}</span>
-                    </td>
-                    <td className="py-3.5 capitalize text-slate-600 dark:text-slate-300">{student.job_role}</td>
-                    <td className="py-3.5">
-                      <Badge variant="danger">Banned (3x Warnings Exceeded)</Badge>
-                    </td>
-                    <td className="py-3.5 text-right">
-                      <Button
-                        variant="success"
-                        size="sm"
-                        icon={Unlock}
-                        onClick={() => handleQuickUnban(student.id)}
-                        disabled={actionLoading}
-                        className="ml-auto"
-                      >
-                        Reopen Access
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-        <Pagination page={page} total={flaggedUsers.length} onChange={setPage} />
-      </Card>
-
-      {stats && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <Card className="space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
-              <div className="flex items-center gap-2">
-                <MessageSquare className="text-primary-400" size={18} />
-                <h3 className="font-bold text-base text-slate-900 dark:text-white">Mock Feedback Log</h3>
-              </div>
-              <RouterLink to="/admin/feedback" className="text-xs text-primary-500 dark:text-primary-400 hover:underline">
-                View All
-              </RouterLink>
-            </div>
-
-            <div className="space-y-4 divide-y divide-slate-200 dark:divide-slate-800 max-h-96 overflow-y-auto pr-1">
-              {stats.feedbacks.length === 0 ? (
-                <p className="text-xs text-slate-500 dark:text-slate-400 text-center py-8">No feedback submissions received yet.</p>
+      {/* ---------------------------------------------------------------- charts */}
+      <div className="grid gap-6 lg:grid-cols-3">
+        <Reveal className="lg:col-span-2">
+          <Card className="h-full">
+            <CardHeader>
+              <CardTitle>Interview Activity</CardTitle>
+              <CardDescription>Completed vs auto-terminated, last {TREND_DAYS} days</CardDescription>
+              <CardAction>
+                <Button variant="ghost" size="sm" asChild>
+                  <RouterLink to="/admin/interviews">
+                    All interviews <ArrowRight />
+                  </RouterLink>
+                </Button>
+              </CardAction>
+            </CardHeader>
+            <CardContent>
+              {interviews.length === 0 ? (
+                <EmptyChart message="No interviews recorded yet." />
               ) : (
-                stats.feedbacks.map((f, idx) => (
-                  <div key={f.id} className={`text-xs space-y-1.5 pt-4 ${idx === 0 ? 'pt-0' : ''}`}>
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-slate-900 dark:text-slate-200">{f.user_name}</span>
-                      <span className="text-yellow-500 dark:text-yellow-400 font-bold">{'★'.repeat(f.rating)}{'☆'.repeat(5 - f.rating)}</span>
-                    </div>
-                    {f.issues_reported && (
-                      <div className="px-2 py-1 bg-red-500/5 text-[10px] text-red-500 dark:text-red-400 rounded border border-red-500/10">
-                        Issue: {f.issues_reported}
+                <ChartContainer
+                  className="aspect-auto h-64 w-full"
+                  config={{
+                    completed: { label: 'Completed', color: 'var(--color-chart-2)' },
+                    terminated: { label: 'Terminated', color: '#dc2626' },
+                  }}
+                >
+                  <AreaChart data={trend} margin={{ left: -18, right: 8, top: 8 }}>
+                    <defs>
+                      <linearGradient id="fillCompleted" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="var(--color-completed)" stopOpacity={0.7} />
+                        <stop offset="95%" stopColor="var(--color-completed)" stopOpacity={0.05} />
+                      </linearGradient>
+                      <linearGradient id="fillTerminated" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="var(--color-terminated)" stopOpacity={0.6} />
+                        <stop offset="95%" stopColor="var(--color-terminated)" stopOpacity={0.05} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid vertical={false} strokeDasharray="3 3" />
+                    <XAxis dataKey="label" tickLine={false} axisLine={false} tickMargin={8} minTickGap={16} />
+                    <YAxis tickLine={false} axisLine={false} allowDecimals={false} width={40} />
+                    <ChartTooltip content={<ChartTooltipContent indicator="line" />} />
+                    <Area
+                      dataKey="completed"
+                      type="monotone"
+                      stroke="var(--color-completed)"
+                      strokeWidth={2}
+                      fill="url(#fillCompleted)"
+                      stackId="a"
+                    />
+                    <Area
+                      dataKey="terminated"
+                      type="monotone"
+                      stroke="var(--color-terminated)"
+                      strokeWidth={2}
+                      fill="url(#fillTerminated)"
+                      stackId="a"
+                    />
+                  </AreaChart>
+                </ChartContainer>
+              )}
+            </CardContent>
+          </Card>
+        </Reveal>
+
+        <Reveal delay={0.08}>
+          <Card className="h-full">
+            <CardHeader>
+              <CardTitle>Outcomes</CardTitle>
+              <CardDescription>All recorded sessions</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {outcomes.length === 0 ? (
+                <EmptyChart message="Nothing to summarise yet." />
+              ) : (
+                <>
+                  <ChartContainer
+                    className="aspect-auto h-44 w-full"
+                    config={{
+                      Completed: { label: 'Completed', color: 'var(--color-chart-2)' },
+                      Terminated: { label: 'Terminated', color: '#dc2626' },
+                      'In progress': { label: 'In progress', color: 'var(--color-chart-3)' },
+                    }}
+                  >
+                    <PieChart>
+                      <ChartTooltip content={<ChartTooltipContent hideLabel />} />
+                      <Pie data={outcomes} dataKey="value" nameKey="name" innerRadius={48} outerRadius={72} paddingAngle={2} strokeWidth={0}>
+                        {outcomes.map((entry) => (
+                          <Cell key={entry.name} fill={entry.fill} />
+                        ))}
+                      </Pie>
+                    </PieChart>
+                  </ChartContainer>
+                  <div className="mt-2 space-y-1.5">
+                    {outcomes.map((o) => (
+                      <div key={o.name} className="flex items-center gap-2 text-xs">
+                        <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: o.fill }} />
+                        <span className="text-muted-foreground">{o.name}</span>
+                        <span className="ml-auto font-mono font-bold text-foreground">{o.value}</span>
                       </div>
-                    )}
-                    <p className="text-slate-500 dark:text-slate-400 leading-relaxed">{f.feedback_text}</p>
+                    ))}
                   </div>
-                ))
+                </>
               )}
-            </div>
+            </CardContent>
           </Card>
+        </Reveal>
+      </div>
 
-          <Card className="space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
-              <div className="flex items-center gap-2">
-                <Activity className="text-indigo-400" size={18} />
-                <h3 className="font-bold text-base text-slate-900 dark:text-white">System Audit Trails</h3>
-              </div>
-              <RouterLink to="/admin/logs" className="text-xs text-primary-500 dark:text-primary-400 hover:underline">
-                View All
-              </RouterLink>
-            </div>
+      {/* -------------------------------------------------------- score bands */}
+      <Reveal>
+        <Card>
+          <CardHeader>
+            <CardTitle>Score Distribution</CardTitle>
+            <CardDescription>How candidate results cluster across bands</CardDescription>
+            <CardAction>
+              <Button variant="ghost" size="sm" asChild>
+                <RouterLink to="/admin/scoring">
+                  Scoring analytics <ArrowRight />
+                </RouterLink>
+              </Button>
+            </CardAction>
+          </CardHeader>
+          <CardContent>
+            {scoreBands.every((b) => b.count === 0) ? (
+              <EmptyChart message="No scored interviews yet." />
+            ) : (
+              <ChartContainer className="aspect-auto h-56 w-full" config={{ count: { label: 'Candidates' } }}>
+                <BarChart data={scoreBands} margin={{ left: -18, right: 8, top: 8 }}>
+                  <CartesianGrid vertical={false} strokeDasharray="3 3" />
+                  <XAxis dataKey="band" tickLine={false} axisLine={false} tickMargin={8} />
+                  <YAxis tickLine={false} axisLine={false} allowDecimals={false} width={40} />
+                  <ChartTooltip content={<ChartTooltipContent hideIndicator />} />
+                  <Bar dataKey="count" radius={[6, 6, 0, 0]}>
+                    {scoreBands.map((b) => (
+                      <Cell key={b.band} fill={b.color} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ChartContainer>
+            )}
+          </CardContent>
+        </Card>
+      </Reveal>
 
-            <div className="space-y-3.5 divide-y divide-slate-200 dark:divide-slate-800 max-h-96 overflow-y-auto pr-1 font-mono text-[10px]">
-              {stats.logs.length === 0 ? (
-                <p className="text-slate-500 dark:text-slate-400 text-center py-8 font-sans">No administrative actions logged.</p>
-              ) : (
-                stats.logs.map((log, idx) => (
-                  <div key={log.id} className={`pt-3.5 ${idx === 0 ? 'pt-0' : ''} space-y-1`}>
-                    <div className="flex items-center justify-between text-slate-500 dark:text-slate-400">
-                      <span className="font-bold text-primary-500 dark:text-primary-400">{log.action}</span>
-                      <span>{new Date(log.created_at).toLocaleTimeString()}</span>
+      {/* ------------------------------------------------------ integrity alerts */}
+      <Reveal>
+        {flaggedUsers.length > 0 ? (
+          <GradientBorderCard>
+            <FlaggedPanel
+              flaggedUsers={flaggedUsers}
+              pagedFlagged={pagedFlagged}
+              page={page}
+              setPage={setPage}
+              actionLoading={actionLoading}
+              onUnban={handleQuickUnban}
+            />
+          </GradientBorderCard>
+        ) : (
+          <Card>
+            <CardContent className="py-10 text-center">
+              <CheckCircle className="mx-auto mb-3 size-8 text-emerald-500/50" />
+              <p className="text-sm font-semibold text-foreground">All candidate profiles are clear</p>
+              <p className="text-xs text-muted-foreground">No active locks or integrity bans.</p>
+            </CardContent>
+          </Card>
+        )}
+      </Reveal>
+
+      {/* -------------------------------------------------- feedback + audit log */}
+      {stats && (
+        <div className="grid gap-6 lg:grid-cols-2">
+          <Reveal>
+            <Card className="h-full">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <MessageSquare className="size-4 text-primary" /> Recent Feedback
+                </CardTitle>
+                <CardAction>
+                  <Button variant="ghost" size="sm" asChild>
+                    <RouterLink to="/admin/feedback">
+                      View all <ArrowRight />
+                    </RouterLink>
+                  </Button>
+                </CardAction>
+              </CardHeader>
+              <CardContent className="max-h-96 space-y-4 overflow-y-auto">
+                {stats.feedbacks.length === 0 ? (
+                  <p className="py-8 text-center text-xs text-muted-foreground">No feedback submissions yet.</p>
+                ) : (
+                  stats.feedbacks.map((f, idx) => (
+                    <div key={f.id}>
+                      {idx > 0 && <Separator className="mb-4" />}
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="truncate text-sm font-bold text-foreground">{f.user_name}</span>
+                        <span className="flex shrink-0 items-center gap-0.5">
+                          {Array.from({ length: 5 }).map((_, i) => (
+                            <Star
+                              key={i}
+                              className={cn('size-3', i < f.rating ? 'fill-amber-400 text-amber-400' : 'text-muted-foreground/30')}
+                            />
+                          ))}
+                        </span>
+                      </div>
+                      {f.issues_reported && (
+                        <div className="mt-1.5 rounded border border-destructive/15 bg-destructive/5 px-2 py-1 text-[11px] text-destructive">
+                          Issue: {f.issues_reported}
+                        </div>
+                      )}
+                      <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">{f.feedback_text}</p>
                     </div>
-                    <p className="text-slate-600 dark:text-slate-300 font-sans">{log.details}</p>
-                  </div>
-                ))
-              )}
-            </div>
-          </Card>
+                  ))
+                )}
+              </CardContent>
+            </Card>
+          </Reveal>
+
+          <Reveal delay={0.08}>
+            <Card className="h-full">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Activity className="size-4 text-primary" /> System Audit Trail
+                </CardTitle>
+                <CardAction>
+                  <Button variant="ghost" size="sm" asChild>
+                    <RouterLink to="/admin/logs">
+                      View all <ArrowRight />
+                    </RouterLink>
+                  </Button>
+                </CardAction>
+              </CardHeader>
+              <CardContent className="max-h-96 space-y-3 overflow-y-auto">
+                {stats.logs.length === 0 ? (
+                  <p className="py-8 text-center text-xs text-muted-foreground">No administrative actions logged.</p>
+                ) : (
+                  stats.logs.map((log, idx) => (
+                    <div key={log.id}>
+                      {idx > 0 && <Separator className="mb-3" />}
+                      <div className="flex items-center justify-between gap-2 text-[11px]">
+                        <Badge variant="outline" size="sm" className="font-mono">
+                          {log.action}
+                        </Badge>
+                        <Hint content={new Date(log.created_at).toLocaleString()}>
+                          <span className="shrink-0 text-muted-foreground">
+                            {new Date(log.created_at).toLocaleTimeString()}
+                          </span>
+                        </Hint>
+                      </div>
+                      <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{log.details}</p>
+                    </div>
+                  ))
+                )}
+              </CardContent>
+            </Card>
+          </Reveal>
         </div>
       )}
     </div>
   );
 };
+
+/* ------------------------------------------------------------------- helpers */
+
+const EmptyChart = ({ message }) => (
+  <div className="flex h-48 flex-col items-center justify-center gap-2 text-center">
+    <Activity className="size-7 text-muted-foreground/30" />
+    <p className="text-xs text-muted-foreground">{message}</p>
+  </div>
+);
+
+const FlaggedPanel = ({ flaggedUsers, pagedFlagged, page, setPage, actionLoading, onUnban }) => (
+  <div className="p-6">
+    <div className="mb-4 flex items-center justify-between gap-3">
+      <div className="flex items-center gap-2">
+        <AlertTriangle className="size-5 shrink-0 text-destructive" />
+        <div>
+          <h3 className="font-bold text-foreground">Integrity Alerts</h3>
+          <p className="text-xs text-muted-foreground">
+            {flaggedUsers.length} account{flaggedUsers.length === 1 ? '' : 's'} locked by the proctor
+          </p>
+        </div>
+      </div>
+      <Button variant="ghost" size="sm" asChild className="shrink-0">
+        <RouterLink to="/admin/users">
+          Manage users <ArrowRight />
+        </RouterLink>
+      </Button>
+    </div>
+
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Candidate</TableHead>
+          <TableHead className="hidden sm:table-cell">Job Focus</TableHead>
+          <TableHead>Reason</TableHead>
+          <TableHead className="text-right">Action</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {pagedFlagged.map((student, i) => (
+          <StaggerRow key={student.id} index={i} className="border-b border-border transition-colors hover:bg-accent/60">
+            <TableCell>
+              <RouterLink to={`/admin/users/${student.id}`} className="block hover:underline">
+                <span className="block font-semibold text-foreground">{student.name}</span>
+                <span className="text-[11px] text-muted-foreground">{student.email}</span>
+              </RouterLink>
+            </TableCell>
+            <TableCell className="hidden capitalize text-muted-foreground sm:table-cell">{student.job_role}</TableCell>
+            <TableCell>
+              <Badge variant="destructive">
+                <ShieldAlert /> Proctor lock
+              </Badge>
+            </TableCell>
+            <TableCell className="text-right">
+              <Button variant="outline" size="sm" onClick={() => onUnban(student.id)} disabled={actionLoading}>
+                <Unlock /> Reopen
+              </Button>
+            </TableCell>
+          </StaggerRow>
+        ))}
+      </TableBody>
+    </Table>
+    <Pagination page={page} total={flaggedUsers.length} onChange={setPage} />
+  </div>
+);
 
 export default AdminDashboard;

@@ -14,6 +14,34 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        // Pin the admin-only design system into one predictably-named chunk.
+        //
+        // Left to the bundler's own splitting, the shared Radix/motion code landed in a
+        // chunk named after whichever module happened to pull it in first ('misc-*.js',
+        // ~212KB). That name does not match the 'Admin*' precache exclusion below, so the
+        // service worker handed every candidate the entire admin UI up front — quietly
+        // undoing the code-splitting. Naming it here makes the exclusion reliable instead
+        // of dependent on a bundler heuristic.
+        //
+        // recharts is deliberately NOT included: the candidate's own report page renders
+        // charts, so it belongs in the precached app shell.
+        manualChunks(id) {
+          if (
+            id.includes('/components/shadcn/') ||
+            id.includes('@radix-ui') ||
+            id.includes('/node_modules/motion') ||
+            id.includes('/node_modules/framer-motion')
+          ) {
+            return 'admin-ui';
+          }
+          return undefined;
+        },
+      },
+    },
+  },
   plugins: [
     react(),
     VitePWA({
@@ -63,7 +91,7 @@ export default defineConfig({
         // A candidate never renders any of it, and precaching would hand them the whole
         // download up front anyway — which is exactly what code-splitting them was for.
         // All of it still loads on demand over the network when an admin opens the portal.
-        globIgnores: ['**/exceljs*.js', '**/Admin*.js'],
+        globIgnores: ['**/exceljs*.js', '**/Admin*.js', '**/admin-ui*.js'],
         // SPA fallback: client-side routes resolve to the precached index.html...
         navigateFallback: 'index.html',
         // ...but NEVER let navigation fallback swallow API calls or real asset files.
