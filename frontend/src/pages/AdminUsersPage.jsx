@@ -512,7 +512,11 @@ const AdminUsersPage = () => {
 
       <AdminTableCard>
         <div className="overflow-x-auto">
-          <table className="w-full border-collapse text-left text-xs">
+          {/* This table is still raw th/td (the column-filter headers live in them), so it
+              does not inherit the px-3 the shared Table primitives carry. Without it the
+              cells sit flush against the card border — the first and last columns looked
+              cut off at the page edge. Applied here rather than on ~20 individual cells. */}
+          <table className="w-full border-collapse text-left text-xs [&_td]:px-3 [&_th]:px-3">
             <thead>
               {/* Excel-style column filters: click the funnel icon on Course / Interview
                   Status / Access to get a checklist dropdown right at the column, instead
