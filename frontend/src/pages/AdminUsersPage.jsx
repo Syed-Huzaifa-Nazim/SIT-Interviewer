@@ -2,17 +2,22 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useSearchParams } from 'react-router-dom';
 import api from '../services/api';
-import PageHeader from '../components/ui/PageHeader';
-import Card from '../components/ui/Card';
 import Alert from '../components/ui/Alert';
 import Badge from '../components/ui/Badge';
 import Button from '../components/ui/Button';
-import SearchBar from '../components/ui/SearchBar';
 import Spinner from '../components/ui/Spinner';
 import Input from '../components/ui/Input';
 import Pagination from '../components/ui/Pagination';
 import BulkEmailModal from '../components/admin/BulkEmailModal';
 import { SIGNUP_CATEGORIES, INTERVIEW_STATUS_LABELS, isInstructorCategory, formatCnic } from '../utils/constants';
+import { Button as UiButton } from '@/components/shadcn/button';
+import { UnderlineTabs } from '@/components/shadcn/tabs';
+import {
+  AdminPageHeader,
+  AdminSearch,
+  AdminPageSkeleton,
+  AdminTableCard,
+} from '@/components/shadcn/page';
 
 const PAGE_SIZE = 10;
 import {
@@ -442,56 +447,55 @@ const AdminUsersPage = () => {
 
   const pagedUsers = filteredUsers.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
-  const tabClass = (tab) =>
-    `px-4 py-2 text-xs font-bold rounded-lg transition cursor-pointer ${
-      activeTab === tab
-        ? 'bg-primary-600 text-white shadow-md'
-        : 'text-slate-500 dark:text-slate-400 hover:bg-slate-200/70 dark:hover:bg-slate-800'
-    }`;
-
-  if (loading) {
-    return (
-      <Card className="text-center max-w-md mx-auto my-12">
-        <Spinner label="Loading user accounts..." />
-      </Card>
-    );
-  }
+  if (loading) return <AdminPageSkeleton rows={8} cols={6} />;
 
   return (
     <div className="space-y-6">
-      <PageHeader
+      <AdminPageHeader
         icon={Users}
-        title="User Accounts Manager"
-        subtitle="Edit full candidate profiles, manage course status, send interview invites, and monitor who is online."
-      />
+        title="User Accounts"
+        subtitle="Edit candidate profiles, manage course status, send invites and monitor who is online."
+        actions={
+          <>
+            <UiButton variant="outline" size="sm" onClick={() => setBatchHistoryOpen(true)}>
+              <History /> Batch History
+            </UiButton>
+            <UiButton variant="brand" size="sm" onClick={() => setBulkOpen(true)}>
+              <Mail /> Bulk Email
+            </UiButton>
+          </>
+        }
+      >
+        <AdminSearch
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          placeholder="Search by name, email, CNIC, category, or role…"
+        >
+          {hasAnyFilter && (
+            <UiButton
+              variant="ghost"
+              size="sm"
+              className="shrink-0 text-destructive hover:text-destructive"
+              onClick={() => patchParams({ course: null, istatus: null, access: null, page: null })}
+            >
+              Clear column filters
+            </UiButton>
+          )}
+        </AdminSearch>
+      </AdminPageHeader>
 
       {error && <Alert variant="error">{error}</Alert>}
       {notice && <Alert variant="success">{notice}</Alert>}
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <button className={tabClass('enrolled')} onClick={() => setActiveTab('enrolled')}>
-            <span className="inline-flex items-center gap-1.5">
-              Enrolled Users
-              <Badge variant="neutral" className="!normal-case">{enrolledCount}</Badge>
-            </span>
-          </button>
-          <button className={tabClass('bulk')} onClick={() => setActiveTab('bulk')}>
-            <span className="inline-flex items-center gap-1.5">
-              Bulk Invited Users
-              <Badge variant="info" className="!normal-case">{bulkCount}</Badge>
-            </span>
-          </button>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button variant="secondary" size="sm" icon={History} onClick={() => setBatchHistoryOpen(true)}>
-            Batch History
-          </Button>
-          <Button size="sm" icon={Mail} onClick={() => setBulkOpen(true)}>
-            Bulk Email Module
-          </Button>
-        </div>
-      </div>
+      <UnderlineTabs
+        groupId="users"
+        value={activeTab}
+        onValueChange={setActiveTab}
+        tabs={[
+          { value: 'enrolled', label: 'Enrolled Users', count: enrolledCount },
+          { value: 'bulk', label: 'Bulk Invited', count: bulkCount },
+        ]}
+      />
 
       {batchFilter != null && (
         <Alert variant="info">
@@ -506,35 +510,14 @@ const AdminUsersPage = () => {
         </Alert>
       )}
 
-      <Card padding={false} className="p-4">
-        <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-          <div className="flex-1">
-            <SearchBar
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Search by name, email, CNIC, category, or role..."
-            />
-          </div>
-          {hasAnyFilter && (
-            <button
-              type="button"
-              onClick={() => patchParams({ course: null, istatus: null, access: null, page: null })}
-              className="text-xs font-bold text-slate-500 dark:text-slate-400 hover:text-red-500 transition shrink-0"
-            >
-              Clear all column filters
-            </button>
-          )}
-        </div>
-      </Card>
-
-      <Card>
+      <AdminTableCard>
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs border-collapse">
+          <table className="w-full border-collapse text-left text-xs">
             <thead>
               {/* Excel-style column filters: click the funnel icon on Course / Interview
                   Status / Access to get a checklist dropdown right at the column, instead
                   of a separate filters panel elsewhere on the page. */}
-              <tr className="text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800">
+              <tr className="border-b border-border text-muted-foreground">
                 <th className="py-3 font-bold">User Details</th>
                 <th className="py-3 font-bold">
                   <ColumnFilter
@@ -576,7 +559,7 @@ const AdminUsersPage = () => {
                 <th className="py-3 font-bold text-right">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+            <tbody className="divide-y divide-border">
               {filteredUsers.length === 0 ? (
                 <tr>
                   <td colSpan="6" className="py-8 text-center text-slate-500 dark:text-slate-400 text-xs">
@@ -585,7 +568,7 @@ const AdminUsersPage = () => {
                 </tr>
               ) : (
                 pagedUsers.map((item) => (
-                  <tr key={item.id} className="text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-900/40 transition-colors">
+                  <tr key={item.id} className="text-muted-foreground transition-colors hover:bg-accent/60">
                     <td className="py-4 pr-3">
                       <div className="flex items-center gap-2">
                         {/* Real-time presence indicator (§4.2) */}
@@ -717,8 +700,10 @@ const AdminUsersPage = () => {
             </tbody>
           </table>
         </div>
-        <Pagination page={page} total={filteredUsers.length} onChange={setPage} />
-      </Card>
+        <div className="border-t border-border px-3">
+          <Pagination page={page} total={filteredUsers.length} onChange={setPage} />
+        </div>
+      </AdminTableCard>
 
       {/* Token override modal (unchanged behavior) */}
       {overrideUserId !== null && (
