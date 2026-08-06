@@ -1,5 +1,9 @@
 @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&family=Fira+Code:wght@400;500;600&display=swap');
 @import "tailwindcss";
+/* Enter/exit keyframe utilities (animate-in, fade-in-0, zoom-in-95, slide-in-from-*).
+   Radix-based admin components drive their open/close transitions with these. Tailwind v4
+   dropped the old tailwindcss-animate plugin; tw-animate-css is its CSS-only successor. */
+@import "tw-animate-css";
 
 @custom-variant dark (&:where(.dark, .dark *));
 
@@ -233,4 +237,180 @@ html.dark body {
 
 ::-webkit-scrollbar-thumb:hover {
   background: #8dc63f; /* Hover uses green */
+}
+/* ===========================================================================
+   ADMIN DESIGN SYSTEM TOKENS
+   ---------------------------------------------------------------------------
+   Semantic variables the src/components/shadcn/* components are written against.
+   Everything above this block is the ORIGINAL app theme and is deliberately
+   untouched: the candidate-facing and interview pages keep rendering exactly as
+   before. These names are new, so they cannot collide with the existing
+   --color-primary-600 / --color-accent-500 scales (those still produce
+   bg-primary-600 etc.; these produce bg-primary, bg-card, border-border, ...).
+
+   Values are mapped to the Saylani palette already defined above rather than
+   shadcn's stock greys, so the admin portal reads as this product and not as a
+   generic template.
+   =========================================================================== */
+:root {
+  --radius: 0.75rem;
+
+  --background: #f4f7fb;          /* matches body background above */
+  --foreground: #1e293b;          /* slate-800 */
+
+  --card: #ffffff;
+  --card-foreground: #1e293b;
+  --popover: #ffffff;
+  --popover-foreground: #1e293b;
+
+  --primary: #0d6db7;             /* Core SMIT Blue */
+  --primary-foreground: #ffffff;
+
+  --secondary: #f1f5f9;           /* slate-100 */
+  --secondary-foreground: #1e293b;
+
+  --muted: #f1f5f9;
+  --muted-foreground: #64748b;    /* slate-500 */
+
+  /* Neutral-but-branded hover wash. Deliberately NOT the bright SMIT green:
+     --accent drives dropdown/menu hover states, and a saturated green there
+     would fight the content instead of guiding the eye. */
+  --accent: #eff6ff;              /* primary-50 */
+  --accent-foreground: #0d6db7;
+
+  --destructive: #dc2626;
+  --destructive-foreground: #ffffff;
+  --success: #16a34a;
+  --warning: #d97706;
+
+  --border: #e2e8f0;              /* slate-200 — same as .corporate-panel */
+  --input: #e2e8f0;
+  --ring: #0d6db7;
+
+  /* Chart series: brand-led first, then supporting hues chosen to stay
+     distinguishable for the most common colour-vision deficiencies. */
+  --chart-1: #0d6db7;             /* SMIT blue   */
+  --chart-2: #8dc63f;             /* SMIT green  */
+  --chart-3: #f59e0b;             /* amber       */
+  --chart-4: #8b5cf6;             /* violet      */
+  --chart-5: #06b6d4;             /* cyan        */
+
+  --sidebar: #ffffff;
+  --sidebar-foreground: #1e293b;
+  --sidebar-primary: #0d6db7;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #eff6ff;
+  --sidebar-accent-foreground: #0d6db7;
+  --sidebar-border: #e2e8f0;
+  --sidebar-ring: #0d6db7;
+}
+
+.dark {
+  --background: #0b1120;          /* matches .dark body above */
+  --foreground: #f1f5f9;
+
+  --card: #1e293b;                /* matches .dark .corporate-panel */
+  --card-foreground: #f1f5f9;
+  --popover: #1e293b;
+  --popover-foreground: #f1f5f9;
+
+  --primary: #3b82f6;             /* lifted for contrast on dark */
+  --primary-foreground: #0b1120;
+
+  --secondary: #1e293b;
+  --secondary-foreground: #f1f5f9;
+
+  --muted: #1e293b;
+  --muted-foreground: #94a3b8;    /* slate-400 */
+
+  --accent: #1e3a5f;
+  --accent-foreground: #bfdbfe;
+
+  --destructive: #ef4444;
+  --destructive-foreground: #ffffff;
+  --success: #22c55e;
+  --warning: #f59e0b;
+
+  --border: #334155;              /* slate-700 — same as .dark .corporate-panel */
+  --input: #334155;
+  --ring: #3b82f6;
+
+  --chart-1: #60a5fa;
+  --chart-2: #a3e635;
+  --chart-3: #fbbf24;
+  --chart-4: #a78bfa;
+  --chart-5: #22d3ee;
+
+  --sidebar: #0f172a;
+  --sidebar-foreground: #f1f5f9;
+  --sidebar-primary: #3b82f6;
+  --sidebar-primary-foreground: #0b1120;
+  --sidebar-accent: #1e293b;
+  --sidebar-accent-foreground: #bfdbfe;
+  --sidebar-border: #334155;
+  --sidebar-ring: #3b82f6;
+}
+
+/* Expose the variables above as Tailwind utilities (bg-card, text-muted-foreground,
+   border-border, rounded-lg, ...). `inline` resolves them at build time so the dark
+   overrides above still win at runtime through the cascade. */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+/* --- Admin motion primitives -------------------------------------------------
+   Used by the animated wrappers under src/components/shadcn/. The global
+   prefers-reduced-motion rule further up neutralises all of these automatically,
+   so no separate accessibility handling is needed here. */
+@keyframes admin-shimmer {
+  100% { transform: translateX(100%); }
+}
+@keyframes admin-border-spin {
+  from { --admin-angle: 0deg; }
+  to   { --admin-angle: 360deg; }
+}
+@property --admin-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
 }

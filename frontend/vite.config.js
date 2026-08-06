@@ -1,9 +1,19 @@
+import { fileURLToPath, URL } from 'node:url'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 
 // https://vite.dev/config/
 export default defineConfig({
+  // '@' -> /src. Purely additive: nothing imported '@/...' before this, so no existing
+  // import path changes meaning. The admin design-system components under
+  // src/components/shadcn/ are written against this alias (it is the convention every
+  // shadcn snippet assumes), which keeps pasted-in components working unmodified.
+  resolve: {
+    alias: {
+      '@': fileURLToPath(new URL('./src', import.meta.url)),
+    },
+  },
   plugins: [
     react(),
     VitePWA({
