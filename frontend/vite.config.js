@@ -57,11 +57,13 @@ export default defineConfig({
       workbox: {
         // Precache the built shell (JS/CSS/HTML/icons/fonts).
         globPatterns: ['**/*.{js,css,html,svg,png,jpg,jpeg,ico,woff,woff2}'],
-        // ...except the spreadsheet parser. It is ~930KB, lazy-imported, and only ever
-        // needed when an admin uploads an .xlsx in the Bulk Email Module — precaching it
-        // would make every candidate download it up front for no benefit. It still loads
-        // on demand over the network when an admin actually opens that flow.
-        globIgnores: ['**/exceljs*.js'],
+        // ...except admin-only code. The spreadsheet parser is ~930KB and only needed when
+        // an admin uploads an .xlsx in the Bulk Email Module; the Admin* chunks are the
+        // code-split Admin Portal (Radix, motion and the chart layer live in AdminLayout).
+        // A candidate never renders any of it, and precaching would hand them the whole
+        // download up front anyway — which is exactly what code-splitting them was for.
+        // All of it still loads on demand over the network when an admin opens the portal.
+        globIgnores: ['**/exceljs*.js', '**/Admin*.js'],
         // SPA fallback: client-side routes resolve to the precached index.html...
         navigateFallback: 'index.html',
         // ...but NEVER let navigation fallback swallow API calls or real asset files.

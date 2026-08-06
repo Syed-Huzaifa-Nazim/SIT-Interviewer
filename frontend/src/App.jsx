@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { lazy, Suspense } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
@@ -27,19 +27,26 @@ import CodingInterview from './pages/CodingInterview';
 import ResumeJdAnalyzer from './pages/ResumeJdAnalyzer';
 import InterviewHistory from './pages/InterviewHistory';
 import ProfilePage from './pages/ProfilePage';
-import AdminDashboard from './pages/AdminDashboard';
 import InterviewSetup from './pages/InterviewSetup';
-import AdminLayout from './layouts/AdminLayout';
-import AdminUsersPage from './pages/AdminUsersPage';
-import AdminUserProfilePage from './pages/AdminUserProfilePage';
-import AdminInterviewsPage from './pages/AdminInterviewsPage';
-import AdminScoringPage from './pages/AdminScoringPage';
-import AdminTransactionsPage from './pages/AdminTransactionsPage';
-import AdminFeedbackPage from './pages/AdminFeedbackPage';
-import AdminLogsPage from './pages/AdminLogsPage';
-import AdminApprovalsPage from './pages/AdminApprovalsPage';
 import OfficialInterviewStart from './pages/OfficialInterviewStart';
 import OfficialThankYou from './pages/OfficialThankYou';
+
+// The Admin Portal is code-split, and deliberately so: it pulls in the whole admin design
+// system (Radix primitives, motion, the chart layer) which a candidate never renders.
+// Bundled eagerly it added ~84KB gzipped to the download that stands between a candidate
+// and the start of their interview — paid on mobile data, on the one page load that must
+// not be slow. Admins take a one-off chunk fetch on entering the portal instead.
+// Everything candidate- and interview-facing above stays eagerly imported.
+const AdminLayout = lazy(() => import('./layouts/AdminLayout'));
+const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
+const AdminUsersPage = lazy(() => import('./pages/AdminUsersPage'));
+const AdminUserProfilePage = lazy(() => import('./pages/AdminUserProfilePage'));
+const AdminInterviewsPage = lazy(() => import('./pages/AdminInterviewsPage'));
+const AdminScoringPage = lazy(() => import('./pages/AdminScoringPage'));
+const AdminTransactionsPage = lazy(() => import('./pages/AdminTransactionsPage'));
+const AdminFeedbackPage = lazy(() => import('./pages/AdminFeedbackPage'));
+const AdminLogsPage = lazy(() => import('./pages/AdminLogsPage'));
+const AdminApprovalsPage = lazy(() => import('./pages/AdminApprovalsPage'));
 
 // A one-time (completed-course) candidate: single proctored interview, no dashboard (§3.3)
 const isOneTimeCandidate = (user) => !!user && user.must_use_otp && user.role !== 'admin';
@@ -160,6 +167,9 @@ function App() {
         <PwaUpdatePrompt />
         <ColdStartNotice />
         <Router>
+          {/* Required by the code-split Admin Portal above. Eagerly-imported routes never
+              suspend, so this fallback is only ever seen while an admin chunk downloads. */}
+          <Suspense fallback={<FullPageSpinner />}>
           <Routes>
             {/* Public Pages */}
             <Route path="/" element={<LandingPage />} />
@@ -316,6 +326,7 @@ function App() {
             {/* Catch-all Fallback */}
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
+          </Suspense>
         </Router>
       </AuthProvider>
     </ThemeProvider>
