@@ -105,8 +105,8 @@ describe('ReportDetailPage', () => {
 
   it('renders the scorecard for a candidate', async () => {
     renderReport();
-    expect(await screen.findByText(/Candidate Scorecard/i)).toBeInTheDocument();
-    expect(screen.getByText('72%')).toBeInTheDocument();
+    expect(await screen.findByText('72%')).toBeInTheDocument();
+    expect(screen.getByText('frontend developer')).toBeInTheDocument();
     expect(screen.getByText('Audit Fail')).toBeInTheDocument();
     // Double-encoded strengths must still come through as list items.
     expect(screen.getByText('Clear explanations')).toBeInTheDocument();
@@ -116,16 +116,18 @@ describe('ReportDetailPage', () => {
   it('renders admin-only sections for an admin', async () => {
     currentUser = { id: 99, name: 'Admin', role: 'admin' };
     renderReport();
-    expect(await screen.findByText(/Candidate Scorecard/i)).toBeInTheDocument();
-    // Appears twice by design — once as the tab label, once as the panel heading.
-    expect(screen.getAllByText('Admin Tools').length).toBe(2);
-    await waitFor(() => expect(screen.getByText('Session Recording')).toBeInTheDocument());
+    expect(await screen.findByText('72%')).toBeInTheDocument();
+    // Admin-only tabs: evidence tools and the session recording. 'Recording' appears
+    // both as the tab label and as a summary fact, so match on count rather than one node.
+    expect(screen.getByText('Tools')).toBeInTheDocument();
+    expect(screen.getAllByText('Recording').length).toBeGreaterThan(0);
+    expect(screen.getByText('Candidate Profile')).toBeInTheDocument();
   });
 
   it('summarises repeated violations by type', async () => {
     currentUser = { id: 99, name: 'Admin', role: 'admin' };
     renderReport();
-    await screen.findByText(/Candidate Scorecard/i);
+    await screen.findByText('72%');
     // LOOK_AWAY occurs twice, NO_FACE once — the summary must group rather than list.
     expect(screen.getAllByText('LOOK AWAY').length).toBeGreaterThan(0);
     expect(screen.getAllByText('NO FACE').length).toBeGreaterThan(0);
@@ -146,7 +148,7 @@ describe('ReportDetailPage', () => {
 
   it('renders an unscored answer without crashing', async () => {
     renderReport();
-    await screen.findByText(/Candidate Scorecard/i);
+    await screen.findByText('72%');
     expect(screen.getByText('What is a closure?')).toBeInTheDocument();
     expect(screen.getByText(/No answer recorded/i)).toBeInTheDocument();
   });
