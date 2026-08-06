@@ -13,6 +13,7 @@ import {
   AdminEmpty,
   AdminPageSkeleton,
 } from '@/components/shadcn/page';
+import { AdminFilter, facetOptions, applyFacets, hasActiveFilters } from '@/components/shadcn/filter';
 import { MessageSquare, Star, Calendar, AlertTriangle, ThumbsUp } from 'lucide-react';
 
 const AdminFeedbackPage = () => {
@@ -20,6 +21,7 @@ const AdminFeedbackPage = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
+  const [filters, setFilters] = useState({});
 
   useEffect(() => {
     const fetchFeedbacks = async () => {
@@ -46,15 +48,48 @@ const AdminFeedbackPage = () => {
     }
   };
 
+  // Rating is stored as a number; the facet works in strings so the checklist, the URL
+  // and the comparison all speak one type.
+  const FACETS = {
+    rating: (f) => String(f.rating ?? ''),
+    issues: (f) => (f.issues_reported ? 'yes' : 'no'),
+    job_role: (f) => f.job_role,
+  };
+
+  const filterGroups = useMemo(
+    () => [
+      {
+        key: 'rating',
+        label: 'Star rating',
+        options: facetOptions(feedbacks, FACETS.rating, {
+          order: ['5', '4', '3', '2', '1'],
+          labels: { 5: '5 stars', 4: '4 stars', 3: '3 stars', 2: '2 stars', 1: '1 star' },
+        }),
+      },
+      {
+        key: 'issues',
+        label: 'Technical issue',
+        options: facetOptions(feedbacks, FACETS.issues, {
+          order: ['yes', 'no'],
+          labels: { yes: 'Issue reported', no: 'No issue' },
+        }),
+      },
+      { key: 'job_role', label: 'Course / role', options: facetOptions(feedbacks, FACETS.job_role) },
+    ],
+    [feedbacks]
+  );
+
   const filtered = useMemo(() => {
     const q = searchTerm.toLowerCase();
-    if (!q) return feedbacks;
-    return feedbacks.filter((f) =>
-      [f.user_name, f.user_email, f.feedback_text, f.issues_reported]
-        .filter(Boolean)
-        .some((v) => String(v).toLowerCase().includes(q))
-    );
-  }, [feedbacks, searchTerm]);
+    const bySearch = !q
+      ? feedbacks
+      : feedbacks.filter((f) =>
+          [f.user_name, f.user_email, f.feedback_text, f.issues_reported]
+            .filter(Boolean)
+            .some((v) => String(v).toLowerCase().includes(q))
+        );
+    return applyFacets(bySearch, filters, FACETS);
+  }, [feedbacks, searchTerm, filters]);
 
   // Surfaced up front because they are the reason to open this page: an average tells you
   // whether the platform is working, and the issue count is the queue that needs action.
@@ -81,7 +116,9 @@ const AdminFeedbackPage = () => {
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
           placeholder="Search by candidate, keywords, or reported issue…"
-        />
+        >
+          <AdminFilter groups={filterGroups} value={filters} onChange={setFilters} />
+        </AdminSearch>
       </AdminPageHeader>
 
       {error && <Alert variant="error">{error}</Alert>}
@@ -116,8 +153,11 @@ const AdminFeedbackPage = () => {
                 ? 'Try a different candidate name, keyword or issue.'
                 : 'Candidate remarks will appear here once interviews are completed.'
             }
-            filtered={!!searchTerm}
-            onClear={() => setSearchTerm('')}
+            filtered={!!searchTerm || hasActiveFilters(filters)}
+            onClear={() => {
+              setSearchTerm('');
+              setFilters({});
+            }}
           />
         </div>
       ) : (

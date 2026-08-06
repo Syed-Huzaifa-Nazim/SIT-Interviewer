@@ -202,6 +202,21 @@ describe('admin portal pages', () => {
     await waitFor(() => expect(container.innerHTML.length).toBeGreaterThan(0));
   });
 
+  // Every searchable list page must expose the filter control next to its search box.
+  // Approvals, the candidate profile and the dashboard have no search bar, so no filter.
+  it.each([
+    ['AdminUsersPage', <AdminUsersPage />, '/admin/users', '/admin/users'],
+    ['AdminInterviewsPage', <AdminInterviewsPage />, '/admin/interviews', '/admin/interviews'],
+    ['AdminScoringPage', <AdminScoringPage />, '/admin/scoring', '/admin/scoring'],
+    ['AdminLogsPage', <AdminLogsPage />, '/admin/logs', '/admin/logs'],
+    ['AdminTransactionsPage', <AdminTransactionsPage />, '/admin/transactions', '/admin/transactions'],
+    ['AdminFeedbackPage', <AdminFeedbackPage />, '/admin/feedback', '/admin/feedback'],
+  ])('%s offers a filter control beside its search', async (name, element, route, path) => {
+    renderPage(element, { route, path });
+    const filterBtn = await screen.findByRole('button', { name: /^Filters/ });
+    expect(filterBtn).toBeInTheDocument();
+  });
+
   it('AdminLayout renders its shell and navigation', async () => {
     render(
       <MemoryRouter initialEntries={['/admin/users']}>

@@ -15,6 +15,7 @@ import {
   AdminPageSkeleton,
   AdminTableCard,
 } from '@/components/shadcn/page';
+import { AdminFilter, facetOptions, applyFacets, hasActiveFilters } from '@/components/shadcn/filter';
 import { Coins, TrendingUp, TrendingDown, Gift, AlertTriangle, Wallet } from 'lucide-react';
 
 const PAGE_SIZE = 10;
@@ -31,11 +32,12 @@ const AdminTransactionsPage = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
+  const [filters, setFilters] = useState({});
   const [page, setPage] = useState(1);
 
   useEffect(() => {
     setPage(1);
-  }, [searchTerm]);
+  }, [searchTerm, filters]);
 
   useEffect(() => {
     const fetchTransactions = async () => {
@@ -62,15 +64,33 @@ const AdminTransactionsPage = () => {
     }
   };
 
+  const FACETS = { transaction_type: (t) => t.transaction_type };
+
+  const filterGroups = useMemo(
+    () => [
+      {
+        key: 'transaction_type',
+        label: 'Transaction type',
+        options: facetOptions(transactions, FACETS.transaction_type, {
+          labels: { purchase: 'Purchase', consumption: 'Consumption', admin_adjustment: 'Admin adjustment' },
+          order: ['purchase', 'consumption', 'admin_adjustment'],
+        }),
+      },
+    ],
+    [transactions]
+  );
+
   const filtered = useMemo(() => {
     const q = searchTerm.toLowerCase();
-    if (!q) return transactions;
-    return transactions.filter((t) =>
-      [t.user_name, t.user_email, t.transaction_type]
-        .filter(Boolean)
-        .some((v) => String(v).toLowerCase().includes(q))
-    );
-  }, [transactions, searchTerm]);
+    const bySearch = !q
+      ? transactions
+      : transactions.filter((t) =>
+          [t.user_name, t.user_email, t.transaction_type]
+            .filter(Boolean)
+            .some((v) => String(v).toLowerCase().includes(q))
+        );
+    return applyFacets(bySearch, filters, FACETS);
+  }, [transactions, searchTerm, filters]);
 
   const totals = useMemo(
     () =>
@@ -102,7 +122,9 @@ const AdminTransactionsPage = () => {
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
           placeholder="Search by candidate name, email, or transaction type…"
-        />
+        >
+          <AdminFilter groups={filterGroups} value={filters} onChange={setFilters} />
+        </AdminSearch>
       </AdminPageHeader>
 
       {error && <Alert variant="error">{error}</Alert>}
@@ -123,8 +145,11 @@ const AdminTransactionsPage = () => {
                 ? 'Try a different candidate name, email or type.'
                 : 'Token purchases and adjustments will appear here.'
             }
-            filtered={!!searchTerm}
-            onClear={() => setSearchTerm('')}
+            filtered={!!searchTerm || hasActiveFilters(filters)}
+            onClear={() => {
+              setSearchTerm('');
+              setFilters({});
+            }}
           />
         ) : (
           <>

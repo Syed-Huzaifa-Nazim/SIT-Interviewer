@@ -18,6 +18,7 @@ import {
   AdminPageSkeleton,
   AdminTableCard,
 } from '@/components/shadcn/page';
+import { AdminFilter, facetOptions, applyFacets, hasActiveFilters } from '@/components/shadcn/filter';
 import {
   Activity,
   MailWarning,
@@ -45,6 +46,9 @@ const AdminLogsPage = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
+  // Keyed by tab: each stream has its own columns, so a filter chosen on Email must not
+  // silently still be applied when the admin switches to Snapshots.
+  const [filtersByTab, setFiltersByTab] = useState({});
   const [viewingId, setViewingId] = useState(null);
   const [page, setPage] = useState(1);
 
@@ -57,7 +61,7 @@ const AdminLogsPage = () => {
 
   useEffect(() => {
     setPage(1);
-  }, [activeTab, searchTerm]);
+  }, [activeTab, searchTerm, filtersByTab]);
 
   useEffect(() => {
     const fetchLogs = async () => {
@@ -137,12 +141,73 @@ const AdminLogsPage = () => {
   const failedCount = emailLogs.filter((l) => l.status === 'failed').length;
   const activeRecordings = recordingLogs.filter((l) => l.status === 'active').length;
 
-  const current = {
-    admin: filteredLogs,
-    email: filteredEmails,
-    recordings: filteredRecordings,
-    snapshots: filteredSnapshots,
-  }[activeTab];
+  // Facet accessors per tab, so one filter control can serve four different streams.
+  const FACETS_BY_TAB = {
+    admin: { action: (l) => l.action, admin_name: (l) => l.admin_name },
+    email: { status: (l) => l.status, email_type: (l) => l.email_type },
+    recordings: { status: (l) => l.status },
+    snapshots: { kind: (s) => s.kind },
+  };
+
+  const facets = FACETS_BY_TAB[activeTab] || {};
+  const filters = filtersByTab[activeTab] || {};
+  const setFilters = (next) => setFiltersByTab((prev) => ({ ...prev, [activeTab]: next }));
+
+  const filterGroups = useMemo(() => {
+    if (activeTab === 'admin') {
+      return [
+        { key: 'action', label: 'Action type', options: facetOptions(logs, facets.action) },
+        { key: 'admin_name', label: 'Administrator', options: facetOptions(logs, facets.admin_name) },
+      ];
+    }
+    if (activeTab === 'email') {
+      return [
+        {
+          key: 'status',
+          label: 'Delivery status',
+          options: facetOptions(emailLogs, facets.status, {
+            order: ['failed', 'sent'],
+            labels: { failed: 'Failed', sent: 'Sent' },
+          }),
+        },
+        { key: 'email_type', label: 'Email type', options: facetOptions(emailLogs, facets.email_type) },
+      ];
+    }
+    if (activeTab === 'recordings') {
+      return [
+        {
+          key: 'status',
+          label: 'Recording status',
+          options: facetOptions(recordingLogs, facets.status, {
+            order: ['active', 'failed', 'deleted'],
+            labels: { active: 'Active', failed: 'Failed', deleted: 'Deleted' },
+          }),
+        },
+      ];
+    }
+    return [
+      {
+        key: 'kind',
+        label: 'Capture type',
+        options: facetOptions(snapshots, facets.kind, {
+          order: ['termination', 'screen'],
+          labels: { termination: 'Termination frame', screen: 'Screen capture' },
+        }),
+      },
+    ];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, logs, emailLogs, recordingLogs, snapshots]);
+
+  const current = applyFacets(
+    {
+      admin: filteredLogs,
+      email: filteredEmails,
+      recordings: filteredRecordings,
+      snapshots: filteredSnapshots,
+    }[activeTab],
+    filters,
+    facets
+  );
 
   const paged = current.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
@@ -168,7 +233,9 @@ const AdminLogsPage = () => {
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
           placeholder={SEARCH_PLACEHOLDER[activeTab]}
-        />
+        >
+          <AdminFilter groups={filterGroups} value={filters} onChange={setFilters} />
+        </AdminSearch>
       </AdminPageHeader>
 
       {error && <Alert variant="error">{error}</Alert>}
@@ -215,8 +282,11 @@ const AdminLogsPage = () => {
             message={
               searchTerm ? 'Try a different term, or switch tabs.' : 'Activity will be logged here as it happens.'
             }
-            filtered={!!searchTerm}
-            onClear={() => setSearchTerm('')}
+            filtered={!!searchTerm || hasActiveFilters(filters)}
+            onClear={() => {
+              setSearchTerm('');
+              setFilters({});
+            }}
           />
         ) : (
           <>

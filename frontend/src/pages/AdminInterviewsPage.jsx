@@ -18,29 +18,26 @@ import {
   AdminPageSkeleton,
   AdminTableCard,
 } from '@/components/shadcn/page';
-import { NativeSelect } from '@/components/shadcn/input';
+import { AdminFilter, facetOptions, applyFacets, hasActiveFilters } from '@/components/shadcn/filter';
 import { Video, ShieldAlert, ArrowRight, Calendar, CheckCircle2, Activity } from 'lucide-react';
 
 const PAGE_SIZE = 10;
 
-const FILTERS = [
-  { value: 'all', label: 'All sessions' },
-  { value: 'completed', label: 'Completed' },
-  { value: 'active', label: 'In progress' },
-  { value: 'terminated', label: 'Terminated' },
-];
+// 'terminated' is a proctor outcome rather than a status value, so outcome is derived
+// once here and every consumer (facet options, filtering, counts) reads the same rule.
+const outcomeOf = (i) => (i.is_proctor_failed ? 'terminated' : i.status === 'completed' ? 'completed' : i.status);
 
 const AdminInterviewsPage = () => {
   const [interviews, setInterviews] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState('all');
+  const [filters, setFilters] = useState({});
   const [page, setPage] = useState(1);
 
   useEffect(() => {
     setPage(1);
-  }, [searchTerm, statusFilter]);
+  }, [searchTerm, filters]);
 
   useEffect(() => {
     const fetchInterviews = async () => {
@@ -67,28 +64,46 @@ const AdminInterviewsPage = () => {
     }
   };
 
+  const FACETS = {
+    outcome: outcomeOf,
+    type: (i) => i.type,
+    difficulty: (i) => i.difficulty,
+    job_role: (i) => i.job_role,
+  };
+
+  const filterGroups = useMemo(
+    () => [
+      {
+        key: 'outcome',
+        label: 'Outcome',
+        options: facetOptions(interviews, FACETS.outcome, {
+          order: ['completed', 'terminated', 'active'],
+          labels: { completed: 'Completed', terminated: 'Terminated', active: 'In progress' },
+        }),
+      },
+      { key: 'job_role', label: 'Job role', options: facetOptions(interviews, FACETS.job_role) },
+      { key: 'type', label: 'Type', options: facetOptions(interviews, FACETS.type) },
+      { key: 'difficulty', label: 'Difficulty', options: facetOptions(interviews, FACETS.difficulty) },
+    ],
+    [interviews]
+  );
+
   const filtered = useMemo(() => {
     const q = searchTerm.toLowerCase();
-    return interviews.filter((i) => {
-      const matchesSearch =
-        !q ||
-        [i.user_name, i.user_email, i.job_role, i.type]
-          .filter(Boolean)
-          .some((v) => String(v).toLowerCase().includes(q));
-      if (!matchesSearch) return false;
-      if (statusFilter === 'all') return true;
-      // 'terminated' is a proctor outcome rather than a status value, so it is matched
-      // on the flag; a terminated session is excluded from plain 'completed'.
-      if (statusFilter === 'terminated') return !!i.is_proctor_failed;
-      if (statusFilter === 'completed') return i.status === 'completed' && !i.is_proctor_failed;
-      return i.status === statusFilter;
-    });
-  }, [interviews, searchTerm, statusFilter]);
+    const bySearch = !q
+      ? interviews
+      : interviews.filter((i) =>
+          [i.user_name, i.user_email, i.job_role, i.type]
+            .filter(Boolean)
+            .some((v) => String(v).toLowerCase().includes(q))
+        );
+    return applyFacets(bySearch, filters, FACETS);
+  }, [interviews, searchTerm, filters]);
 
   const stats = useMemo(() => {
-    const completed = interviews.filter((i) => i.status === 'completed' && !i.is_proctor_failed).length;
-    const terminated = interviews.filter((i) => i.is_proctor_failed).length;
-    const active = interviews.filter((i) => i.status === 'active').length;
+    const completed = interviews.filter((i) => outcomeOf(i) === 'completed').length;
+    const terminated = interviews.filter((i) => outcomeOf(i) === 'terminated').length;
+    const active = interviews.filter((i) => i.status === 'active' && !i.is_proctor_failed).length;
     return { completed, terminated, active };
   }, [interviews]);
 
@@ -108,18 +123,7 @@ const AdminInterviewsPage = () => {
           onChange={(e) => setSearchTerm(e.target.value)}
           placeholder="Search by candidate, role or type…"
         >
-          <NativeSelect
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            aria-label="Filter by status"
-            className="h-10 sm:w-44"
-          >
-            {FILTERS.map((f) => (
-              <option key={f.value} value={f.value}>
-                {f.label}
-              </option>
-            ))}
-          </NativeSelect>
+          <AdminFilter groups={filterGroups} value={filters} onChange={setFilters} />
         </AdminSearch>
       </AdminPageHeader>
 
@@ -142,16 +146,16 @@ const AdminInterviewsPage = () => {
         {filtered.length === 0 ? (
           <AdminEmpty
             icon={Video}
-            title={searchTerm || statusFilter !== 'all' ? 'No sessions match your filters' : 'No interviews recorded'}
+            title={searchTerm || hasActiveFilters(filters) ? 'No sessions match your filters' : 'No interviews recorded'}
             message={
-              searchTerm || statusFilter !== 'all'
-                ? 'Try a different search term or status.'
+              searchTerm || hasActiveFilters(filters)
+                ? 'Try a different search term or filter.'
                 : 'Candidate sessions will appear here once interviews begin.'
             }
-            filtered={!!searchTerm || statusFilter !== 'all'}
+            filtered={!!searchTerm || hasActiveFilters(filters)}
             onClear={() => {
               setSearchTerm('');
-              setStatusFilter('all');
+              setFilters({});
             }}
           />
         ) : (

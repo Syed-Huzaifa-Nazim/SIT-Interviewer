@@ -18,10 +18,12 @@ import {
 } from '@/components/shadcn/chart';
 import {
   AdminPageHeader,
+  AdminSearch,
   AdminEmpty,
   AdminPageSkeleton,
   AdminTableCard,
 } from '@/components/shadcn/page';
+import { AdminFilter, facetOptions, applyFacets } from '@/components/shadcn/filter';
 import {
   Gauge,
   Target,
@@ -45,6 +47,9 @@ const AdminScoringPage = () => {
   const [analytics, setAnalytics] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+
+  const [searchTerm, setSearchTerm] = useState('');
+  const [filters, setFilters] = useState({});
 
   const [detail, setDetail] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -101,7 +106,44 @@ const AdminScoringPage = () => {
   const closeDetail = () => setSearchParams({}, { replace: true });
 
   const overview = analytics?.overview || {};
-  const interviews = useMemo(() => analytics?.interviews || [], [analytics]);
+  const allInterviews = useMemo(() => analytics?.interviews || [], [analytics]);
+
+  const FACETS = {
+    job_role: (r) => r.job_role,
+    type: (r) => r.type,
+    flagged: (r) => (r.flagged_count > 0 ? 'yes' : 'no'),
+  };
+
+  const filterGroups = useMemo(
+    () => [
+      { key: 'job_role', label: 'Job role', options: facetOptions(allInterviews, FACETS.job_role) },
+      { key: 'type', label: 'Interview type', options: facetOptions(allInterviews, FACETS.type) },
+      {
+        key: 'flagged',
+        label: 'Manual review',
+        options: facetOptions(allInterviews, FACETS.flagged, {
+          order: ['yes', 'no'],
+          labels: { yes: 'Has flagged answers', no: 'None flagged' },
+        }),
+      },
+    ],
+    [allInterviews]
+  );
+
+  const interviews = useMemo(() => {
+    const q = searchTerm.toLowerCase();
+    const bySearch = !q
+      ? allInterviews
+      : allInterviews.filter((r) =>
+          [r.candidate_name, r.job_role, r.type].filter(Boolean).some((v) => String(v).toLowerCase().includes(q))
+        );
+    return applyFacets(bySearch, filters, FACETS);
+  }, [allInterviews, searchTerm, filters]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [searchTerm, filters]);
+
   const pagedInterviews = interviews.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   if (loading) return <AdminPageSkeleton rows={6} cols={6} />;
@@ -188,7 +230,15 @@ const AdminScoringPage = () => {
         icon={Gauge}
         title="LLM Scoring Analytics"
         subtitle="How the AI evaluator is scoring interviews, from live per-question evaluations."
-      />
+      >
+        <AdminSearch
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          placeholder="Search by candidate, role or type…"
+        >
+          <AdminFilter groups={filterGroups} value={filters} onChange={setFilters} />
+        </AdminSearch>
+      </AdminPageHeader>
 
       {error && <Alert variant="error">{error}</Alert>}
       {detailLoading && <Alert variant="info">Loading breakdown…</Alert>}

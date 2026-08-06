@@ -18,6 +18,7 @@ import {
   AdminPageSkeleton,
   AdminTableCard,
 } from '@/components/shadcn/page';
+import { AdminFilter } from '@/components/shadcn/filter';
 
 const PAGE_SIZE = 10;
 import {
@@ -165,7 +166,6 @@ const AdminUsersPage = () => {
     () => (searchParams.get('access') ? searchParams.get('access').split(',').filter(Boolean) : []),
     [searchParams]
   );
-  const hasAnyFilter = courseFilters.length + istatusFilters.length + accessFilters.length > 0;
 
   // Merge a patch into the current URL search params. `replace: true` so filtering/paging
   // doesn't spam browser history — Back should leave the page, not just undo one keystroke.
@@ -442,6 +442,50 @@ const AdminUsersPage = () => {
     return counts;
   }, [tabUsers]);
 
+  // The toolbar filter and the per-column funnels are two views of ONE piece of URL
+  // state, so a change in either is immediately reflected in the other and a filtered
+  // view stays shareable however it was built.
+  const filterGroups = useMemo(
+    () => [
+      {
+        key: 'course',
+        label: 'Course',
+        options: SIGNUP_CATEGORIES.map((cat) => ({ value: cat, label: cat, count: courseCounts[cat] || 0 })),
+      },
+      {
+        key: 'istatus',
+        label: 'Interview status',
+        options: Object.entries(INTERVIEW_STATUS_LABELS).map(([value, label]) => ({
+          value,
+          label,
+          count: istatusCounts[value] || 0,
+        })),
+      },
+      {
+        key: 'access',
+        label: 'Access',
+        options: [
+          { value: 'active', label: 'Active', count: accessCounts.active || 0 },
+          { value: 'banned', label: 'Banned', count: accessCounts.banned || 0 },
+        ],
+      },
+    ],
+    [courseCounts, istatusCounts, accessCounts]
+  );
+
+  const filterValue = useMemo(
+    () => ({ course: courseFilters, istatus: istatusFilters, access: accessFilters }),
+    [courseFilters, istatusFilters, accessFilters]
+  );
+
+  const applyFilterValue = (next) =>
+    patchParams({
+      course: next.course?.length ? next.course.join(',') : null,
+      istatus: next.istatus?.length ? next.istatus.join(',') : null,
+      access: next.access?.length ? next.access.join(',') : null,
+      page: null,
+    });
+
   const enrolledCount = useMemo(() => users.filter((u) => u.bulk_batch_id == null).length, [users]);
   const bulkCount = users.length - enrolledCount;
 
@@ -471,16 +515,7 @@ const AdminUsersPage = () => {
           onChange={(e) => setSearchTerm(e.target.value)}
           placeholder="Search by name, email, CNIC, category, or role…"
         >
-          {hasAnyFilter && (
-            <UiButton
-              variant="ghost"
-              size="sm"
-              className="shrink-0 text-destructive hover:text-destructive"
-              onClick={() => patchParams({ course: null, istatus: null, access: null, page: null })}
-            >
-              Clear column filters
-            </UiButton>
-          )}
+          <AdminFilter groups={filterGroups} value={filterValue} onChange={applyFilterValue} />
         </AdminSearch>
       </AdminPageHeader>
 
