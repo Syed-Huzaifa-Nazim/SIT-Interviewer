@@ -17,20 +17,28 @@ export default defineConfig({
   build: {
     rollupOptions: {
       output: {
-        // Pin the admin-only design system into one predictably-named chunk.
+        // Pin the heavy admin-only libraries into one predictably-named chunk.
         //
-        // Left to the bundler's own splitting, the shared Radix/motion code landed in a
-        // chunk named after whichever module happened to pull it in first ('misc-*.js',
-        // ~212KB). That name does not match the 'Admin*' precache exclusion below, so the
-        // service worker handed every candidate the entire admin UI up front — quietly
-        // undoing the code-splitting. Naming it here makes the exclusion reliable instead
-        // of dependent on a bundler heuristic.
+        // Left to the bundler's own splitting, this code landed in a chunk named after
+        // whichever module happened to pull it in first ('misc-*.js', ~212KB). That name
+        // does not match the 'Admin*' precache exclusion below, so the service worker
+        // handed every candidate the whole admin UI up front — quietly undoing the
+        // code-splitting. Naming it here makes the exclusion reliable rather than
+        // dependent on a bundler heuristic.
         //
-        // recharts is deliberately NOT included: the candidate's own report page renders
-        // charts, so it belongs in the precached app shell.
+        // Only the genuinely admin-only libraries are listed. The shadcn components
+        // themselves are NOT forced in here: the report page is shared with candidates and
+        // uses the light primitives (card/badge/button/chart), so rollup should be free to
+        // place those in the shared shell by following the real import graph. Listing them
+        // would drag the shared ones into an excluded chunk and make candidates fetch it.
+        //
+        // react-slot is excluded by name for the same reason — it is ~1KB and Button, a
+        // shared primitive, depends on it.
+        //
+        // recharts is likewise absent: the candidate's own report renders charts.
         manualChunks(id) {
+          if (id.includes('@radix-ui/react-slot')) return undefined;
           if (
-            id.includes('/components/shadcn/') ||
             id.includes('@radix-ui') ||
             id.includes('/node_modules/motion') ||
             id.includes('/node_modules/framer-motion')

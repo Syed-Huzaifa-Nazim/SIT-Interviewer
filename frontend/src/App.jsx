@@ -22,7 +22,10 @@ import ForgotPasswordPage from './pages/ForgotPasswordPage';
 import Dashboard from './pages/Dashboard';
 import InterviewConfig from './pages/InterviewConfig';
 import InterviewSession from './pages/InterviewSession';
-import ReportDetailPage from './pages/ReportDetailPage';
+// Split out too: the scorecard carries the chart layer and is only ever reached AFTER an
+// interview ends, so it has no business sitting in the bundle a candidate downloads
+// before one starts.
+const ReportDetailPage = lazy(() => import('./pages/ReportDetailPage'));
 import CodingInterview from './pages/CodingInterview';
 import ResumeJdAnalyzer from './pages/ResumeJdAnalyzer';
 import InterviewHistory from './pages/InterviewHistory';

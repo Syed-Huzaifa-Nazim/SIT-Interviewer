@@ -414,3 +414,62 @@ html.dark body {
   initial-value: 0deg;
   inherits: false;
 }
+
+/* ===========================================================================
+   PRINT — assessment scorecard
+   ---------------------------------------------------------------------------
+   The report page has always marked its screen-only chrome with `.no-print`, but
+   that class was never actually defined, so printing a scorecard produced a page
+   with the back button, the tab bar and the app shell baked into it. These
+   reports get handed to supervisors as the record of an interview, so the
+   printed artefact is the deliverable, not a fallback.
+   =========================================================================== */
+@media print {
+  .no-print,
+  nav,
+  aside,
+  header,
+  footer,
+  [data-slot='dialog-overlay'],
+  [data-slot='dialog-content'] {
+    display: none !important;
+  }
+
+  html,
+  body,
+  #root {
+    background: #fff !important;
+    color: #000 !important;
+  }
+
+  /* The app shell scrolls its own <main>; printing needs the content to flow. */
+  main {
+    overflow: visible !important;
+    padding: 0 !important;
+  }
+
+  /* Keep a card, a graded answer, or an evidence block from being split across a
+     page boundary — a score separated from its question is unreadable as a record. */
+  [data-slot='card'],
+  figure,
+  table {
+    break-inside: avoid;
+    page-break-inside: avoid;
+    box-shadow: none !important;
+    border-color: #cbd5e1 !important;
+  }
+
+  /* Charts are SVG and print fine, but browsers strip background fills by default. */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  a[href]::after {
+    content: '';
+  }
+
+  @page {
+    margin: 14mm;
+  }
+}
