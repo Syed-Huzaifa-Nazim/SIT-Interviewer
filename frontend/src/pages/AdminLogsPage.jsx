@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import api from '../services/api';
 import PageHeader from '../components/ui/PageHeader';
 import Card from '../components/ui/Card';
@@ -22,7 +23,13 @@ const AdminLogsPage = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [viewingId, setViewingId] = useState(null);
   const [page, setPage] = useState(1);
-  const [activeTab, setActiveTab] = useState('admin'); // 'admin' | 'email' | 'recordings' | 'snapshots'
+
+  // A deep-link from a report/profile ("show me the snapshots for THIS interview") lands
+  // here with ?interview_id= set — force the Snapshots tab open and pre-filter server-side
+  // instead of the unfiltered 400-row call the tab normally makes.
+  const [searchParams] = useSearchParams();
+  const interviewIdFilter = searchParams.get('interview_id');
+  const [activeTab, setActiveTab] = useState(interviewIdFilter ? 'snapshots' : 'admin'); // 'admin' | 'email' | 'recordings' | 'snapshots'
 
   // Reset to the first page whenever the tab or the search filter changes.
   useEffect(() => { setPage(1); }, [activeTab, searchTerm]);
@@ -37,7 +44,9 @@ const AdminLogsPage = () => {
           api.get('/admin/logs'),
           api.get('/admin/email-logs'),
           api.get('/admin/recording-logs'),
-          api.get('/admin/proctor-snapshots'),
+          api.get('/admin/proctor-snapshots', {
+            params: interviewIdFilter ? { interview_id: interviewIdFilter } : {},
+          }),
         ]);
         setLogs(adminRes.data);
         setEmailLogs(emailRes.data);
@@ -51,6 +60,7 @@ const AdminLogsPage = () => {
       }
     };
     fetchLogs();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleDeleteAdminLog = async (id) => {
@@ -171,6 +181,13 @@ const AdminLogsPage = () => {
       />
 
       {error && <Alert variant="error">{error}</Alert>}
+
+      {interviewIdFilter && activeTab === 'snapshots' && (
+        <Alert variant="info">
+          Showing only snapshots for interview #{interviewIdFilter}.{' '}
+          <Link to="/admin/logs" className="font-bold underline">Clear filter</Link>
+        </Alert>
+      )}
 
       <div className="flex items-center gap-2">
         <button className={tabClass('admin')} onClick={() => setActiveTab('admin')}>
@@ -430,7 +447,15 @@ const AdminLogsPage = () => {
                         {item.candidate_email || '—'}
                       </td>
                       <td className="py-4 text-center font-mono text-[10px]">
-                        #{item.interview_id ?? '—'}
+                        {item.interview_id != null ? (
+                          <Link
+                            to={`/interview/report/${item.interview_id}`}
+                            className="text-primary-600 dark:text-primary-400 hover:underline"
+                            title="View this interview's report"
+                          >
+                            #{item.interview_id}
+                          </Link>
+                        ) : '—'}
                       </td>
                       <td className="py-4">
                         <Badge variant={item.kind === 'termination' ? 'error' : 'info'} className="!normal-case">

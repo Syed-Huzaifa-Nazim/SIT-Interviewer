@@ -97,7 +97,13 @@ const AdminLayout = ({ children }) => {
           <div className="px-2 text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-4">Administration</div>
           {adminMenu.map((item) => {
             const Icon = item.icon;
-            const isActive = location.pathname === item.path;
+            // Prefix match (not just exact) so a drill-in page like /admin/users/42 still
+            // highlights its parent section — except for the dashboard root ('/admin'),
+            // which is a literal prefix of every other admin path and would otherwise stay
+            // lit up no matter which section is actually open.
+            const isActive = item.path === '/admin'
+              ? location.pathname === '/admin'
+              : location.pathname === item.path || location.pathname.startsWith(`${item.path}/`);
             return (
               <Link
                 key={item.name}

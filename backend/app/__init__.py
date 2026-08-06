@@ -68,9 +68,16 @@ def create_app(config_class=Config):
     os.makedirs(config_class.UPLOAD_FOLDER, exist_ok=True)
 
     # Initialize tables + apply lightweight column migrations for pre-existing DBs
-    from app.database.migrate import ensure_schema, ensure_indexes
+    from app.database.migrate import ensure_schema, ensure_constraints, ensure_indexes
     ensure_schema()
     Base.metadata.create_all(bind=engine)
+    # Add the proctor_snapshots -> interviews FK for pre-existing DBs (own try/except: a
+    # constraint add is more failure-prone than a plain ADD COLUMN, but nothing in the
+    # request path depends on it existing, only on the columns existing).
+    try:
+        ensure_constraints()
+    except Exception as e:
+        print(f"[migrate] ensure_constraints skipped: {e}")
     # Add indexes on hot columns (idempotent, additive) so queries stay fast at scale.
     try:
         ensure_indexes()

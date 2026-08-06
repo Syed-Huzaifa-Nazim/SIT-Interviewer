@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell,
 } from 'recharts';
@@ -15,7 +16,7 @@ import Pagination from '../components/ui/Pagination';
 const PAGE_SIZE = 10;
 import {
   Gauge, Target, Activity, AlertTriangle, ClipboardList, ChevronLeft,
-  ArrowRight, MessageSquareText, FlaskConical,
+  ArrowRight, MessageSquareText, FlaskConical, FileText,
 } from 'lucide-react';
 
 const scoreColor = (score) => {
@@ -43,6 +44,12 @@ const AdminScoringPage = () => {
   const [detailLoading, setDetailLoading] = useState(false);
   const [page, setPage] = useState(1);
 
+  // The drill-in is driven by ?interview_id= in the URL rather than local-only state, so a
+  // specific interview's scoring breakdown is linkable/bookmarkable/shareable (and is what
+  // ReportDetailPage's "LLM Scoring Breakdown" admin link points at).
+  const [searchParams, setSearchParams] = useSearchParams();
+  const interviewIdParam = searchParams.get('interview_id');
+
   useEffect(() => {
     const fetchAnalytics = async () => {
       try {
@@ -58,19 +65,27 @@ const AdminScoringPage = () => {
     fetchAnalytics();
   }, []);
 
-  const openDetail = async (interviewId) => {
+  useEffect(() => {
+    if (!interviewIdParam) {
+      setDetail(null);
+      return;
+    }
+    let cancelled = false;
     setDetailLoading(true);
     setError('');
-    try {
-      const res = await api.get(`/admin/scoring/interviews/${interviewId}`);
-      setDetail(res.data);
-    } catch (err) {
-      console.error(err);
-      setError('Failed to load the per-question scoring breakdown.');
-    } finally {
-      setDetailLoading(false);
-    }
-  };
+    api.get(`/admin/scoring/interviews/${interviewIdParam}`)
+      .then((res) => { if (!cancelled) setDetail(res.data); })
+      .catch((err) => {
+        if (cancelled) return;
+        console.error(err);
+        setError('Failed to load the per-question scoring breakdown.');
+      })
+      .finally(() => { if (!cancelled) setDetailLoading(false); });
+    return () => { cancelled = true; };
+  }, [interviewIdParam]);
+
+  const openDetail = (interviewId) => setSearchParams({ interview_id: interviewId });
+  const closeDetail = () => setSearchParams({}, { replace: true });
 
   const axisTick = { fill: isDark ? '#94a3b8' : '#64748b', fontSize: 12 };
 
@@ -87,12 +102,20 @@ const AdminScoringPage = () => {
     const itv = detail.interview;
     return (
       <div className="space-y-6">
-        <button
-          onClick={() => setDetail(null)}
-          className="inline-flex items-center gap-1.5 text-sm font-semibold text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 transition"
-        >
-          <ChevronLeft size={16} /> Back to Scoring Analytics
-        </button>
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <button
+            onClick={closeDetail}
+            className="inline-flex items-center gap-1.5 text-sm font-semibold text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 transition"
+          >
+            <ChevronLeft size={16} /> Back to Scoring Analytics
+          </button>
+          <Link
+            to={`/interview/report/${interviewIdParam}`}
+            className="inline-flex items-center gap-1.5 text-sm font-semibold text-primary-600 dark:text-primary-400 hover:underline"
+          >
+            <FileText size={15} /> View Full Report
+          </Link>
+        </div>
 
         <PageHeader
           icon={ClipboardList}

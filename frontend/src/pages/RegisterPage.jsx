@@ -143,7 +143,7 @@ const RegisterPage = () => {
       </div>
 
       {/* Left side: Register Form */}
-      <div className="w-full lg:w-1/2 flex flex-col p-8 relative">
+      <div className="w-full lg:w-1/2 flex flex-col p-8 relative animate-fade-in">
         {/* Ongoing signup success overlay */}
         {outcome === 'dashboard' && (
           <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 bg-white/95 dark:bg-slate-950/95 backdrop-blur-sm">

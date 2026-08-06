@@ -55,6 +55,46 @@ _HOT_INDEXES = {
 }
 
 
+def ensure_constraints():
+    """One-off idempotent constraint additions ``ensure_schema`` can't do (it only ever adds
+    missing columns, never touches an existing column's constraints).
+
+    Closes a data-model gap: ``proctor_snapshots.interview_id`` was left as a bare integer
+    with no foreign key, so it was never referentially enforced or ORM-joinable to
+    ``interviews``. Postgres has no ``ADD CONSTRAINT IF NOT EXISTS``, so the inspector check
+    below is what makes this safe to run on every startup.
+    """
+    inspector = inspect(engine)
+    tables = set(inspector.get_table_names())
+    if 'proctor_snapshots' not in tables or 'interviews' not in tables:
+        return
+
+    has_fk = any(
+        fk.get('constrained_columns') == ['interview_id']
+        for fk in inspector.get_foreign_keys('proctor_snapshots')
+    )
+    if has_fk:
+        return
+
+    with engine.begin() as conn:
+        # Existing rows may point at an interview that no longer exists (or never did) —
+        # ADD CONSTRAINT would fail outright on those. Nulling them out first loses nothing
+        # about *who* the snapshot belongs to (user_id/candidate_email are separate columns),
+        # only the (already-broken) interview link.
+        conn.execute(text("""
+            UPDATE proctor_snapshots
+            SET interview_id = NULL
+            WHERE interview_id IS NOT NULL
+              AND NOT EXISTS (SELECT 1 FROM interviews WHERE interviews.id = proctor_snapshots.interview_id)
+        """))
+        conn.execute(text("""
+            ALTER TABLE proctor_snapshots
+            ADD CONSTRAINT fk_proctor_snapshots_interview_id
+            FOREIGN KEY (interview_id) REFERENCES interviews(id) ON DELETE SET NULL
+        """))
+    print("[migrate] Added FK proctor_snapshots.interview_id -> interviews.id (ON DELETE SET NULL)")
+
+
 def ensure_indexes():
     """Create btree indexes on frequently filtered/sorted columns (Postgres
     ``CREATE INDEX IF NOT EXISTS`` — idempotent and additive only, never touching data).

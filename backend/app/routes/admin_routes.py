@@ -1,6 +1,7 @@
 import re
 import base64
 import datetime
+from typing import Optional
 from fastapi import APIRouter, Request, HTTPException, status, Depends
 from sqlalchemy import or_
 from app.database.db import db
@@ -100,12 +101,42 @@ async def list_users(user: User = Depends(admin_required)):
     for u in users:
         t = Token.query.filter_by(user_id=u.id).first()
         t_val = t.tokens_available if t else 0
+        # Most recent interview, so the frontend can link a candidate row straight to
+        # their latest report with zero extra requests per click (Admin Hub §5).
+        latest_interview = (
+            Interview.query.filter_by(user_id=u.id)
+            .order_by(Interview.created_at.desc())
+            .first()
+        )
         u_dict = u.to_dict()
         u_dict['tokens_available'] = t_val
         u_dict['online'] = _is_online(u)
+        u_dict['latest_interview_id'] = latest_interview.id if latest_interview else None
         users_list.append(u_dict)
 
     return users_list
+
+
+@admin_bp.get('/users/{target_user_id}')
+async def get_user_detail(target_user_id: int, user: User = Depends(admin_required)):
+    """Single-candidate fetch for the Admin Hub profile page — same shape as one row of
+    GET /users, so a direct load/refresh/bookmark of the profile page doesn't need the
+    full list re-fetched just to find one row."""
+    target = User.query.get(target_user_id)
+    if not target or target.role == 'admin':
+        raise HTTPException(status_code=404, detail="User not found")
+
+    t = Token.query.filter_by(user_id=target.id).first()
+    latest_interview = (
+        Interview.query.filter_by(user_id=target.id)
+        .order_by(Interview.created_at.desc())
+        .first()
+    )
+    u_dict = target.to_dict()
+    u_dict['tokens_available'] = t.tokens_available if t else 0
+    u_dict['online'] = _is_online(target)
+    u_dict['latest_interview_id'] = latest_interview.id if latest_interview else None
+    return u_dict
 
 
 @admin_bp.get('/users/{target_user_id}/proctoring')
@@ -283,9 +314,13 @@ async def send_interview_invite(target_user_id: int, user: User = Depends(admin_
 
 
 @admin_bp.get('/reinterview-requests')
-async def list_reinterview_requests(user: User = Depends(admin_required)):
-    """Approval queue for second-interview attempts (§4.3)."""
-    requests_q = SecondInterviewRequest.query.order_by(SecondInterviewRequest.requested_at.desc()).all()
+async def list_reinterview_requests(user_id: Optional[int] = None, user: User = Depends(admin_required)):
+    """Approval queue for second-interview attempts (§4.3). Optional user_id scopes this to
+    one candidate's approval history (cross-linked from their profile)."""
+    requests_query = SecondInterviewRequest.query
+    if user_id is not None:
+        requests_query = requests_query.filter_by(user_id=user_id)
+    requests_q = requests_query.order_by(SecondInterviewRequest.requested_at.desc()).all()
     pending, decided = [], []
     for r in requests_q:
         d = r.to_dict()
@@ -297,6 +332,9 @@ async def list_reinterview_requests(user: User = Depends(admin_required)):
         if not first_itv and candidate:
             first_itv = Interview.query.filter_by(user_id=candidate.id, status='completed') \
                 .order_by(Interview.created_at.desc()).first()
+        # The stored FK can be null on legacy requests — always report the resolved id
+        # (whichever path found it) so the frontend has a reliable "View First Interview" link.
+        d['first_interview_id'] = first_itv.id if first_itv else None
         d['first_interview_date'] = first_itv.created_at.isoformat() if first_itv else None
         d['first_interview_score'] = first_itv.overall_score if first_itv else None
         d['first_interview_proctor_failed'] = bool(first_itv.is_proctor_failed) if first_itv else None
@@ -818,13 +856,26 @@ async def delete_reinterview_request(request_id: int, user: User = Depends(admin
 
 
 @admin_bp.get('/proctor-snapshots')
-async def list_proctor_snapshots(user: User = Depends(admin_required)):
+async def list_proctor_snapshots(
+    interview_id: Optional[int] = None,
+    user_id: Optional[int] = None,
+    user: User = Depends(admin_required)
+):
     """Proctoring image archive index (newest first): termination webcam frames and
     monitored screen screenshots. Images live in a PRIVATE Supabase bucket under
     user_<id>/<date>/ — this returns only the metadata rows; view URLs are fetched
-    on demand per image via the /url endpoint below."""
-    snaps = ProctorSnapshot.query.order_by(ProctorSnapshot.captured_at.desc()).limit(400).all()
-    return [s.to_dict() for s in snaps]
+    on demand per image via the /url endpoint below. Optional filters scope this to one
+    interview (cross-linked from a report) or one candidate (cross-linked from a profile);
+    the unfiltered call keeps its existing 400-row cap."""
+    query = ProctorSnapshot.query
+    if interview_id is not None:
+        query = query.filter_by(interview_id=interview_id)
+    if user_id is not None:
+        query = query.filter_by(user_id=user_id)
+    query = query.order_by(ProctorSnapshot.captured_at.desc())
+    if interview_id is None and user_id is None:
+        query = query.limit(400)
+    return [s.to_dict() for s in query.all()]
 
 
 @admin_bp.get('/proctor-snapshots/{snapshot_id}/url')
@@ -925,8 +976,11 @@ async def get_interview_video_url(interview_id: int, user: User = Depends(admin_
 
 
 @admin_bp.get('/interviews')
-async def list_interviews(user: User = Depends(admin_required)):
-    interviews = Interview.query.order_by(Interview.created_at.desc()).all()
+async def list_interviews(user_id: Optional[int] = None, user: User = Depends(admin_required)):
+    query = Interview.query
+    if user_id is not None:
+        query = query.filter_by(user_id=user_id)
+    interviews = query.order_by(Interview.created_at.desc()).all()
     interviews_list = []
     for i in interviews:
         u = User.query.get(i.user_id)
