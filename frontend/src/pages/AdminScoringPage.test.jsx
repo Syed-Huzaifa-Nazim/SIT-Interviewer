@@ -27,6 +27,8 @@ vi.mock('../context/ThemeContext', () => ({
 // Recharts measures its container, which jsdom reports as 0x0 — the chart then renders
 // nothing and hides the surrounding markup. A minimal stand-in keeps the assertions on
 // this page's own logic rather than on a third-party chart library.
+// Charts render through the shared chart shell, which pulls Tooltip and Legend from
+// recharts as well — a mock missing either fails at import time, not at assert time.
 vi.mock('recharts', () => {
   const Passthrough = ({ children }) => <div>{children}</div>
   return {
@@ -37,6 +39,7 @@ vi.mock('recharts', () => {
     XAxis: () => null,
     YAxis: () => null,
     Tooltip: () => null,
+    Legend: () => null,
     CartesianGrid: () => null,
   }
 })
@@ -122,9 +125,12 @@ describe('AdminScoringPage', () => {
     // covers TC-ADM-016 (loading path)
     api.get.mockReturnValue(new Promise(() => {})) // never resolves
 
-    renderPage()
+    const { container } = renderPage()
 
-    expect(screen.getByText(/loading scoring analytics/i)).toBeInTheDocument()
+    // The loading state is a page-shaped skeleton rather than a labelled spinner, so it
+    // is identified by its shimmer placeholders and by the real content being absent.
+    expect(container.querySelectorAll('.bg-muted').length).toBeGreaterThan(0)
+    expect(screen.queryByText(/interview reports/i)).not.toBeInTheDocument()
   })
 
   it('renders the overview stats from the API', async () => {
@@ -177,8 +183,9 @@ describe('AdminScoringPage', () => {
 
     renderPage()
 
-    expect(await screen.findByText(/no completed interviews to analyse yet/i)).toBeInTheDocument()
-    expect(screen.getByText(/no completed interviews with scored answers yet/i)).toBeInTheDocument()
+    // Two distinct empty states: one for the interview list, one for the chart.
+    expect(await screen.findByText(/no interviews to analyse/i)).toBeInTheDocument()
+    expect(screen.getByText(/nothing scored yet/i)).toBeInTheDocument()
   })
 
   it('shows an error alert when the analytics request fails', async () => {

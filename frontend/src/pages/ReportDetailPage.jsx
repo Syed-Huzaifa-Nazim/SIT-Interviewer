@@ -16,7 +16,6 @@ import {
   BookOpen,
   Calendar,
   ChevronLeft,
-  ChevronRight,
   Clock,
   Info,
   ListChecks,

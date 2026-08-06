@@ -12,7 +12,6 @@ import { scoreColor } from '@/components/shadcn/chart';
 import { AdminEmpty, AdminPageSkeleton } from '@/components/shadcn/page';
 import {
   ChevronLeft,
-  UserCircle,
   Video,
   ScanFace,
   ClipboardCheck,
