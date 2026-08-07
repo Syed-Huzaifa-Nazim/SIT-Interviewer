@@ -32,9 +32,9 @@ An AI-powered mock interview platform. Candidates take voice-driven technical/HR
 ## 2. Backend Functionality
 
 ### 2.1 Application Bootstrap (`app/__init__.py`)
-- Builds the FastAPI app, enables permissive CORS (`allow_origins=["*"]`), and registers a teardown middleware that closes the DB session after every request.
+- Builds the FastAPI app, restricts CORS to the origins listed in `CORS_ORIGINS` (wildcard only when that is unset, i.e. local development), and registers a teardown middleware that closes the DB session after every request.
 - Registers 9 routers under `/api/*`: auth, users, tokens, interviews, resume-jd, notifications, feedback, admin, coding.
-- Auto-creates all database tables on startup and **seeds a default admin account** (`admin@interviewer.com` / `admin123`) with 999 tokens if one doesn't already exist.
+- Auto-creates all database tables on startup and **seeds the admin account** (`ADMIN_EMAIL`, default `admin@interviewer.com`) with 999 tokens if one doesn't already exist. The password comes from `ADMIN_PASSWORD` and is never hard-coded; with that variable unset a random password is generated and printed to the boot log exactly once. Setting `ADMIN_PASSWORD` on a later boot rotates an existing admin's password and revokes their outstanding tokens.
 - Exposes `GET /health` for liveness checks.
 
 ### 2.2 Configuration (`app/config/config.py`)

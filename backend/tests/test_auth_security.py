@@ -30,6 +30,7 @@ from app.models import User
 from app.utils.security import create_access_token, create_refresh_token
 
 BACKEND_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = BACKEND_ROOT.parent
 
 
 def _fresh_user():
@@ -131,6 +132,17 @@ class TestNoPublishedCredentials:
                 if literal in line and not line.lstrip().startswith('#'):
                     offenders.append(f'{path.relative_to(BACKEND_ROOT)}:{lineno}')
         assert not offenders, f'{literal!r} still present in: {offenders}'
+
+    def test_no_credential_literals_remain_in_the_docs(self):
+        """The seeded password outlived its removal from the code once already, by sitting
+        written out in PROJECT_SUMMARY.md. Documentation publishes a credential just as
+        effectively as source does."""
+        offenders = []
+        for path in REPO_ROOT.glob('*.md'):
+            for lineno, line in enumerate(path.read_text(encoding='utf-8').splitlines(), 1):
+                if 'admin123' in line:
+                    offenders.append(f'{path.name}:{lineno}')
+        assert not offenders, f"'admin123' still documented in: {offenders}"
 
     def test_forgot_password_never_returns_the_code(self):
         """The response body must not carry the reset code back to the caller — that was
