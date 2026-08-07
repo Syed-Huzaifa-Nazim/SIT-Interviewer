@@ -13,6 +13,10 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
+      // vite-plugin-pwa is not loaded here (see above), so its virtual module has nothing
+      // to resolve against and any test mounting the real App fails at import analysis —
+      // before vi.mock could ever apply. The stub keeps the PWA prompt inert.
+      'virtual:pwa-register/react': fileURLToPath(new URL('./src/test/pwa-register-stub.js', import.meta.url)),
     },
   },
   plugins: [react()],
