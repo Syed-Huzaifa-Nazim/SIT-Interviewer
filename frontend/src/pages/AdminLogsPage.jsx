@@ -31,6 +31,15 @@ import {
 
 const PAGE_SIZE = 10;
 
+// The archive stores three live capture kinds; 'termination' is the model's legacy column
+// default and still appears on older rows, so it maps to the same label as 'webcam'.
+const SNAPSHOT_KIND = {
+  webcam: { label: 'Webcam', variant: 'destructive' },
+  termination: { label: 'Webcam', variant: 'destructive' },
+  identity: { label: 'Identity', variant: 'default' },
+  screen: { label: 'Screen', variant: 'info' },
+};
+
 const SEARCH_PLACEHOLDER = {
   admin: 'Search by action, administrator or details…',
   email: 'Search by recipient, subject, type or status…',
@@ -66,18 +75,14 @@ const AdminLogsPage = () => {
   useEffect(() => {
     const fetchLogs = async () => {
       try {
-        const [adminRes, emailRes, recRes, snapRes] = await Promise.all([
+        const [adminRes, emailRes, recRes] = await Promise.all([
           api.get('/admin/logs'),
           api.get('/admin/email-logs'),
           api.get('/admin/recording-logs'),
-          api.get('/admin/proctor-snapshots', {
-            params: interviewIdFilter ? { interview_id: interviewIdFilter } : {},
-          }),
         ]);
         setLogs(adminRes.data || []);
         setEmailLogs(emailRes.data || []);
         setRecordingLogs(recRes.data || []);
-        setSnapshots(snapRes.data || []);
       } catch (err) {
         console.error(err);
         setError('Failed to fetch system audit logs.');
@@ -86,6 +91,22 @@ const AdminLogsPage = () => {
       }
     };
     fetchLogs();
+  }, []);
+
+  // Snapshots are fetched on their own and RE-fetched whenever the interview_id filter
+  // changes, including when it is cleared. Bundling them into the mount fetch above meant
+  // "Show all snapshots" updated the URL but left the previously-filtered rows on screen,
+  // and it re-requested three unrelated log streams for a change that affects only this one.
+  useEffect(() => {
+    api
+      .get('/admin/proctor-snapshots', {
+        params: interviewIdFilter ? { interview_id: interviewIdFilter } : {},
+      })
+      .then((res) => setSnapshots(res.data || []))
+      .catch((err) => {
+        console.error(err);
+        setError('Failed to fetch proctoring snapshots.');
+      });
   }, [interviewIdFilter]);
 
   const remove = useCallback(async (url, setter, id, failMessage) => {
@@ -190,8 +211,13 @@ const AdminLogsPage = () => {
         key: 'kind',
         label: 'Capture type',
         options: facetOptions(snapshots, facets.kind, {
-          order: ['termination', 'screen'],
-          labels: { termination: 'Termination frame', screen: 'Screen capture' },
+          order: ['webcam', 'screen', 'identity', 'termination'],
+          labels: {
+            webcam: 'Webcam frame',
+            screen: 'Screen capture',
+            identity: 'Identity check',
+            termination: 'Webcam frame (legacy)',
+          },
         }),
       },
     ];
@@ -479,8 +505,8 @@ const AdminLogsPage = () => {
                         )}
                       </TableCell>
                       <TableCell>
-                        <Badge variant={item.kind === 'termination' ? 'destructive' : 'info'} size="sm">
-                          {item.kind === 'termination' ? 'Termination' : 'Screen'}
+                        <Badge variant={SNAPSHOT_KIND[item.kind]?.variant ?? 'info'} size="sm">
+                          {SNAPSHOT_KIND[item.kind]?.label ?? 'Screen'}
                         </Badge>
                       </TableCell>
                       <TableCell className="hidden text-muted-foreground lg:table-cell">{item.label || '—'}</TableCell>

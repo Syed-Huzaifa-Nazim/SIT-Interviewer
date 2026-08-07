@@ -6,10 +6,16 @@ from app.config.config import Config
 class SupabaseService:
     @staticmethod
     def _upload_raw(bucket: str, storage_path: str, file_bytes: bytes, content_type: str,
-                    timeout: int = 20, retries: int = 2) -> bool:
+                    timeout: int = 20, retries: int = 2, upsert: bool = False) -> bool:
         """Low-level upload to a Supabase Storage bucket, with retries for transient
         failures (§2.2 upload reliability). Returns True on success, or False if Supabase
-        is unconfigured or every attempt fails."""
+        is unconfigured or every attempt fails.
+
+        ``upsert`` allows an existing object at the same path to be overwritten. Without it
+        Supabase answers a repeat POST with 400/Duplicate, which the 4xx rule below treats as
+        final — so a client that retries an upload whose response it never saw (the bytes DID
+        land, only the reply was lost) would have its retry permanently rejected.
+        """
         url = Config.SUPABASE_URL
         key = Config.SUPABASE_KEY
         if not url or not key:
@@ -22,6 +28,8 @@ class SupabaseService:
             "ApiKey": key,
             "Content-Type": content_type
         }
+        if upsert:
+            headers["x-upsert"] = "true"
         last_err = None
         for attempt in range(1 + max(0, retries)):
             try:
@@ -182,8 +190,10 @@ class SupabaseService:
         bucket = Config.SUPABASE_VIDEO_BUCKET or 'interview-recordings'
         prefix = SupabaseService._video_parts_prefix(user_id, interview_id)
         storage_path = f"{prefix}{part_index:05d}.webm"
+        # upsert: the client retries a slice whose reply it never received, and that retry
+        # must not be rejected as a duplicate of the copy that actually landed.
         if SupabaseService._upload_raw(bucket, storage_path, file_bytes, content_type,
-                                       timeout=60, retries=2):
+                                       timeout=60, retries=2, upsert=True):
             return f"supabase://{bucket}/{storage_path}"
         return None
 

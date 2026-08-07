@@ -45,6 +45,13 @@ const asList = (value) => {
   }
 };
 
+const TECHNICAL_NOTE_TYPES = [
+  'CAMERA_STALL',
+  'CAMERA_UNRECOVERABLE',
+  'RECORDING_UNAVAILABLE',
+  'RECORDING_TRUNCATED',
+];
+
 const VIOLATION_TONE = {
   NO_FACE: 'destructive',
   MULTIPLE_HANDS: 'destructive',
@@ -160,7 +167,20 @@ const ReportDetailPage = () => {
     };
   }, [id]);
 
-  const proctorLogsList = useMemo(() => asList(data?.interview?.proctor_logs), [data]);
+  const allProctorLogs = useMemo(() => asList(data?.interview?.proctor_logs), [data]);
+
+  // The audit trail should read as "what actually counted toward this candidate's strikes".
+  // Soft nudges (a glance away that never escalated) are real signal for the proctoring
+  // engine but not for a reviewer — one session logged 57 of them, which buried the three
+  // events that actually mattered.
+  const proctorLogsList = useMemo(() => allProctorLogs.filter((log) => !log.soft), [allProctorLogs]);
+
+  // Infrastructure notes are soft too — never candidate misconduct — but unlike a look-away
+  // nudge an admin does need them: they are what explains a missing or truncated recording.
+  const technicalNotes = useMemo(
+    () => allProctorLogs.filter((log) => log.soft && TECHNICAL_NOTE_TYPES.includes(log.type)),
+    [allProctorLogs]
+  );
 
   const violationSummary = useMemo(() => {
     const counts = new Map();
@@ -557,6 +577,24 @@ const ReportDetailPage = () => {
                   <p className="p-8 text-center text-xs italic text-muted-foreground">
                     Zero violation trails logged.
                   </p>
+                )}
+
+                {technicalNotes.length > 0 && (
+                  <div className="border-t border-border px-4 py-3">
+                    <h5 className="mb-2 text-[10px] font-extrabold uppercase tracking-wide text-muted-foreground">
+                      Technical Notes
+                    </h5>
+                    <ul className="space-y-1.5">
+                      {technicalNotes.map((log, idx) => (
+                        <li key={idx} className="flex items-start gap-2 text-[11px] text-muted-foreground">
+                          <span className="shrink-0 pt-0.5 font-mono text-[10px] opacity-70">
+                            {new Date(log.timestamp).toLocaleTimeString()}
+                          </span>
+                          <span>{log.details}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
                 )}
               </div>
             </Panel>

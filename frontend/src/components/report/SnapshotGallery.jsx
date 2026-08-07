@@ -5,7 +5,23 @@ import { cn } from '@/lib/utils';
 import { Badge } from '@/components/shadcn/badge';
 import { Button } from '@/components/shadcn/button';
 import Spinner from '../ui/Spinner';
-import { ChevronLeft, ChevronRight, Maximize2, ShieldAlert, X, Camera, Monitor } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Maximize2, ShieldAlert, X, Camera, Monitor, ScanFace } from 'lucide-react';
+
+// The archive stores three live capture kinds. 'termination' is only the model's legacy
+// column default and still appears on older rows, so it reads as a webcam frame.
+const KIND = {
+  webcam: { label: 'Webcam', variant: 'destructive', Icon: Camera, bar: 'bg-destructive' },
+  termination: { label: 'Webcam', variant: 'destructive', Icon: Camera, bar: 'bg-destructive' },
+  identity: { label: 'Identity', variant: 'default', Icon: ScanFace, bar: 'bg-primary' },
+  screen: { label: 'Screen', variant: 'info', Icon: Monitor, bar: 'bg-sky-500' },
+};
+const kindOf = (snap) => KIND[snap?.kind] || KIND.screen;
+
+// Webcam frames are archived one per counted violation, so filtering to them makes the
+// number of thumbnails match the candidate's actual strike count. The paired screen capture
+// for each violation doubles that number and makes the evidence read as twice as bad as it
+// is. Everything stays reachable through the All tab.
+const isWebcam = (s) => s.kind === 'webcam' || s.kind === 'termination';
 
 /**
  * Proctoring evidence viewer: one large frame with a filmstrip beneath it.
@@ -18,7 +34,14 @@ import { ChevronLeft, ChevronRight, Maximize2, ShieldAlert, X, Camera, Monitor }
  * Signed URLs are short-lived, so they are fetched per image and cached for the session;
  * only the hero and the visible strip are ever requested.
  */
-const SnapshotGallery = ({ snapshots, className }) => {
+const SnapshotGallery = ({ snapshots: allSnapshots, className }) => {
+  const webcamOnly = allSnapshots.filter(isWebcam);
+  const mixed = webcamOnly.length > 0 && webcamOnly.length < allSnapshots.length;
+  // Default to the violation frames when there are any, since that is the question a
+  // reviewer opens this with. Falls back to everything when there are none.
+  const [scope, setScope] = useState(() => (webcamOnly.length > 0 ? 'webcam' : 'all'));
+  const snapshots = scope === 'webcam' ? webcamOnly : allSnapshots;
+
   const [heroIndex, setHeroIndex] = useState(0);
   const [urls, setUrls] = useState({});
   const [failed, setFailed] = useState({});
@@ -50,6 +73,10 @@ const SnapshotGallery = ({ snapshots, className }) => {
     snapshots.slice(0, 12).forEach(ensureUrl);
   }, [snapshots, ensureUrl]);
 
+  useEffect(() => {
+    setHeroIndex(0);
+  }, [scope]);
+
   const step = useCallback(
     (delta) => setHeroIndex((i) => (i + delta + snapshots.length) % snapshots.length),
     [snapshots.length]
@@ -70,14 +97,16 @@ const SnapshotGallery = ({ snapshots, className }) => {
 
   const hero = snapshots[heroIndex];
   const heroUrl = urls[hero?.id];
-  const isWebcam = hero?.kind === 'termination';
 
-  const KindBadge = ({ snap, ...rest }) => (
-    <Badge variant={snap?.kind === 'termination' ? 'destructive' : 'info'} size="sm" {...rest}>
-      {snap?.kind === 'termination' ? <Camera /> : <Monitor />}
-      {snap?.kind === 'termination' ? 'Webcam' : 'Screen'}
-    </Badge>
-  );
+  const KindBadge = ({ snap, ...rest }) => {
+    const k = kindOf(snap);
+    return (
+      <Badge variant={k.variant} size="sm" {...rest}>
+        <k.Icon />
+        {k.label}
+      </Badge>
+    );
+  };
 
   return (
     <div className={cn('flex min-h-0 flex-col gap-2', className)}>
@@ -145,6 +174,29 @@ const SnapshotGallery = ({ snapshots, className }) => {
         </div>
       </div>
 
+      {mixed && (
+        <div className="flex shrink-0 items-center gap-1 text-[11px]">
+          {[
+            { id: 'webcam', label: `Violations (${webcamOnly.length})` },
+            { id: 'all', label: `All captures (${allSnapshots.length})` },
+          ].map((opt) => (
+            <button
+              key={opt.id}
+              type="button"
+              onClick={() => setScope(opt.id)}
+              className={cn(
+                'cursor-pointer rounded-md px-2 py-1 font-semibold transition-colors',
+                scope === opt.id
+                  ? 'bg-primary/10 text-primary'
+                  : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+              )}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* ------------------------------------------------------------- filmstrip */}
       <div className="flex shrink-0 gap-1.5 overflow-x-auto pb-1">
         {snapshots.map((snap, idx) => {
@@ -156,7 +208,7 @@ const SnapshotGallery = ({ snapshots, className }) => {
               onClick={() => setHeroIndex(idx)}
               aria-label={`Show frame ${idx + 1}`}
               aria-current={active}
-              title={`${snap.kind === 'termination' ? 'Webcam' : 'Screen'} · ${new Date(snap.captured_at).toLocaleTimeString()}`}
+              title={`${kindOf(snap).label} · ${new Date(snap.captured_at).toLocaleTimeString()}`}
               className={cn(
                 'relative aspect-video h-14 shrink-0 cursor-pointer overflow-hidden rounded-md border-2 bg-muted transition',
                 active
@@ -171,12 +223,7 @@ const SnapshotGallery = ({ snapshots, className }) => {
                   <Spinner size="sm" />
                 </span>
               )}
-              <span
-                className={cn(
-                  'absolute bottom-0 inset-x-0 h-0.5',
-                  snap.kind === 'termination' ? 'bg-destructive' : 'bg-sky-500'
-                )}
-              />
+              <span className={cn('absolute inset-x-0 bottom-0 h-0.5', kindOf(snap).bar)} />
             </button>
           );
         })}

@@ -3,6 +3,14 @@ import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import api from '../services/api';
 import { getScreenStream, hasScreenStream, clearScreenStream } from '../services/proctorScreen';
 import {
+  speakPhrase,
+  createLookAwayAccumulator,
+  LOOK_AWAY_VOICE_MESSAGE,
+  GAZE_AWAY_VOICE_MESSAGE,
+  MULTIPLE_FACES_VOICE_MESSAGE,
+  TERMINATION_VOICE_MESSAGE,
+} from '../utils/proctorVoiceAlerts';
+import {
   loadFaceApi,
   computeDescriptor,
   descriptorDistance,
@@ -35,6 +43,23 @@ import {
   Timer as TimerIcon,
   ScanFace
 } from 'lucide-react';
+
+// Ordered WebM codec candidates for the session recorder, broadest-compatibility-first.
+// The backend joins uploaded slices by raw byte concatenation (assemble_interview_video),
+// which only produces a valid file for WebM, so this deliberately never falls back to a
+// different container (e.g. MP4) even on a browser that would otherwise accept one — a
+// browser with no WebM support at all genuinely cannot be recorded today.
+const SESSION_RECORDER_MIME_CANDIDATES = [
+  'video/webm;codecs=vp9,opus',
+  'video/webm;codecs=vp8,opus',
+  'video/webm;codecs=vp8',
+  'video/webm',
+];
+
+const pickSessionRecorderMimeType = () => {
+  if (typeof MediaRecorder === 'undefined' || !MediaRecorder.isTypeSupported) return null;
+  return SESSION_RECORDER_MIME_CANDIDATES.find((type) => MediaRecorder.isTypeSupported(type)) || null;
+};
 
 const InterviewSession = () => {
   const { id } = useParams();
@@ -95,6 +120,14 @@ const InterviewSession = () => {
   const gazeAwaySinceRef = useRef(null);
   const eyesClosedSinceRef = useRef(null);
   const lastGazeCheckRef = useRef(0);
+  // Soft look-away escalation (§ soft-warnings): accumulates LOOK_AWAY/GAZE_AWAY nudges and
+  // reports back once 4 have happened, so that occurrence can be logged as one real
+  // violation. lastLookAwayNudgeRef is a DEDICATED timestamp for the LOOK_AWAY/GAZE_AWAY
+  // cross-type dedup in checkEyeGaze — kept separate from lastViolationTimeRef so it can
+  // never collide with logProctorViolation's own internal per-type throttle (that throttle
+  // must only ever be touched by logProctorViolation itself).
+  const lookAwayAccumulatorRef = useRef(createLookAwayAccumulator(4));
+  const lastLookAwayNudgeRef = useRef(0);
   // Camera recovery refs. There is deliberately NO polling "is it frozen?" watchdog: every
   // frame/clock-based heuristic tried here produced false stalls (a busy main thread during
   // heavy model work looks identical to a dead camera), and each false stall tore down a
@@ -110,6 +143,11 @@ const InterviewSession = () => {
   const identityMismatchesRef = useRef(0);
   const identityFailedRef = useRef(false);
   const identityBaselineSentRef = useRef(false);
+  // Latched the moment the 5th violation lands and the backend confirms termination. The
+  // detection loops (gaze/face/hands) keep running for the few seconds it takes to tear the
+  // session down, and without this they'd keep beeping, popping alerts and queuing more
+  // speech behind the termination line — this stops all of that at the source.
+  const proctorTerminatedRef = useRef(false);
   const [identityAlert, setIdentityAlert] = useState('');
 
   // Voice capture refs
@@ -143,6 +181,13 @@ const InterviewSession = () => {
   const partsUploadedRef = useRef(0);        // slices confirmed stored
   const partFlushTimerRef = useRef(null);
   const VIDEO_PART_INTERVAL_MS = 30000;      // worst-case loss window
+  // Diagnostics carried into the RECORDING_UNAVAILABLE audit note. Without these, a missing
+  // recording says only "no recording" — indistinguishable between "the browser never
+  // captured a frame" and "capture was fine but every upload was rejected", which are
+  // completely different faults with completely different fixes.
+  const recorderMimeTypeRef = useRef(null);  // format actually negotiated, null if none
+  const partsAttemptedRef = useRef(0);       // slices we tried to send
+  const lastPartUploadErrorRef = useRef(''); // why the most recent slice failed
 
   // Per-question timer (§2)
   const [remaining, setRemaining] = useState(null);
@@ -197,22 +242,25 @@ const InterviewSession = () => {
     setSttSupported(!!SR);
   }, []);
 
-  // 2. Play Warning Beep Alarm (Web Audio API)
-  const playBeepAlarm = () => {
+  // 2. Play Warning Beep Alarm (Web Audio API). Accepts an optional distinct tone so a soft
+  // nudge sounds audibly gentler/lower than a real counted violation, instead of the two
+  // being indistinguishable by ear. Defaults (650Hz, 1.0s) are unchanged for every existing
+  // hard-violation call site.
+  const playBeepAlarm = (freq = 650, duration = 1.0) => {
     try {
       const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       const oscillator = audioCtx.createOscillator();
       const gainNode = audioCtx.createGain();
 
       oscillator.type = 'sine';
-      oscillator.frequency.setValueAtTime(650, audioCtx.currentTime); // 650 Hz warning tone
+      oscillator.frequency.setValueAtTime(freq, audioCtx.currentTime);
       gainNode.gain.setValueAtTime(0.4, audioCtx.currentTime);
 
       oscillator.connect(gainNode);
       gainNode.connect(audioCtx.destination);
 
       oscillator.start();
-      oscillator.stop(audioCtx.currentTime + 1.0); // play beep for 1.0s
+      oscillator.stop(audioCtx.currentTime + duration);
     } catch (err) {
       console.warn('Audio Beep warning blocked or failed:', err);
     }
@@ -295,7 +343,7 @@ const InterviewSession = () => {
 
   // Hard-terminate the session because the person on camera is no longer the verified
   // candidate. Deliberately separate from logProctorViolation: this does NOT touch the
-  // 4-strike counter and gives no warning — it is an immediate block, and the backend
+  // 5-strike counter and gives no warning — it is an immediate block, and the backend
   // writes its own IDENTITY_VERIFICATION_FAILED admin log.
   const terminateForIdentity = async (distance) => {
     if (identityFailedRef.current) return;
@@ -376,7 +424,30 @@ const InterviewSession = () => {
   // this gate exists for — while letting a real second violation register promptly.
   const VIOLATION_COOLDOWN_MS = 1500;
 
+  // The session ends ON the 5th counted violation (4 warnings allowed). Mirrors the
+  // backend's `> 4` check so the client can stop talking to the server the instant the
+  // ceiling is reached, instead of only once the server's reply comes back.
+  const MAX_VIOLATIONS = 5;
+
+  // Replies to concurrent violation requests can arrive out of order, and an earlier
+  // request's (lower) count landing after a later request's (higher) one would drag the
+  // strike counter backwards — precisely the "jumps to 6, falls back to 4, then terminates"
+  // behaviour seen just before termination. The count is therefore only ever allowed to move
+  // forward; any reply that would lower it is discarded as stale.
+  const applyServerViolationCount = (count) => {
+    if (typeof count !== 'number') return;
+    if (count < violationsCountRef.current) return;
+    violationsCountRef.current = count;
+    setViolationsCount(count);
+  };
+
   const logProctorViolation = async (type, details) => {
+    // Termination already confirmed by the server — the session is tearing down, so no
+    // further violation (of any type) should beep, pop an alert, speak, or hit the server.
+    // The second condition covers the window BEFORE that confirmation arrives: once the
+    // local count has hit the ceiling the terminating request is already in flight, and any
+    // violation sent alongside it is what raced past the maximum.
+    if (proctorTerminatedRef.current || violationsCountRef.current >= MAX_VIOLATIONS) return;
     const now = Date.now();
     // Global cooldown across ALL violation types (prevents batched detections after a
     // freeze from counting 2–3 strikes at once and terminating the session instantly).
@@ -402,6 +473,14 @@ const InterviewSession = () => {
     lastAnyViolationRef.current = now;
     lastViolationTimeRef.current[type] = now;
 
+    // Spoken alert for multiple faces — piggybacks on the throttle/dedup work just done
+    // above so it fires once per violation, not continuously while 2+ faces stay in frame
+    // (MediaPipe re-reports this many times a second). Every other violation type is
+    // unaffected by this check.
+    if (type === 'MULTIPLE_FACES' && !isMuted) {
+      speakPhrase(MULTIPLE_FACES_VOICE_MESSAGE);
+    }
+
     // Local warnings
     playBeepAlarm();
     setViolationAlert(`PROCTOR WARNING: ${details}`);
@@ -423,7 +502,7 @@ const InterviewSession = () => {
 
     // Archive a snapshot for every violation (not just the terminating one): the webcam
     // frame plus the shared screen at this moment — exactly ONE of each per counted
-    // violation, so 4 violations produce 4 webcam + 4 screen snapshots and nothing more.
+    // violation, so N violations produce N webcam + N screen snapshots and nothing more.
     // Fire-and-forget so it never delays the violation flow.
     if (snapshot) {
       api.post(`/interviews/${id}/proctor-snapshot`, { image: snapshot, kind: 'webcam', label: type }).catch(() => {});
@@ -436,16 +515,23 @@ const InterviewSession = () => {
         details,
         snapshot_image: snapshot
       });
-      // Reconcile with the authoritative server count (replaces the optimistic bump above).
-      const count = res.data.violations_count;
-      if (typeof count === 'number') {
-        setViolationsCount(count);
-        violationsCountRef.current = count;
-      }
+      // Reconcile with the authoritative server count (replaces the optimistic bump above),
+      // but only ever forwards — see applyServerViolationCount.
+      applyServerViolationCount(res.data.violations_count);
 
       if (res.data.auto_terminate) {
-        // The 4th violation's webcam + screen frames were already archived just above, like
-        // every other violation — the server no longer files a duplicate 'termination' copy.
+        // Latch first — before speaking — so a violation the detection loops fire in the
+        // next tick (they keep running until unmount) bails out immediately instead of
+        // queuing another beep/phrase behind the termination line below.
+        proctorTerminatedRef.current = true;
+        // Final spoken message — interrupts anything queued (e.g. a look-away nudge from
+        // moments earlier) since the interview is ending regardless. The teardown below
+        // takes well over a second (this wait, then the video-flush race), so there's ample
+        // time for it to actually play before the redirect unmounts the page.
+        if (!isMuted) speakPhrase(TERMINATION_VOICE_MESSAGE, { interrupt: true });
+        // The terminating violation's webcam + screen frames were already archived just
+        // above, like every other violation — the server no longer files a duplicate
+        // 'termination' copy.
         // Give those fire-and-forget uploads a brief moment to reach the server before we
         // tear the session down and navigate away.
         await new Promise((r) => setTimeout(r, 400));
@@ -484,7 +570,7 @@ const InterviewSession = () => {
   // because every proctoring loop is gated on `cameraOn`, that silently disabled face, gaze,
   // hands, phone AND identity checking for the rest of the interview. So the camera is now
   // never allowed off during a session: the attempt is refused and counted straight away
-  // through the normal violation flow (snapshot + strike + the existing 4-strike
+  // through the normal violation flow (snapshot + strike + the existing 5-strike
   // termination), with no separate mechanism of its own.
   const handleCameraToggleAttempt = () => {
     if (!cameraOn) {
@@ -514,6 +600,44 @@ const InterviewSession = () => {
       await api.post(`/interviews/${id}/proctor-log`, { type, details, soft: true });
     } catch (err) {
       console.error('Failed to log soft violation:', err);
+    }
+  };
+
+  // 3c. Soft look-away/gaze-away warning (§ soft-warnings): candidate glancing away first
+  // gets a gentle, repeatable nudge — beep, popup, and a spoken "please look at the camera"
+  // — instead of an immediate strike. Only after 4 of these accumulate (LOOK_AWAY and
+  // GAZE_AWAY share one counter — they're the same underlying behavior) does it become one
+  // real, counted violation via the existing logProctorViolation path.
+  const handleSoftLookAway = (type, details) => {
+    if (proctorTerminatedRef.current) return;
+    const now = Date.now();
+    const key = `soft_${type}`;
+    if (lastViolationTimeRef.current[key] && now - lastViolationTimeRef.current[key] < 6000) {
+      return;
+    }
+    lastViolationTimeRef.current[key] = now;
+    // Dedicated ref, NOT lastViolationTimeRef.current[type] — that key belongs exclusively
+    // to logProctorViolation's own internal per-type throttle. Stamping it here too would
+    // make that throttle see ~0ms elapsed on the escalating call below and silently skip
+    // logging the violation.
+    lastLookAwayNudgeRef.current = now;
+
+    // Gentler/lower/shorter tone than the hard-violation alarm (which stays at its default
+    // 650Hz/1.0s), so a soft nudge is audibly distinguishable from a real counted strike.
+    playBeepAlarm(500, 0.4);
+    setSoftAlert(details);
+    setTimeout(() => setSoftAlert(''), 4000);
+    if (!isMuted) {
+      speakPhrase(type === 'GAZE_AWAY' ? GAZE_AWAY_VOICE_MESSAGE : LOOK_AWAY_VOICE_MESSAGE);
+    }
+
+    if (lookAwayAccumulatorRef.current.register()) {
+      // 4th nudge — escalate to one real, counted violation. logProctorViolation logs its
+      // own (hard) entry, so the soft proctor-log POST below is deliberately skipped for
+      // this occurrence to avoid two rows for the same moment.
+      logProctorViolation(type, details);
+    } else {
+      api.post(`/interviews/${id}/proctor-log`, { type, details, soft: true }).catch(() => {});
     }
   };
 
@@ -579,6 +703,31 @@ const InterviewSession = () => {
     });
   };
 
+  // Recording failures are an infrastructure issue, never candidate misconduct — logged
+  // through the same soft, uncounted proctor-log channel already used for CAMERA_STALL, so
+  // an admin looking at an interview with no video can see why instead of it just being
+  // silently absent.
+  //
+  // Guarded to fire ONCE per session: there are three call sites for this (no supported
+  // mimeType / constructor throw at start, rec.onerror mid-session, and the end-of-session
+  // "zero parts uploaded" check) that can all be different symptoms of the SAME underlying
+  // failure — e.g. no recorder ever existed, so both the start-time check and the end-time
+  // zero-parts check would otherwise each log their own entry for one real failure. Whichever
+  // detects it first wins; the rest are no-ops.
+  const recordingUnavailableReportedRef = useRef(false);
+  // Separate latch: a truncated recording is a different fact from no recording at all, and
+  // one must not consume the other's single-fire slot.
+  const recordingTruncatedReportedRef = useRef(false);
+  const reportRecordingFailure = (details) => {
+    if (recordingUnavailableReportedRef.current) return;
+    recordingUnavailableReportedRef.current = true;
+    api.post(`/interviews/${id}/proctor-log`, {
+      type: 'RECORDING_UNAVAILABLE',
+      details,
+      soft: true,
+    }).catch(() => {});
+  };
+
   // 6. MediaPipe AI Camera & FaceMesh initialization
   useEffect(() => {
     let active = true;
@@ -637,28 +786,54 @@ const InterviewSession = () => {
           sessionChunksRef.current = [];
         }
         if (!sessionRecorderRef.current) {
-          try {
-            // `stream` already carries both the video and mic audio tracks (requested
-            // together above), so the recording captures the candidate's voice too —
-            // nothing extra to wire up here.
-            const rec = new MediaRecorder(stream, {
-              mimeType: 'video/webm',
-              videoBitsPerSecond: 600_000, // 480p decorative-review quality, ~4.5MB/min
-            });
-            rec.ondataavailable = (e) => {
-              if (e.data && e.data.size > 0) {
-                sessionChunksRef.current.push(e.data);
-                pendingPartChunksRef.current.push(e.data);
-              }
-            };
-            rec.start(1000);
-            sessionRecorderRef.current = rec;
-            // Ship what has been captured every 30s, so the recording is already almost
-            // entirely on the server before the session ends.
-            if (partFlushTimerRef.current) clearInterval(partFlushTimerRef.current);
-            partFlushTimerRef.current = setInterval(flushVideoPart, VIDEO_PART_INTERVAL_MS);
-          } catch (e) {
-            console.warn('Session video recording unavailable:', e);
+          // Verified capability check instead of a hardcoded mimeType: the old fixed
+          // 'video/webm' silently failed the MediaRecorder constructor on any browser that
+          // didn't accept that exact string (Safari has no WebM support at all), and the
+          // try/catch around it swallowed the failure into a console.warn nobody ever saw —
+          // the interview ran fine end-to-end with simply no recording produced.
+          const mimeType = pickSessionRecorderMimeType();
+          if (!mimeType) {
+            console.warn('Session video recording unavailable: no supported WebM mimeType.');
+            reportRecordingFailure(
+              'This browser does not support any recordable video format — the session was not recorded.'
+            );
+          } else {
+            try {
+              // `stream` already carries both the video and mic audio tracks (requested
+              // together above), so the recording captures the candidate's voice too —
+              // nothing extra to wire up here.
+              const rec = new MediaRecorder(stream, {
+                mimeType,
+                videoBitsPerSecond: 600_000, // 480p decorative-review quality, ~4.5MB/min
+              });
+              rec.ondataavailable = (e) => {
+                if (e.data && e.data.size > 0) {
+                  sessionChunksRef.current.push(e.data);
+                  pendingPartChunksRef.current.push(e.data);
+                }
+              };
+              // Catches a failure AFTER recording has already started (e.g. the encoder
+              // dying mid-session) — the constructor throwing is handled by the catch below,
+              // but a live recorder erroring out later had no handler at all before this.
+              rec.onerror = (e) => {
+                console.warn('Session recorder error:', e);
+                reportRecordingFailure(
+                  `The session recorder failed mid-interview: ${e?.error?.message || e?.error?.name || 'unknown error'}.`
+                );
+              };
+              rec.start(1000);
+              sessionRecorderRef.current = rec;
+              recorderMimeTypeRef.current = rec.mimeType || mimeType;
+              // Ship what has been captured every 30s, so the recording is already almost
+              // entirely on the server before the session ends.
+              if (partFlushTimerRef.current) clearInterval(partFlushTimerRef.current);
+              partFlushTimerRef.current = setInterval(flushVideoPart, VIDEO_PART_INTERVAL_MS);
+            } catch (e) {
+              console.warn('Session video recording unavailable:', e);
+              reportRecordingFailure(
+                `The session recorder could not start: ${e?.message || e?.name || 'unknown error'}.`
+              );
+            }
           }
         }
 
@@ -833,6 +1008,24 @@ const InterviewSession = () => {
           attachTrackWatch(fresh);
           // The frame loop reads videoRef.current every cycle, so detection resumes on the
           // new stream automatically once readyState recovers — nothing to restart.
+          //
+          // The session RECORDER, however, is bound to the stream whose tracks were just
+          // stopped above, so it stops producing data from here on: the recording ends at
+          // this moment even though the interview continues. It is deliberately not restarted
+          // on `fresh` — a second MediaRecorder writes a new WebM header, and the server
+          // assembles slices by raw byte concatenation, so appending a second segment yields
+          // a file most players stop playing at the seam. Recording the truncation as a
+          // technical note is the honest option; silently returning a recording that ends
+          // early with no explanation is what made this look like "recording just doesn't
+          // work sometimes".
+          if (!recordingTruncatedReportedRef.current && sessionRecorderRef.current) {
+            recordingTruncatedReportedRef.current = true;
+            api.post(`/interviews/${id}/proctor-log`, {
+              type: 'RECORDING_TRUNCATED',
+              details: `The camera was re-acquired after ${reason}; the session recording ends at this point and does not cover the remainder of the interview.`,
+              soft: true,
+            }).catch(() => {});
+          }
           recoveryAttemptsRef.current = 0;
           cameraStalledRef.current = false;
           setCameraReconnecting(false);
@@ -957,7 +1150,7 @@ const InterviewSession = () => {
       faceBadSinceRef.current = null;
     }
 
-    // Face look-away / Gaze tracking (existing hard violation, unchanged)
+    // Face look-away / Gaze tracking (§ soft-warnings: soft nudge that escalates after 4)
     if (landmarks && landmarks.length > 263) {
       const nose = landmarks[4];
       const leftEye = landmarks[33];
@@ -969,7 +1162,7 @@ const InterviewSession = () => {
 
         // Balanced center is ~0.5. Left or right lookaways skew this:
         if (noseOffset < 0.33 || noseOffset > 0.67) {
-          logProctorViolation('LOOK_AWAY', 'Turned head or looked away from the monitor.');
+          handleSoftLookAway('LOOK_AWAY', 'Turned head or looked away from the monitor.');
         }
       }
     }
@@ -996,9 +1189,11 @@ const InterviewSession = () => {
     if (now - lastGazeCheckRef.current < GAZE_CHECK_INTERVAL_MS) return;
     lastGazeCheckRef.current = now;
 
-    // Don't double-flag a head turn: if LOOK_AWAY just fired, that behaviour is already
-    // reported as a hard violation, so stay quiet and reset the gaze clock.
-    const lastLookAway = lastViolationTimeRef.current['LOOK_AWAY'] || 0;
+    // Don't double-flag a head turn: if LOOK_AWAY just fired (soft nudge or escalated),
+    // that behaviour is already being handled, so stay quiet and reset the gaze clock.
+    // Reads the dedicated lastLookAwayNudgeRef (not lastViolationTimeRef) since LOOK_AWAY
+    // now only touches lastViolationTimeRef on the rare escalating occurrence.
+    const lastLookAway = lastLookAwayNudgeRef.current || 0;
     if (now - lastLookAway < 5000) {
       gazeAwaySinceRef.current = null;
       return;
@@ -1052,11 +1247,11 @@ const InterviewSession = () => {
       if (!gazeAwaySinceRef.current) {
         gazeAwaySinceRef.current = now;
       } else if (now - gazeAwaySinceRef.current > GAZE_AWAY_MS) {
-        // Sustained (GAZE_AWAY_MS) look off the screen — counted directly as an integrity
-        // violation (1 strike toward the 3-strike auto-termination) and logged for admin
-        // review, exactly like the other hard violations. The GAZE_AWAY_MS window keeps a
-        // blink or micro-glance from tripping it.
-        logProctorViolation('GAZE_AWAY', 'Looked away from the screen during the interview.');
+        // Sustained (GAZE_AWAY_MS) look off the screen — a soft nudge (beep + popup + voice)
+        // that only becomes a real, counted strike after 4 of these/LOOK_AWAY accumulate
+        // (see handleSoftLookAway). The GAZE_AWAY_MS window keeps a blink or micro-glance
+        // from tripping it.
+        handleSoftLookAway('GAZE_AWAY', 'Looked away from the screen during the interview.');
         gazeAwaySinceRef.current = now; // re-arm for the next continuous window
       }
     } else {
@@ -1296,21 +1491,31 @@ const InterviewSession = () => {
     const blob = new Blob(chunks, { type: 'video/webm' });
     const index = partIndexRef.current++;
 
+    partsAttemptedRef.current += 1;
     partQueueRef.current = partQueueRef.current.then(async () => {
-      try {
-        const fd = new FormData();
-        fd.append('part_index', String(index));
-        fd.append('video', blob, `part_${index}.webm`);
-        await api.post(`/interviews/${id}/upload-video-part`, fd, {
-          headers: { 'Content-Type': 'multipart/form-data' },
-          timeout: 120000,
-        });
-        partsUploadedRef.current += 1;
-      } catch (err) {
-        // Losing one slice must not stop later ones: the rest of the recording is still
-        // worth keeping, and a gap is far better than no recording at all.
-        console.warn(`Video part ${index} failed to upload:`, err?.response?.status || err.message);
+      // Two attempts (mirrors the retry already used for /finalize-video below) so one
+      // transient network blip doesn't drop a slice outright — a real, sustained failure
+      // still gives up rather than blocking every later slice behind it.
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          const fd = new FormData();
+          fd.append('part_index', String(index));
+          fd.append('video', blob, `part_${index}.webm`);
+          await api.post(`/interviews/${id}/upload-video-part`, fd, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+            timeout: 120000,
+          });
+          partsUploadedRef.current += 1;
+          return;
+        } catch (err) {
+          const reason = err?.response?.data?.detail || err?.response?.status || err.message;
+          lastPartUploadErrorRef.current = String(reason);
+          console.warn(`Video part ${index} upload attempt ${attempt} failed:`, reason);
+          if (attempt < 2) await new Promise((r) => setTimeout(r, 1000));
+        }
       }
+      // Losing one slice must not stop later ones: the rest of the recording is still
+      // worth keeping, and a gap is far better than no recording at all.
     });
     return partQueueRef.current;
   }, [id]);
@@ -1351,8 +1556,26 @@ const InterviewSession = () => {
       if (partsUploadedRef.current === 0) {
         // Nothing reached the server at all (camera never started, or every slice failed).
         // There is nothing to assemble, and asking the server to try would just record a
-        // misleading failure.
-        console.error('No session recording slices were stored — nothing to finalize.');
+        // misleading failure. This used to be a console.error only — invisible to anyone —
+        // and because finalize-video is never even called below, the backend's own
+        // RecordingLog failure trail never got written either, so a total capture failure
+        // had literally no trace anywhere. Report it explicitly now.
+        console.error('No session recording slices were stored — nothing to finalize.', {
+          capturedChunks: sessionChunksRef.current.length,
+          partsAttempted: partsAttemptedRef.current,
+          mimeType: recorderMimeTypeRef.current,
+          lastUploadError: lastPartUploadErrorRef.current,
+        });
+        // Two very different faults end up here, and the note has to say which one it was:
+        // either the browser never produced a single frame (capture-side — codec/permission/
+        // device), or capture worked fine and every upload was rejected (transport-side —
+        // network or storage). Reporting them identically is what left "recording is missing"
+        // undiagnosable last time.
+        reportRecordingFailure(
+          sessionChunksRef.current.length > 0
+            ? `Recording captured ${sessionChunksRef.current.length} segment(s) as ${recorderMimeTypeRef.current || 'unknown format'}, but none of the ${partsAttemptedRef.current} upload(s) reached storage — last error: ${lastPartUploadErrorRef.current || 'unknown'}.`
+            : `No recording data was ever captured for this session (negotiated format: ${recorderMimeTypeRef.current || 'none — recorder never started'}).`
+        );
         return;
       }
 
@@ -1431,10 +1654,21 @@ const InterviewSession = () => {
       });
 
       if (res.data.is_completed) {
-        // Store the session recording BEFORE tearing down the camera and leaving —
-        // navigating first would unmount the component and abort the upload (§2.2).
-        await uploadSessionVideo();
+        // Stop the recorder and push its last slice BEFORE tearing down the camera and
+        // leaving — navigating away stops the very tracks the recorder reads from, so a
+        // recorder still mid-flush loses its closing chunk. Bounded to 4s (mirrors the
+        // proctor-termination flow below) rather than awaiting the full uploadSessionVideo()
+        // pipeline, which used to also wait out the server-side finalize-video call (video
+        // stitching) — on a longer session that can run several seconds, during which the
+        // candidate saw no feedback at all and it read as "the interview end is broken/slow".
+        await Promise.race([
+          (async () => { await finalizeSessionVideo(); flushVideoPart(); await partQueueRef.current; })(),
+          new Promise((r) => setTimeout(r, 4000)),
+        ]);
         stopCamera();
+        // The slow server-side stitching runs in the background — everything up to here is
+        // already stored server-side, so it must not hold up the redirect to the report page.
+        uploadSessionVideo();
         navigate(`/interview/report/${id}`, { replace: true });
       } else {
         setCurrentIdx(prev => prev + 1);
@@ -1562,7 +1796,7 @@ const InterviewSession = () => {
               </span>
               {violationsCount > 0 && (
                 <Badge variant="error" size="lg" className="!normal-case !tracking-normal border-l border-slate-200 dark:border-slate-800 pl-2 ml-1 rounded-none border-0">
-                  {violationsCount}/3
+                  {violationsCount}/4
                 </Badge>
               )}
             </div>
@@ -1722,19 +1956,20 @@ const InterviewSession = () => {
                   Integrity Security Board
                 </span>
                 <Badge
-                  variant={violationsCount >= 2 ? 'error' : violationsCount === 1 ? 'warning' : 'success'}
+                  variant={violationsCount >= 3 ? 'error' : violationsCount >= 1 ? 'warning' : 'success'}
                   className="!text-[9px]"
                 >
-                  {violationsCount}/3 Violations
+                  {violationsCount}/4 Violations
                 </Badge>
               </div>
               <div className="w-full bg-slate-200 dark:bg-slate-950 h-1.5 rounded-full overflow-hidden flex gap-0.5">
                 <div className={`h-full flex-1 rounded-l transition-all duration-300 ${violationsCount >= 1 ? 'bg-amber-500' : 'bg-slate-300 dark:bg-slate-800'}`} />
                 <div className={`h-full flex-1 transition-all duration-300 ${violationsCount >= 2 ? 'bg-orange-500' : 'bg-slate-300 dark:bg-slate-800'}`} />
-                <div className={`h-full flex-1 rounded-r transition-all duration-300 ${violationsCount >= 3 ? 'bg-red-500' : 'bg-slate-300 dark:bg-slate-800'}`} />
+                <div className={`h-full flex-1 transition-all duration-300 ${violationsCount >= 3 ? 'bg-red-500' : 'bg-slate-300 dark:bg-slate-800'}`} />
+                <div className={`h-full flex-1 rounded-r transition-all duration-300 ${violationsCount >= 4 ? 'bg-red-700' : 'bg-slate-300 dark:bg-slate-800'}`} />
               </div>
               <p className="text-[10px] text-slate-500 leading-normal">
-                Keep your full face visible and centered. Accumulating 3 integrity infractions automatically voids and terminates this session.
+                Keep your full face visible and centered. Accumulating 4 integrity infractions automatically voids and terminates this session.
               </p>
             </div>
           </Card>
