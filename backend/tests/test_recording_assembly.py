@@ -51,6 +51,12 @@ def rig(monkeypatch):
     monkeypatch.setattr(ir.db, 'session', session)
 
     monkeypatch.setattr(ir.User, 'query', mock.MagicMock(get=lambda _id: None))
+
+    # Default: comfortably under the storage limit, and nothing previously given up on.
+    monkeypatch.setattr(ir.SupabaseService, 'pending_parts_total_bytes', staticmethod(lambda *_: 5 * 1024 * 1024))
+    monkeypatch.setattr(ir.RecordingLog, 'query', mock.MagicMock(
+        filter=mock.MagicMock(return_value=mock.MagicMock(first=lambda: None))
+    ))
     return calls
 
 
@@ -154,6 +160,42 @@ def test_storage_being_unreachable_is_not_fatal(rig, monkeypatch):
     ir.assemble_pending_recordings()  # must not raise
 
     assert rig.assembled == []
+
+
+def test_refuses_a_recording_larger_than_storage_accepts(rig, monkeypatch):
+    """Supabase caps object size project-wide, so an over-limit join is refused with a 413
+    only AFTER the whole file has been downloaded and assembled. Interview 176 (65.5 MB)
+    hit exactly that. Checking the size first avoids the wasted transfer entirely."""
+    interview = FakeInterview()
+    _with_interview(monkeypatch, interview, 9999)
+    monkeypatch.setattr(
+        ir.SupabaseService, 'pending_parts_total_bytes',
+        staticmethod(lambda *_: ir.Config.MAX_RECORDING_UPLOAD_BYTES + 1),
+    )
+
+    ir.assemble_pending_recordings()
+
+    assert rig.assembled == [], 'must not download and join a file storage will reject'
+    assert interview.video_path is None
+    # The admin has to be able to see WHY there is no video for this interview.
+    assert len(rig.added) == 1
+    logged = rig.added[0]
+    assert logged.status == 'failed'
+    assert ir._TOO_LARGE_PREFIX in logged.error
+
+
+def test_does_not_retry_a_recording_it_already_gave_up_on(rig, monkeypatch):
+    """Without this the sweep re-downloads and re-joins the same oversized recording every
+    five minutes forever, for a file that can never be stored."""
+    _with_interview(monkeypatch, FakeInterview(), 9999)
+    monkeypatch.setattr(ir.RecordingLog, 'query', mock.MagicMock(
+        filter=mock.MagicMock(return_value=mock.MagicMock(first=lambda: object()))
+    ))
+
+    ir.assemble_pending_recordings()
+
+    assert rig.assembled == []
+    assert rig.added == [], 'the give-up marker should be written once, not on every sweep'
 
 
 def test_worker_is_registered_at_startup():

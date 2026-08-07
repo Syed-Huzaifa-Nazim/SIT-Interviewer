@@ -80,6 +80,9 @@ def cleanup_expired_recordings():
 
 
 RECORDING_ASSEMBLY_INTERVAL_SECONDS = 5 * 60
+# Marks a recording the sweeper has permanently given up on, so it is recognisable in the
+# admin's Recording Logs and never retried. Matched with LIKE, so it must stay stable.
+_TOO_LARGE_PREFIX = 'Assembled recording too large to store'
 # A session's parts are only joined once uploads have clearly stopped. Without this a sweep
 # could catch a recording mid-upload and assemble a truncated file.
 ASSEMBLY_QUIET_PERIOD_SECONDS = 120
@@ -114,6 +117,39 @@ def assemble_pending_recordings():
 
             age = SupabaseService.newest_part_age_seconds(user_id, interview_id)
             if age is None or age < ASSEMBLY_QUIET_PERIOD_SECONDS:
+                continue
+
+            # Already given up on this one — see the size check below. Without this the
+            # sweep would re-download and re-join the same oversized recording every five
+            # minutes, forever, for a file storage will never accept.
+            if RecordingLog.query.filter(
+                RecordingLog.interview_id == interview_id,
+                RecordingLog.question_id.is_(None),
+                RecordingLog.status == 'failed',
+                RecordingLog.error.like(f'{_TOO_LARGE_PREFIX}%'),
+            ).first():
+                continue
+
+            # Storage caps object size at the project level, so an over-limit recording is
+            # refused with a 413 AFTER the whole file has been downloaded and joined.
+            # Checking first turns tens of megabytes of pointless transfer into one listing
+            # call, and turns a silent repeated failure into a visible log entry.
+            total_bytes = SupabaseService.pending_parts_total_bytes(user_id, interview_id)
+            limit = Config.MAX_RECORDING_UPLOAD_BYTES
+            if total_bytes > limit:
+                candidate = User.query.get(user_id)
+                db.session.add(RecordingLog(
+                    user_id=user_id,
+                    candidate_email=candidate.email if candidate else None,
+                    interview_id=interview_id, question_id=None, storage_ref=None,
+                    status='failed',
+                    error=(f'{_TOO_LARGE_PREFIX}: {total_bytes / 1048576:.1f} MB exceeds the '
+                           f'{limit / 1048576:.0f} MB storage limit. The parts are kept — raise the '
+                           f'Supabase storage limit and set MAX_RECORDING_UPLOAD_BYTES to assemble it.'),
+                ))
+                db.session.commit()
+                print(f"[assemble-worker] Interview {interview_id} is {total_bytes / 1048576:.1f} MB, "
+                      f"over the {limit / 1048576:.0f} MB limit; parts kept, not retrying.")
                 continue
 
             final_ref = SupabaseService.assemble_interview_video(user_id, interview_id)

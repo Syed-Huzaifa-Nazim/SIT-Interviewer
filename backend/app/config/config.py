@@ -139,6 +139,12 @@ class Config:
     # Private bucket for proctoring images: termination webcam frames and monitored screen
     # screenshots, filed under user_<id>/<date>/. Admin viewing uses signed URLs only.
     SUPABASE_SNAPSHOT_BUCKET = os.environ.get('SUPABASE_SNAPSHOT_BUCKET', 'proctor-snapshots')
+    # Largest object Supabase Storage will accept, which is a PROJECT-level setting (50 MB
+    # on the free plan; raisable on paid plans under Settings -> Storage). A joined session
+    # recording above this is rejected with a 413/EntityTooLarge, so the assembler checks
+    # the size first instead of spending the bandwidth to build a file that cannot be
+    # stored. Raise this to match after raising it in the Supabase dashboard.
+    MAX_RECORDING_UPLOAD_BYTES = int(os.environ.get('MAX_RECORDING_UPLOAD_BYTES', 50 * 1024 * 1024))
 
     # Email service (Python smtplib — no third-party provider required).
     # 'smtp' sends real mail; 'console' prints the rendered email to the server log

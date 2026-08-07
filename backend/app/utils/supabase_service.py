@@ -232,6 +232,23 @@ class SupabaseService:
         )
 
     @staticmethod
+    def pending_parts_total_bytes(user_id: int, interview_id: int) -> int:
+        """Combined size of this interview's stored parts — the size the joined file will be.
+
+        Lets a caller find out that a recording cannot be stored BEFORE spending the
+        bandwidth to download and join tens of megabytes only to be refused on upload.
+        """
+        prefix = SupabaseService._video_parts_prefix(user_id, interview_id)
+        total = 0
+        for o in SupabaseService._list_prefix(prefix):
+            meta = o.get('metadata') or {}
+            try:
+                total += int(meta.get('size') or 0)
+            except (TypeError, ValueError):
+                continue
+        return total
+
+    @staticmethod
     def newest_part_age_seconds(user_id: int, interview_id: int):
         """Seconds since the most recent part landed, or None if there are no parts.
 
