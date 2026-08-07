@@ -40,18 +40,14 @@ const AdminLogsPage = () => {
   useEffect(() => {
     const fetchLogs = async () => {
       try {
-        const [adminRes, emailRes, recRes, snapRes] = await Promise.all([
+        const [adminRes, emailRes, recRes] = await Promise.all([
           api.get('/admin/logs'),
           api.get('/admin/email-logs'),
           api.get('/admin/recording-logs'),
-          api.get('/admin/proctor-snapshots', {
-            params: interviewIdFilter ? { interview_id: interviewIdFilter } : {},
-          }),
         ]);
         setLogs(adminRes.data);
         setEmailLogs(emailRes.data);
         setRecordingLogs(recRes.data);
-        setSnapshots(snapRes.data);
       } catch (err) {
         console.error(err);
         setError('Failed to fetch system audit logs.');
@@ -60,8 +56,22 @@ const AdminLogsPage = () => {
       }
     };
     fetchLogs();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Snapshots are fetched separately and RE-fetched whenever the interview_id filter
+  // changes — including being cleared. They used to be bundled into the mount-only fetch
+  // above, so clicking "Clear filter" updated the URL but left the previously-filtered
+  // rows on screen since nothing re-ran the request.
+  useEffect(() => {
+    api.get('/admin/proctor-snapshots', {
+      params: interviewIdFilter ? { interview_id: interviewIdFilter } : {},
+    })
+      .then((res) => setSnapshots(res.data))
+      .catch((err) => {
+        console.error(err);
+        setError('Failed to fetch proctoring snapshots.');
+      });
+  }, [interviewIdFilter]);
 
   const handleDeleteAdminLog = async (id) => {
     setError('');
@@ -458,8 +468,11 @@ const AdminLogsPage = () => {
                         ) : '—'}
                       </td>
                       <td className="py-4">
-                        <Badge variant={item.kind === 'termination' ? 'error' : 'info'} className="!normal-case">
-                          {item.kind === 'termination' ? 'Termination' : 'Screen'}
+                        <Badge
+                          variant={item.kind === 'webcam' ? 'error' : item.kind === 'identity' ? 'primary' : 'info'}
+                          className="!normal-case"
+                        >
+                          {item.kind === 'webcam' ? 'Webcam' : item.kind === 'identity' ? 'Identity' : 'Screen'}
                         </Badge>
                       </td>
                       <td className="py-4 max-w-xs truncate font-sans" title={item.label || ''}>

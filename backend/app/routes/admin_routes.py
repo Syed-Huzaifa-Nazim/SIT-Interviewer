@@ -103,8 +103,14 @@ async def list_users(user: User = Depends(admin_required)):
         t_val = t.tokens_available if t else 0
         # Most recent interview, so the frontend can link a candidate row straight to
         # their latest report with zero extra requests per click (Admin Hub §5).
+        # Only interviews that actually HAVE a report qualify — the most recent Interview
+        # row can be one that's still in progress or was abandoned with no report ever
+        # generated, and linking a candidate's name to that produced a dead-end "Report
+        # not generated yet" error page instead of a useful result.
         latest_interview = (
-            Interview.query.filter_by(user_id=u.id)
+            Interview.query
+            .join(InterviewReport, InterviewReport.interview_id == Interview.id)
+            .filter(Interview.user_id == u.id)
             .order_by(Interview.created_at.desc())
             .first()
         )
@@ -128,7 +134,9 @@ async def get_user_detail(target_user_id: int, user: User = Depends(admin_requir
 
     t = Token.query.filter_by(user_id=target.id).first()
     latest_interview = (
-        Interview.query.filter_by(user_id=target.id)
+        Interview.query
+        .join(InterviewReport, InterviewReport.interview_id == Interview.id)
+        .filter(Interview.user_id == target.id)
         .order_by(Interview.created_at.desc())
         .first()
     )

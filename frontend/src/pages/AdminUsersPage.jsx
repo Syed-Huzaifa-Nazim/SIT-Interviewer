@@ -598,17 +598,27 @@ const AdminUsersPage = () => {
                           title={item.online ? 'Online now' : 'Offline'}
                         />
                         {/* Name jumps straight to the candidate's latest interview report —
-                            that's the thing an admin needs on almost every click. The fuller
-                            profile hub (all interviews, snapshots, approval history) is one
-                            click away via the arrow-up icon in Actions, for the less common
-                            case of reviewing history rather than the newest result. */}
-                        <Link
-                          to={item.latest_interview_id ? `/interview/report/${item.latest_interview_id}` : `/admin/users/${item.id}`}
-                          className="font-bold text-slate-900 dark:text-slate-200 hover:text-primary-600 dark:hover:text-primary-400 hover:underline"
-                          title={item.latest_interview_id ? 'View latest interview report' : 'No interview yet — view profile'}
-                        >
-                          {item.name}
-                        </Link>
+                            that's the thing an admin needs on almost every click. Gated on
+                            interview_status === 'interview_completed', not just having SOME
+                            report: a candidate who is only 'invited' (e.g. a pending
+                            re-interview) hasn't sat this attempt yet, so their name must read
+                            as non-clickable even if an OLDER interview happens to have a
+                            report — "Invite Sent" next to a clickable name was misleading.
+                            The Profile hub is backlogged (not linked from anywhere in the
+                            UI), so there's nowhere else meaningful to send that click. */}
+                        {item.latest_interview_id && item.interview_status === 'interview_completed' ? (
+                          <Link
+                            to={`/interview/report/${item.latest_interview_id}`}
+                            className="font-bold text-slate-900 dark:text-slate-200 hover:text-primary-600 dark:hover:text-primary-400 hover:underline"
+                            title="View latest interview report"
+                          >
+                            {item.name}
+                          </Link>
+                        ) : (
+                          <span className="font-bold text-slate-900 dark:text-slate-200" title="No completed interview to review yet">
+                            {item.name}
+                          </span>
+                        )}
                       </div>
                       <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">{item.email}</div>
                       {item.cnic && (

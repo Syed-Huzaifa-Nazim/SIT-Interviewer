@@ -93,14 +93,17 @@ const ReportDetailPage = () => {
       .finally(() => setSnapshotUrlLoading(false));
   }, [snapshotModalOpen, snapshotIndex, auditSnapshots, snapshotUrlCache]);
 
-  // Thumbnail strip on the Compliance tab (replaces the old single giant image): preload
-  // signed URLs for the first few snapshots as soon as the list arrives, so the thumbnails
-  // render immediately instead of each needing its own click-triggered fetch.
-  const THUMB_COUNT = 4;
+  // Thumbnail strip on the Compliance tab (replaces the old single giant image) — shows
+  // only the webcam frame ('webcam' kind) per counted violation, one thumbnail per
+  // violation, so the count here matches the candidate's actual strike count instead of
+  // also including the paired screen-share capture for each one. The full mixed gallery
+  // (webcam + screen + identity) is still reachable via "View all N snapshots" below.
+  const THUMB_COUNT = 5;
+  const webcamSnapshots = auditSnapshots.filter((s) => s.kind === 'webcam');
   const [thumbUrlCache, setThumbUrlCache] = useState({});
   useEffect(() => {
-    if (auditSnapshots.length === 0) return;
-    const toFetch = auditSnapshots.slice(0, THUMB_COUNT).filter((s) => !thumbUrlCache[s.id]);
+    if (webcamSnapshots.length === 0) return;
+    const toFetch = webcamSnapshots.slice(0, THUMB_COUNT).filter((s) => !thumbUrlCache[s.id]);
     toFetch.forEach((snap) => {
       api.get(`/admin/proctor-snapshots/${snap.id}/url`)
         .then((res) => setThumbUrlCache((prev) => ({ ...prev, [snap.id]: res.data.image_url })))
@@ -203,8 +206,8 @@ const ReportDetailPage = () => {
         <AlertCircle className="mx-auto text-red-500" size={32} />
         <h3 className="font-bold text-lg text-slate-900 dark:text-white">Error Loading Report</h3>
         <p className="text-slate-500 dark:text-slate-400 text-sm">{error || 'Report details could not be found.'}</p>
-        <Link to="/dashboard">
-          <Button size="sm">Back to Dashboard</Button>
+        <Link to={user?.role === 'admin' ? '/admin/interviews' : '/dashboard'}>
+          <Button size="sm">{user?.role === 'admin' ? 'Back to Mock Sessions Auditor' : 'Back to Dashboard'}</Button>
         </Link>
       </Card>
     );
@@ -265,26 +268,42 @@ const ReportDetailPage = () => {
   }
 
   let proctorLogsList = [];
+  let technicalNotesList = [];
   try {
     const rawLogs = interview.proctor_logs;
+    let allLogs = [];
     if (Array.isArray(rawLogs)) {
-      proctorLogsList = rawLogs;
+      allLogs = rawLogs;
     } else if (rawLogs) {
       if (typeof rawLogs === 'string') {
-        proctorLogsList = JSON.parse(rawLogs || '[]');
-        if (typeof proctorLogsList === 'string') {
-          proctorLogsList = JSON.parse(proctorLogsList || '[]');
+        allLogs = JSON.parse(rawLogs || '[]');
+        if (typeof allLogs === 'string') {
+          allLogs = JSON.parse(allLogs || '[]');
         }
       } else {
-        proctorLogsList = rawLogs;
+        allLogs = rawLogs;
       }
     }
-    if (!Array.isArray(proctorLogsList)) {
-      proctorLogsList = [];
+    if (!Array.isArray(allLogs)) {
+      allLogs = [];
     }
+    // The Integrity Audit Trail should read as "what actually counted toward this
+    // candidate's strikes" — soft nudges (a candidate glancing away that never escalated)
+    // are real signal for the proctoring system but not for this list, so they're filtered
+    // out here rather than cluttering the trail with entries that were never violations.
+    proctorLogsList = allLogs.filter((log) => !log.soft);
+    // Infrastructure notes (camera dropped/reconnected, recording never captured) are also
+    // soft — never candidate misconduct — but unlike a look-away nudge they ARE something an
+    // admin needs to see (they explain a missing/gap recording), so they get their own small
+    // section below instead of being silently dropped along with the other soft entries.
+    const TECHNICAL_NOTE_TYPES = [
+      'CAMERA_STALL', 'CAMERA_UNRECOVERABLE', 'RECORDING_UNAVAILABLE', 'RECORDING_TRUNCATED',
+    ];
+    technicalNotesList = allLogs.filter((log) => log.soft && TECHNICAL_NOTE_TYPES.includes(log.type));
   } catch (err) {
     console.warn("Failed to parse proctor logs:", err);
     proctorLogsList = [];
+    technicalNotesList = [];
   }
 
   // Color mappings
@@ -360,7 +379,7 @@ const ReportDetailPage = () => {
           <div className="space-y-1">
             <h3 className="font-extrabold text-sm text-slate-900 dark:text-white">Proctor Violation Terminated Session</h3>
             <p className="leading-relaxed opacity-95">
-              This candidate assessment was terminated automatically because the system logged 3 or more proctor compliance infractions. Score metrics should be verified alongside audit snapshot logs.
+              This candidate assessment was terminated automatically because the system logged 5 or more proctor compliance infractions. Score metrics should be verified alongside audit snapshot logs.
             </p>
           </div>
         </div>
@@ -663,17 +682,22 @@ const ReportDetailPage = () => {
               Webcam Audit snapshot
             </h3>
             {user?.role === 'admin' && auditSnapshots.length > 0 ? (
-              // Admin view: a compact thumbnail strip instead of one blown-up image —
-              // click any thumbnail to open it full-size in the slider gallery below.
+              // Admin view: one webcam thumbnail per counted violation (not the paired
+              // screen capture too) — click any thumbnail to open it full-size in the
+              // slider gallery below, which still includes everything archived.
               <div className="space-y-3">
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  {auditSnapshots.slice(0, THUMB_COUNT).map((snap, idx) => (
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                  {webcamSnapshots.slice(0, THUMB_COUNT).map((snap) => (
                     <button
                       key={snap.id}
                       type="button"
-                      onClick={() => { setSnapshotIndex(idx); setSnapshotModalOpen(true); }}
+                      onClick={() => {
+                        const realIdx = auditSnapshots.findIndex((a) => a.id === snap.id);
+                        setSnapshotIndex(realIdx >= 0 ? realIdx : 0);
+                        setSnapshotModalOpen(true);
+                      }}
                       className="relative aspect-video rounded-lg overflow-hidden border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-950 hover:border-primary-400 dark:hover:border-primary-600 transition"
-                      title={`${snap.kind === 'termination' ? 'Webcam' : 'Screen'} · ${new Date(snap.captured_at).toLocaleTimeString()}`}
+                      title={`Webcam · ${new Date(snap.captured_at).toLocaleTimeString()}`}
                     >
                       {thumbUrlCache[snap.id] ? (
                         <img src={thumbUrlCache[snap.id]} alt="Archived proctoring thumbnail" className="w-full h-full object-cover" />
@@ -690,7 +714,7 @@ const ReportDetailPage = () => {
                   onClick={() => { setSnapshotIndex(0); setSnapshotModalOpen(true); }}
                   className="text-[11px] font-bold text-primary-600 dark:text-primary-400 hover:underline"
                 >
-                  {auditSnapshots.length > THUMB_COUNT
+                  {auditSnapshots.length > Math.min(webcamSnapshots.length, THUMB_COUNT)
                     ? `View all ${auditSnapshots.length} snapshots →`
                     : 'Open in full-size viewer →'}
                 </button>
@@ -795,6 +819,21 @@ const ReportDetailPage = () => {
                 Zero violation trails logged.
               </div>
             )}
+            {technicalNotesList.length > 0 && (
+              <div className="pt-3 mt-1 border-t border-slate-200 dark:border-slate-800/80 space-y-2">
+                <h4 className="text-[10px] font-extrabold uppercase tracking-wide text-slate-400 dark:text-slate-500">
+                  Technical Notes
+                </h4>
+                {technicalNotesList.map((log, idx) => (
+                  <div key={idx} className="text-xs flex items-start gap-2 text-slate-500 dark:text-slate-400 font-sans">
+                    <span className="text-[9px] font-mono text-slate-400 dark:text-slate-600 shrink-0 pt-0.5">
+                      {new Date(log.timestamp).toLocaleTimeString()}
+                    </span>
+                    <span>{log.details}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </Card>
         </div>
       </div>
@@ -844,10 +883,12 @@ const ReportDetailPage = () => {
                       />
                     )}
                     <Badge
-                      variant={auditSnapshots[snapshotIndex]?.kind === 'termination' ? 'error' : 'info'}
+                      variant={auditSnapshots[snapshotIndex]?.kind === 'webcam' ? 'error' : auditSnapshots[snapshotIndex]?.kind === 'identity' ? 'primary' : 'info'}
                       className="absolute top-2 left-2 !text-[8px] font-bold rounded"
                     >
-                      {auditSnapshots[snapshotIndex]?.kind === 'termination' ? 'Webcam Frame' : 'Screen Capture'}
+                      {auditSnapshots[snapshotIndex]?.kind === 'webcam' ? 'Webcam Frame'
+                        : auditSnapshots[snapshotIndex]?.kind === 'identity' ? 'Identity Check'
+                        : 'Screen Capture'}
                     </Badge>
                     {auditSnapshots.length > 1 && (
                       <>

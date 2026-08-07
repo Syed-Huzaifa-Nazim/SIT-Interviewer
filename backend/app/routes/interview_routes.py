@@ -7,7 +7,7 @@ import tempfile
 import subprocess
 import threading
 from fastapi import APIRouter, Request, HTTPException, status, Depends, UploadFile, File, Form
-from sqlalchemy import func
+from sqlalchemy import text
 from app.database.db import db
 from app.models import (
     User, Token, Transaction, Interview, InterviewQuestion,
@@ -382,6 +382,23 @@ async def upload_session_video_part(
 
     ref = SupabaseService.upload_interview_video_part(user_id, interview_id, part_index, contents)
     if not ref:
+        # A failing slice used to leave no trace anywhere: this endpoint just returned 502,
+        # and because a session whose slices all fail never reaches /finalize-video, the
+        # RecordingLog failure row that exists for every OTHER recording failure was never
+        # written either. A storage outage therefore looked identical to "recording simply
+        # didn't happen". Best-effort, and never allowed to mask the 502 itself.
+        try:
+            candidate = User.query.get(user_id)
+            db.session.add(RecordingLog(
+                user_id=user_id,
+                candidate_email=candidate.email if candidate else None,
+                interview_id=interview_id, question_id=None, storage_ref=None,
+                status='failed',
+                error=f"Could not store session recording part {part_index} ({len(contents)} bytes)",
+            ))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
         raise HTTPException(status_code=502, detail="Could not store video part")
     return {'stored': True, 'part_index': part_index, 'bytes': len(contents)}
 
@@ -1139,8 +1156,8 @@ def archive_proctor_snapshot(interview, kind, image_data_url, label=None):
 def mark_interview_as_failed_proctoring(interview, snapshot_image=None, snapshot_description=None):
     # NOTE: we deliberately do NOT archive a ProctorSnapshot row here. The client already
     # files exactly one webcam + one screen snapshot for EVERY counted violation, including
-    # the 4th (terminating) one. Archiving a 'termination' copy as well made that last
-    # violation produce three rows instead of two (4 violations => 9 snapshots, not 8).
+    # the terminating one. Archiving a 'termination' copy as well made that last violation
+    # produce three rows instead of two (N violations => 2N+1 snapshots, not 2N).
     # The inline copy kept on the report below still powers the Compliance Audit card.
 
     interview.is_proctor_failed = True
@@ -1275,18 +1292,53 @@ async def log_proctoring_violation(interview_id: int, request: Request, user_id:
                 'soft': True
             }
 
-        # Atomic DB-level increment (SET count = COALESCE(count, 0) + 1) instead of a
-        # Python read-modify-write. Two violations landing close together (e.g. a tab switch
-        # firing at the same moment an answer is submitted) could otherwise both read the
-        # same starting count and each write back "+1", silently losing one strike. Flushing
-        # then re-reading the attribute forces SQLAlchemy to pull the true value the database
-        # just computed, rather than trusting the stale Python-side number.
-        interview.proctor_violations_count = func.coalesce(Interview.proctor_violations_count, 0) + 1
-        db.session.flush()
+        # Atomic increment AND termination guard in a single statement.
+        #
+        # The increment was already atomic on its own, but the "has this session already been
+        # terminated?" check sat in a separate statement before it, which left a real window
+        # open: request B reads status='active', then blocks on the row lock request A holds,
+        # then increments on top of A's terminating write — producing a 6th strike past the
+        # 5-strike ceiling and running termination a second time. Folding the condition into
+        # the UPDATE closes it, because Postgres re-evaluates this WHERE against the latest
+        # committed version of the row *after* acquiring the lock: once A has committed the
+        # termination, B matches zero rows and backs off having counted nothing.
+        #
+        # RETURNING gives back the true post-increment value, so the threshold below is never
+        # evaluated against a stale read. `IS DISTINCT FROM` rather than `<>` so legacy rows
+        # with a NULL status still match instead of silently failing the guard.
+        row = db.session.execute(
+            text("""
+                UPDATE interviews
+                   SET proctor_violations_count = COALESCE(proctor_violations_count, 0) + 1
+                 WHERE id = :interview_id
+                   AND status IS DISTINCT FROM 'completed'
+              RETURNING proctor_violations_count
+            """),
+            {'interview_id': interview_id},
+        ).first()
+
+        if row is None:
+            # A concurrent violation already terminated this session. The log entry appended
+            # above is still committed (it remains evidence of what happened), but nothing is
+            # counted — and this deliberately returns NO violations_count: the value this
+            # request's instance holds is the PRE-increment one, and replying with it is
+            # exactly what made the candidate's counter visibly fall back from 6 to 4 in the
+            # seconds before termination.
+            db.session.commit()
+            return {
+                'message': 'Interview already completed',
+                'auto_terminate': False,
+            }
+
+        new_count = row[0]
+        # The raw UPDATE bypassed the ORM, so this instance still carries the old number.
+        # Expiring (rather than assigning) keeps it truthful without marking the column dirty,
+        # which would make the commit below issue a second, redundant UPDATE for it.
+        db.session.expire(interview, ['proctor_violations_count'])
 
         auto_terminate = False
-        # Allow exactly 3 warnings. Terminate when violations_count reaches 4 (exceeding 3)
-        if interview.proctor_violations_count > 3:
+        # Allow exactly 4 warnings. Terminate when violations_count reaches 5 (exceeding 4)
+        if new_count > 4:
             snapshot_description = f"Integrity breach detected: {details} (Violation type: {violation_type})."
             mark_interview_as_failed_proctoring(
                 interview,
@@ -1301,7 +1353,7 @@ async def log_proctoring_violation(interview_id: int, request: Request, user_id:
         return {
             'message': 'Violation recorded successfully',
             'auto_terminate': auto_terminate,
-            'violations_count': interview.proctor_violations_count
+            'violations_count': new_count
         }
         
     except Exception as e:
@@ -1318,8 +1370,8 @@ async def upload_proctor_snapshot(interview_id: int, request: Request, user_id: 
     interview = Interview.query.filter_by(id=interview_id, user_id=user_id).first()
     if not interview:
         raise HTTPException(status_code=404, detail="Interview session not found")
-    # NOTE: we intentionally do NOT reject a just-completed interview here. The 4th
-    # (terminating) violation marks the interview completed almost simultaneously with the
+    # NOTE: we intentionally do NOT reject a just-completed interview here. The
+    # terminating violation marks the interview completed almost simultaneously with the
     # client firing its snapshot for that same violation — rejecting on 'completed' would
     # drop the terminating violation's frame. Archiving it is exactly what we want.
 
