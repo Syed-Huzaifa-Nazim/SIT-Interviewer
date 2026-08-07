@@ -79,6 +79,80 @@ def cleanup_expired_recordings():
         db.session.remove()
 
 
+RECORDING_ASSEMBLY_INTERVAL_SECONDS = 5 * 60
+# A session's parts are only joined once uploads have clearly stopped. Without this a sweep
+# could catch a recording mid-upload and assemble a truncated file.
+ASSEMBLY_QUIET_PERIOD_SECONDS = 120
+
+
+def assemble_pending_recordings():
+    """Join the stored parts of any completed interview that never got a final recording.
+
+    /finalize-video is called by the candidate's browser, and for a one-time candidate that
+    call races the forced logout the very same navigation triggers: the thank-you screen
+    wipes the token and revokes the session server-side while the assemble request — which
+    takes seconds, since it downloads and joins every part — is still in flight. The request
+    then 401s, and its retries cannot recover because the token is already gone. Ten
+    interviews' recordings were sitting in storage fully uploaded and never assembled.
+
+    Doing it here removes the race entirely: the server owns the parts, needs no candidate
+    token, and cannot be interrupted by the candidate leaving. It also rescues sessions
+    abandoned mid-redirect, which never reached /finalize-video at all.
+    """
+    try:
+        pending = SupabaseService.list_interviews_with_pending_parts()
+    except Exception as e:
+        print(f"[assemble-worker] Could not list pending parts: {e}")
+        return
+
+    for user_id, interview_id in pending:
+        try:
+            interview = Interview.query.get(interview_id)
+            # Deleted interview, already assembled, or still running — leave the parts alone.
+            if not interview or interview.video_path or interview.status != 'completed':
+                continue
+
+            age = SupabaseService.newest_part_age_seconds(user_id, interview_id)
+            if age is None or age < ASSEMBLY_QUIET_PERIOD_SECONDS:
+                continue
+
+            final_ref = SupabaseService.assemble_interview_video(user_id, interview_id)
+            if not final_ref:
+                # assemble_interview_video leaves every part in place on failure, so the
+                # next sweep can try again. Nothing is lost by failing here.
+                print(f"[assemble-worker] Could not assemble interview {interview_id}; parts kept.")
+                continue
+
+            candidate = User.query.get(user_id)
+            interview.video_path = final_ref
+            db.session.add(RecordingLog(
+                user_id=user_id,
+                candidate_email=candidate.email if candidate else None,
+                interview_id=interview_id, question_id=None,
+                storage_ref=final_ref, status='active',
+            ))
+            db.session.commit()
+            print(f"[assemble-worker] Assembled recording for interview {interview_id}.")
+        except Exception as e:
+            db.session.rollback()
+            print(f"[assemble-worker] Interview {interview_id} failed: {e}")
+
+    db.session.remove()
+
+
+def start_recording_assembly_worker():
+    """Daemon thread that sweeps for unassembled recordings. Called once at startup."""
+    def _loop():
+        while True:
+            # Delay the first pass so a restart never collides with an interview that is
+            # still uploading its closing slices.
+            time.sleep(ASSEMBLY_QUIET_PERIOD_SECONDS)
+            assemble_pending_recordings()
+            time.sleep(RECORDING_ASSEMBLY_INTERVAL_SECONDS)
+
+    threading.Thread(target=_loop, daemon=True).start()
+
+
 def start_recording_cleanup_worker():
     """Start a daemon thread that periodically purges expired recordings while the app is
     running. Idempotent-ish: intended to be called once at startup."""

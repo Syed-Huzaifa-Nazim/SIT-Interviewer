@@ -198,13 +198,12 @@ class SupabaseService:
         return None
 
     @staticmethod
-    def list_interview_video_parts(user_id: int, interview_id: int) -> list:
-        """Names of every stored part for this interview, in playback order."""
+    def _list_prefix(prefix: str) -> list:
+        """Raw storage listing under a prefix, or [] if unreachable."""
         bucket = Config.SUPABASE_VIDEO_BUCKET or 'interview-recordings'
         url, key = Config.SUPABASE_URL, Config.SUPABASE_KEY
         if not url or not key:
             return []
-        prefix = SupabaseService._video_parts_prefix(user_id, interview_id)
         try:
             r = requests.post(
                 f"{url.rstrip('/')}/storage/v1/object/list/{bucket}",
@@ -215,14 +214,65 @@ class SupabaseService:
                 timeout=30,
             )
             if r.status_code != 200:
-                print(f"Supabase part listing failed: HTTP {r.status_code} {r.text[:150]}")
+                print(f"Supabase listing failed for '{prefix}': HTTP {r.status_code} {r.text[:150]}")
                 return []
-            # Sorted explicitly rather than trusting the API's ordering — assembling parts
-            # out of order silently produces a corrupt, unplayable file.
-            return sorted(f"{prefix}{o['name']}" for o in r.json() if o.get('name'))
+            return r.json()
         except Exception as e:
-            print(f"Supabase part listing exception: {e}")
+            print(f"Supabase listing exception for '{prefix}': {e}")
             return []
+
+    @staticmethod
+    def list_interview_video_parts(user_id: int, interview_id: int) -> list:
+        """Names of every stored part for this interview, in playback order."""
+        prefix = SupabaseService._video_parts_prefix(user_id, interview_id)
+        # Sorted explicitly rather than trusting the API's ordering — assembling parts
+        # out of order silently produces a corrupt, unplayable file.
+        return sorted(
+            f"{prefix}{o['name']}" for o in SupabaseService._list_prefix(prefix) if o.get('name')
+        )
+
+    @staticmethod
+    def newest_part_age_seconds(user_id: int, interview_id: int):
+        """Seconds since the most recent part landed, or None if there are no parts.
+
+        Lets a background assembler tell "this session has finished uploading" from "slices
+        are still arriving" without needing anything from the candidate's browser.
+        """
+        import datetime as _dt
+        prefix = SupabaseService._video_parts_prefix(user_id, interview_id)
+        newest = None
+        for o in SupabaseService._list_prefix(prefix):
+            stamp = o.get('updated_at') or o.get('created_at')
+            if not stamp:
+                continue
+            try:
+                # Supabase returns ISO-8601 with a trailing Z, which fromisoformat rejects
+                # on older Pythons.
+                parsed = _dt.datetime.fromisoformat(stamp.replace('Z', '+00:00'))
+            except ValueError:
+                continue
+            if newest is None or parsed > newest:
+                newest = parsed
+        if newest is None:
+            return None
+        now = _dt.datetime.now(_dt.timezone.utc)
+        return max(0.0, (now - newest).total_seconds())
+
+    @staticmethod
+    def list_interviews_with_pending_parts() -> list:
+        """[(user_id, interview_id)] for every session that still has unassembled parts.
+
+        One listing call for the whole bucket rather than one per interview, so a sweep
+        stays cheap no matter how many interviews exist.
+        """
+        import re as _re
+        found = set()
+        for o in SupabaseService._list_prefix('parts/'):
+            name = o.get('name') or ''
+            m = _re.match(r'^user_(\d+)_int_(\d+)$', name.strip('/'))
+            if m:
+                found.add((int(m.group(1)), int(m.group(2))))
+        return sorted(found)
 
     @staticmethod
     def download_object(bucket: str, storage_path: str, timeout: int = 60) -> bytes:

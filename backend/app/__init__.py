@@ -182,6 +182,15 @@ def create_app(config_class=Config):
     except Exception as e:
         print(f"Failed to start recording-cleanup worker: {str(e)}")
 
+    # Joins the parts of any completed interview whose browser-side /finalize-video never
+    # landed — chiefly the one-time candidate whose forced logout revokes the session while
+    # that request is still assembling.
+    try:
+        from app.routes.interview_routes import start_recording_assembly_worker
+        start_recording_assembly_worker()
+    except Exception as e:
+        print(f"Failed to start recording-assembly worker: {str(e)}")
+
     # Global catch-all: any error not already handled (FastAPI still handles HTTPException
     # and validation errors itself, which take precedence) returns a clean JSON body
     # instead of leaking a stack trace, and rolls back so a broken transaction can't poison
