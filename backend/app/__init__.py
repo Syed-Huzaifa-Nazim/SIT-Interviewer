@@ -157,6 +157,22 @@ def create_app(config_class=Config):
     except Exception as e:
         db.session.rollback()
         print(f"Failed to seed admin on startup: {str(e)}")
+    finally:
+        # Not optional, and not tidiness. This block always runs `SELECT ... FROM users`,
+        # and on the common path (the admin already exists) it never commits — so without
+        # this the startup session stays open, idle in transaction, holding an ACCESS SHARE
+        # lock on `users` for the entire life of the process.
+        #
+        # That is not a slow leak, it is a permanent one, and it broke deploys: this exact
+        # session, left behind by the container from two days earlier, is what blocked
+        # `ALTER TABLE users ADD COLUMN` in the next deployment. ADD COLUMN needs ACCESS
+        # EXCLUSIVE, which can never be granted while an ACCESS SHARE holder sits there, so
+        # the migration timed out and the new container died — the old boot sabotaging the
+        # new one. Every future column add would have hit the same wall.
+        #
+        # remove() returns the connection to the pool and ends its transaction. Requests
+        # already get this from db_session_middleware; startup ran outside that middleware.
+        db.session.remove()
 
     # Start the background retention worker that auto-deletes interview recordings older
     # than the retention window (RECORDING_RETENTION_DAYS) and audits each deletion.
