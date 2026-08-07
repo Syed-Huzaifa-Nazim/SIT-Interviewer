@@ -5,10 +5,11 @@
 
 // Named so the wording lives in one place instead of being duplicated at call sites.
 export const LOOK_AWAY_VOICE_MESSAGE = 'Please look directly at the camera.';
-// GAZE_AWAY fires when the head stays put but the eyes drift off-screen — a distinct
-// phrasing from LOOK_AWAY's head-turn wording so the spoken alert actually matches what the
-// candidate did (still counts toward the same 4-nudge escalation, only the wording differs).
+// GAZE_AWAY is now a hard/immediate violation (see logProctorViolation's own voice hook) —
+// this message is unrelated to LOOK_AWAY's wording, just spoken from a different call site.
 export const GAZE_AWAY_VOICE_MESSAGE = 'Please keep your eyes on the screen.';
+export const HAND_DETECTED_VOICE_MESSAGE = 'Please keep your hand away from your face and the camera.';
+export const NO_FACE_VOICE_MESSAGE = 'Please make sure your face is visible to the camera.';
 export const MULTIPLE_FACES_VOICE_MESSAGE = 'Multiple faces detected. Please ensure you are alone.';
 export const TERMINATION_VOICE_MESSAGE = 'Interview terminated due to repeated violations.';
 
@@ -36,10 +37,13 @@ export const speakPhrase = (text, { interrupt = false } = {}) => {
   }
 };
 
-// Counts soft look-away/gaze-away nudges and reports back once `threshold` of them have
-// accumulated, so the caller can escalate that occurrence into one real, counted violation
-// instead of a strike being taken for every momentary glance away.
-export const createLookAwayAccumulator = (threshold = 4) => {
+// Shared soft-warning pool: counts nudges across ANY mix of soft violation types (LOOK_AWAY,
+// HAND_DETECTED, NO_FACE all register against the same instance) and reports back once
+// `threshold` of them have accumulated in total, so the caller can escalate that occurrence
+// into one real, counted violation instead of a strike being taken for every momentary
+// glance-away/hand/no-face blip. Counting is shared; each type still gets its own distinct
+// beep/popup/voice on every occurrence — this only decides when to escalate.
+export const createSoftWarningAccumulator = (threshold = 4) => {
   let count = 0;
   return {
     threshold,

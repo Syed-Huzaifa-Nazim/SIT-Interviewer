@@ -4,9 +4,11 @@ import api from '../services/api';
 import { getScreenStream, hasScreenStream, clearScreenStream } from '../services/proctorScreen';
 import {
   speakPhrase,
-  createLookAwayAccumulator,
+  createSoftWarningAccumulator,
   LOOK_AWAY_VOICE_MESSAGE,
   GAZE_AWAY_VOICE_MESSAGE,
+  HAND_DETECTED_VOICE_MESSAGE,
+  NO_FACE_VOICE_MESSAGE,
   MULTIPLE_FACES_VOICE_MESSAGE,
   TERMINATION_VOICE_MESSAGE,
 } from '../utils/proctorVoiceAlerts';
@@ -120,13 +122,14 @@ const InterviewSession = () => {
   const gazeAwaySinceRef = useRef(null);
   const eyesClosedSinceRef = useRef(null);
   const lastGazeCheckRef = useRef(0);
-  // Soft look-away escalation (§ soft-warnings): accumulates LOOK_AWAY/GAZE_AWAY nudges and
-  // reports back once 4 have happened, so that occurrence can be logged as one real
-  // violation. lastLookAwayNudgeRef is a DEDICATED timestamp for the LOOK_AWAY/GAZE_AWAY
-  // cross-type dedup in checkEyeGaze — kept separate from lastViolationTimeRef so it can
-  // never collide with logProctorViolation's own internal per-type throttle (that throttle
-  // must only ever be touched by logProctorViolation itself).
-  const lookAwayAccumulatorRef = useRef(createLookAwayAccumulator(4));
+  // Shared soft-warning escalation (§ soft-warnings): LOOK_AWAY, HAND_DETECTED, and NO_FACE
+  // all register against this ONE accumulator — any mix of the three totaling 4 escalates to
+  // one real, counted violation. lastLookAwayNudgeRef is a DEDICATED timestamp used only for
+  // the LOOK_AWAY/GAZE_AWAY cross-type dedup in checkEyeGaze (GAZE_AWAY is a hard violation
+  // and does not touch the shared pool at all) — kept separate from lastViolationTimeRef so
+  // it can never collide with logProctorViolation's own internal per-type throttle (that
+  // throttle must only ever be touched by logProctorViolation itself).
+  const sharedSoftAccumulatorRef = useRef(createSoftWarningAccumulator(4));
   const lastLookAwayNudgeRef = useRef(0);
   // Camera recovery refs. There is deliberately NO polling "is it frozen?" watchdog: every
   // frame/clock-based heuristic tried here produced false stalls (a busy main thread during
@@ -473,12 +476,16 @@ const InterviewSession = () => {
     lastAnyViolationRef.current = now;
     lastViolationTimeRef.current[type] = now;
 
-    // Spoken alert for multiple faces — piggybacks on the throttle/dedup work just done
-    // above so it fires once per violation, not continuously while 2+ faces stay in frame
-    // (MediaPipe re-reports this many times a second). Every other violation type is
-    // unaffected by this check.
+    // Spoken alerts for the hard/immediate violation types — piggyback on the throttle/dedup
+    // work just done above so each fires once per violation, not continuously while the
+    // condition stays true (MediaPipe re-reports several times a second). speakPhrase is
+    // called without { interrupt: true }, so it never cancels an in-flight utterance — it
+    // queues and always plays to completion. Every other violation type is unaffected.
     if (type === 'MULTIPLE_FACES' && !isMuted) {
       speakPhrase(MULTIPLE_FACES_VOICE_MESSAGE);
+    }
+    if (type === 'GAZE_AWAY' && !isMuted) {
+      speakPhrase(GAZE_AWAY_VOICE_MESSAGE);
     }
 
     // Local warnings
@@ -603,14 +610,24 @@ const InterviewSession = () => {
     }
   };
 
-  // 3c. Soft look-away/gaze-away warning (§ soft-warnings): candidate glancing away first
-  // gets a gentle, repeatable nudge — beep, popup, and a spoken "please look at the camera"
-  // — instead of an immediate strike. Only after 4 of these accumulate (LOOK_AWAY and
-  // GAZE_AWAY share one counter — they're the same underlying behavior) does it become one
-  // real, counted violation via the existing logProctorViolation path.
-  const handleSoftLookAway = (type, details) => {
+  // 3c. Shared soft-warning pool (§ soft-warnings): LOOK_AWAY, HAND_DETECTED, and NO_FACE
+  // each get a gentle, repeatable nudge — beep, popup, and their OWN spoken message — instead
+  // of an immediate strike. Only after 4 of these accumulate IN TOTAL, in any mix of the
+  // three types, does the triggering occurrence become one real, counted violation via the
+  // existing logProctorViolation path. Counting is shared across types; messaging never is.
+  const SOFT_VOICE_MESSAGES = {
+    LOOK_AWAY: LOOK_AWAY_VOICE_MESSAGE,
+    HAND_DETECTED: HAND_DETECTED_VOICE_MESSAGE,
+    NO_FACE: NO_FACE_VOICE_MESSAGE,
+  };
+
+  const handleSoftWarning = (type, details) => {
     if (proctorTerminatedRef.current) return;
     const now = Date.now();
+    // Throttle stays PER TYPE (not shared) — a HAND_DETECTED nudge must not suppress a
+    // NO_FACE nudge moments later, only repeats of the SAME type within 6s. This is also
+    // what keeps HAND_DETECTED/NO_FACE (which used to fire every MediaPipe frame via the
+    // hard path) from spamming the beep/voice/popup now that they route through here.
     const key = `soft_${type}`;
     if (lastViolationTimeRef.current[key] && now - lastViolationTimeRef.current[key] < 6000) {
       return;
@@ -619,22 +636,26 @@ const InterviewSession = () => {
     // Dedicated ref, NOT lastViolationTimeRef.current[type] — that key belongs exclusively
     // to logProctorViolation's own internal per-type throttle. Stamping it here too would
     // make that throttle see ~0ms elapsed on the escalating call below and silently skip
-    // logging the violation.
-    lastLookAwayNudgeRef.current = now;
+    // logging the violation. Only relevant to LOOK_AWAY — it's what checkEyeGaze reads to
+    // avoid double-flagging one head-turn as both a soft LOOK_AWAY nudge and a hard GAZE_AWAY
+    // violation; HAND_DETECTED/NO_FACE have nothing to do with that dedup.
+    if (type === 'LOOK_AWAY') {
+      lastLookAwayNudgeRef.current = now;
+    }
 
     // Gentler/lower/shorter tone than the hard-violation alarm (which stays at its default
     // 650Hz/1.0s), so a soft nudge is audibly distinguishable from a real counted strike.
     playBeepAlarm(500, 0.4);
     setSoftAlert(details);
     setTimeout(() => setSoftAlert(''), 4000);
-    if (!isMuted) {
-      speakPhrase(type === 'GAZE_AWAY' ? GAZE_AWAY_VOICE_MESSAGE : LOOK_AWAY_VOICE_MESSAGE);
+    if (!isMuted && SOFT_VOICE_MESSAGES[type]) {
+      speakPhrase(SOFT_VOICE_MESSAGES[type]);
     }
 
-    if (lookAwayAccumulatorRef.current.register()) {
-      // 4th nudge — escalate to one real, counted violation. logProctorViolation logs its
-      // own (hard) entry, so the soft proctor-log POST below is deliberately skipped for
-      // this occurrence to avoid two rows for the same moment.
+    if (sharedSoftAccumulatorRef.current.register()) {
+      // 4th nudge across the shared pool — escalate to one real, counted violation.
+      // logProctorViolation logs its own (hard) entry, so the soft proctor-log POST below is
+      // deliberately skipped for this occurrence to avoid two rows for the same moment.
       logProctorViolation(type, details);
     } else {
       api.post(`/interviews/${id}/proctor-log`, { type, details, soft: true }).catch(() => {});
@@ -804,7 +825,13 @@ const InterviewSession = () => {
               // nothing extra to wire up here.
               const rec = new MediaRecorder(stream, {
                 mimeType,
-                videoBitsPerSecond: 600_000, // 480p decorative-review quality, ~4.5MB/min
+                // Lowered from 600kbps after a real production failure: a 65.5MB recording
+                // (~14.6 min at 600kbps, an entirely ordinary interview length) was refused
+                // by Supabase Storage's 50MB per-object cap (Config.MAX_RECORDING_UPLOAD_BYTES,
+                // backend/app/config/config.py). 150kbps (~1.1MB/min) keeps even a ~40-minute
+                // session comfortably under that cap, while staying watchable enough for its
+                // actual purpose — proctoring/audit review, not primary playback.
+                videoBitsPerSecond: 150_000,
               });
               rec.ondataavailable = (e) => {
                 if (e.data && e.data.size > 0) {
@@ -1114,10 +1141,10 @@ const InterviewSession = () => {
       return;
     }
 
-    // No Face Detection (existing hard violation, unchanged)
+    // No Face Detection — soft, feeds the shared warning pool (§ soft-warnings)
     if (faces.length === 0) {
       faceBadSinceRef.current = null;
-      logProctorViolation('NO_FACE', 'No face detected. Please look directly into the camera.');
+      handleSoftWarning('NO_FACE', 'No face detected. Please look directly into the camera.');
       return;
     }
 
@@ -1162,7 +1189,7 @@ const InterviewSession = () => {
 
         // Balanced center is ~0.5. Left or right lookaways skew this:
         if (noseOffset < 0.33 || noseOffset > 0.67) {
-          handleSoftLookAway('LOOK_AWAY', 'Turned head or looked away from the monitor.');
+          handleSoftWarning('LOOK_AWAY', 'Turned head or looked away from the monitor.');
         }
       }
     }
@@ -1247,11 +1274,11 @@ const InterviewSession = () => {
       if (!gazeAwaySinceRef.current) {
         gazeAwaySinceRef.current = now;
       } else if (now - gazeAwaySinceRef.current > GAZE_AWAY_MS) {
-        // Sustained (GAZE_AWAY_MS) look off the screen — a soft nudge (beep + popup + voice)
-        // that only becomes a real, counted strike after 4 of these/LOOK_AWAY accumulate
-        // (see handleSoftLookAway). The GAZE_AWAY_MS window keeps a blink or micro-glance
-        // from tripping it.
-        handleSoftLookAway('GAZE_AWAY', 'Looked away from the screen during the interview.');
+        // Sustained (GAZE_AWAY_MS) look off the screen — hard/immediate, same tier as
+        // MULTIPLE_FACES: every occurrence is a real, counted violation right away. Does NOT
+        // go through the shared soft pool. The GAZE_AWAY_MS window still keeps a blink or
+        // micro-glance from tripping it.
+        logProctorViolation('GAZE_AWAY', 'Looked away from the screen during the interview.');
         gazeAwaySinceRef.current = now; // re-arm for the next continuous window
       }
     } else {
@@ -1259,14 +1286,16 @@ const InterviewSession = () => {
     }
   };
 
-  // 7b. Process MediaPipe Hand Landmarks (hands raised in front of the screen/camera).
-  // MediaPipe only reports a hand when its own confidence is met, so any detected hand
-  // is flagged immediately — no size gate — so a hand entering the frame is caught the
-  // moment it appears. The per-type throttle prevents repeated frames from stacking.
+  // 7b. Process MediaPipe Hand Landmarks (hands raised in front of the screen/camera) — soft,
+  // feeds the shared warning pool (§ soft-warnings). MediaPipe only reports a hand when its
+  // own confidence is met, so any detected hand is flagged — no size gate — so a hand
+  // entering the frame is caught the moment it appears. handleSoftWarning's own 6s per-type
+  // throttle (not a separate gate here) is what stops this alternating-frame callback
+  // (~4x/sec) from spamming a beep/voice every cycle while a hand stays up.
   const handleHandResults = (results) => {
     const hands = results.multiHandLandmarks || [];
     if (hands.length > 0) {
-      logProctorViolation('HAND_DETECTED', 'Hand detected in front of the camera. Keep your hands out of view.');
+      handleSoftWarning('HAND_DETECTED', 'Hand detected in front of the camera. Keep your hands out of view.');
     }
   };
 
