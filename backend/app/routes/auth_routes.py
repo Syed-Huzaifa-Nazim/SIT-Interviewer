@@ -355,6 +355,14 @@ async def refresh(request: Request):
 
     try:
         payload = jwt.decode(refresh_token, JWT_SECRET, algorithms=["HS256"])
+
+        # Only a real refresh token may mint access tokens. Without this check an ACCESS
+        # token is accepted here too, which would hand one-time interview sessions — issued
+        # a deliberately short-lived access token and no refresh token at all (§3.3) — an
+        # unlimited renewal loop.
+        if payload.get("type") != "refresh":
+            raise HTTPException(status_code=401, detail="Invalid refresh token")
+
         user_id = int(payload["sub"])
 
         # Revoked sessions must not be renewable via a kept refresh token (§3.3)
@@ -375,50 +383,100 @@ async def refresh(request: Request):
         raise HTTPException(status_code=401, detail="Invalid refresh token")
 
 
+# Password reset tuning. The code is short because it is delivered out-of-band by email;
+# the security comes from it being random, hashed at rest, expiring, and single-use.
+RESET_CODE_TTL_MINUTES = 15
+RESET_RESEND_COOLDOWN_SECONDS = 60
+RESET_MIN_PASSWORD_LENGTH = 8
+
+# Deliberately identical for every outcome — a different response for a known vs unknown
+# address would turn this endpoint into an account-enumeration oracle.
+_RESET_GENERIC_MESSAGE = (
+    'If an account exists for that email address, a password reset code has been sent to it. '
+    'Please check your inbox.'
+)
+
+
 @auth_bp.post('/forgot-password')
 async def forgot_password(request: Request):
+    """Issues a random, hashed, expiring reset code and EMAILS it to the account owner.
+
+    The code is never returned in the response. The previous implementation accepted a
+    hard-coded '123456' and even handed it back to the caller, so anyone who knew an
+    email address could take over that account — including the admin account.
+    """
     data = await request.json() or {}
-    email = data.get('email')
+    email = (data.get('email') or '').strip()
 
     if not email:
         raise HTTPException(status_code=400, detail="Email is required")
 
     user = User.query.filter_by(email=email).first()
-    if not user:
-        return {'message': 'If the email exists in our system, a password reset code has been sent'}
 
-    mock_otp = "123456"
-    return {
-        'message': 'If the email exists, a password reset code has been sent.',
-        'debug_otp': mock_otp
-    }
+    # Silently no-op for unknown addresses and for one-time-credential accounts (their
+    # login is the admin-issued interview OTP; there is no password to reset).
+    if not user or user.must_use_otp:
+        return {'message': _RESET_GENERIC_MESSAGE}
+
+    # Throttle re-sends so this endpoint can't be used to spam a real inbox.
+    if user.reset_otp_expires_at:
+        issued_at = user.reset_otp_expires_at - datetime.timedelta(minutes=RESET_CODE_TTL_MINUTES)
+        if (datetime.datetime.utcnow() - issued_at).total_seconds() < RESET_RESEND_COOLDOWN_SECONDS:
+            return {'message': _RESET_GENERIC_MESSAGE}
+
+    try:
+        otp = generate_otp()
+        user.set_reset_otp(otp, ttl_minutes=RESET_CODE_TTL_MINUTES)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        raise HTTPException(status_code=500, detail="Could not start the password reset. Please try again.")
+
+    subject, html = email_templates.password_reset_code(user.name, otp, RESET_CODE_TTL_MINUTES)
+    EmailService.send(user.email, subject, html, email_type='password_reset', user_id=user.id)
+
+    return {'message': _RESET_GENERIC_MESSAGE}
 
 
 @auth_bp.post('/reset-password')
 async def reset_password(request: Request):
     data = await request.json() or {}
-    email = data.get('email')
-    otp = data.get('otp')
+    email = (data.get('email') or '').strip()
+    otp = (data.get('otp') or '').strip()
     new_password = data.get('new_password')
 
     if not email or not otp or not new_password:
-        raise HTTPException(status_code=400, detail="Email, OTP, and new password are required")
+        raise HTTPException(status_code=400, detail="Email, reset code, and new password are required")
 
-    if otp != "123456":
-        raise HTTPException(status_code=400, detail="Invalid OTP code")
+    if len(new_password) < RESET_MIN_PASSWORD_LENGTH:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Password must be at least {RESET_MIN_PASSWORD_LENGTH} characters long"
+        )
 
     user = User.query.filter_by(email=email).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
 
-    # One-time-credential accounts cannot self-reset into a persistent password
-    if user.must_use_otp:
-        raise HTTPException(status_code=403, detail="This account uses one-time credentials issued by the administration.")
+    # One message for "no such account", "wrong code" and "expired code" alike, for the
+    # same enumeration reason as above.
+    invalid_error = HTTPException(
+        status_code=400,
+        detail="That reset code is invalid or has expired. Please request a new one."
+    )
+
+    if not user or user.must_use_otp or not user.check_reset_otp(otp):
+        raise invalid_error
 
     try:
         user.set_password(new_password)
+        user.clear_reset_otp()  # single use
+        # A reset is the remedy for a compromised account, so it must also end any session
+        # an attacker already holds — every token issued before this instant stops working.
+        # Truncated to the second because a JWT's `iat` only has second resolution: with
+        # microseconds kept, a token minted in this same second would compare as older than
+        # the revocation and lock the legitimate owner straight back out.
+        user.session_revoked_at = datetime.datetime.utcnow().replace(microsecond=0)
         db.session.commit()
-        return {'message': 'Password has been reset successfully'}
+        return {'message': 'Password has been reset successfully. Please log in with your new password.'}
     except Exception as e:
         db.session.rollback()
         raise HTTPException(status_code=500, detail=f"Error resetting password: {str(e)}")

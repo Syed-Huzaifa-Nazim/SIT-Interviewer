@@ -21,7 +21,6 @@ const ForgotPasswordPage = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
-  const [debugOtp, setDebugOtp] = useState('');
 
   const handleRequestOtp = async (e) => {
     e.preventDefault();
@@ -35,8 +34,9 @@ const ForgotPasswordPage = () => {
 
     try {
       const res = await api.post('/auth/forgot-password', { email });
-      setSuccess('A reset code has been generated. Use the debug code below to reset.');
-      setDebugOtp(res.data.debug_otp || '123456');
+      // The backend answers identically whether or not the address exists, so it can't be
+      // used to probe which accounts are real. Its message is shown verbatim.
+      setSuccess(res.data?.message || 'If an account exists for that email address, a reset code has been sent to it.');
       setStep(2);
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to send OTP code.');
@@ -113,14 +113,6 @@ const ForgotPasswordPage = () => {
         ) : (
           /* Step 2: Reset Form */
           <form onSubmit={handleResetPassword} className="space-y-4">
-            {/* Show Debug Box */}
-            {debugOtp && (
-              <div className="p-3 bg-slate-100 dark:bg-slate-900 border border-primary-500/30 rounded-xl text-center mb-4">
-                <span className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">Developer Debug Reset Code</span>
-                <span className="text-lg font-mono font-bold tracking-widest text-primary-500 dark:text-primary-400">{debugOtp}</span>
-              </div>
-            )}
-
             <Input
               label="Verification Code"
               type="text"
@@ -137,9 +129,10 @@ const ForgotPasswordPage = () => {
               label="New Password"
               type="password"
               icon={Lock}
-              placeholder="••••••••"
+              placeholder="At least 8 characters"
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
+              minLength={8}
               required
             />
 

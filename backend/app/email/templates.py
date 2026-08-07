@@ -266,3 +266,23 @@ receive the corresponding email based on your decision.</p>
 {_button(Config.APP_BASE_URL + '/admin/approvals', 'Open Approval Queue')}
 """
     return subject, _base('Second interview approval needed', body)
+
+
+def password_reset_code(name, otp, ttl_minutes=15):
+    """Password reset code. The code is generated server-side, stored only as a bcrypt
+    hash, and delivered here — it is never returned in any API response, which is what
+    stops a stranger who knows an email address from resetting that account."""
+    subject = 'Your SMIT Portal Password Reset Code'
+    body = f"""
+<p>Dear {name},</p>
+<p>We received a request to reset the password on your SMIT Assessment Portal account.
+Enter the code below to choose a new password:</p>
+{_credentials_box([('Reset Code', otp), ('Valid for', f'{ttl_minutes} minutes')])}
+<div style="margin:16px 0;padding:12px 16px;background:#fef9ec;border:1px solid #f5d67b;border-radius:8px;color:#8a6d1a;font-size:12px;">
+<b>Didn't request this?</b> You can safely ignore this email — your password has not
+been changed, and the code above expires on its own. Never share this code with anyone.
+</div>
+{_button(Config.APP_BASE_URL + '/forgot-password', 'Reset My Password')}
+<p style="color:#64748b;font-size:12px;">Resetting your password signs you out of every device.</p>
+"""
+    return subject, _base('Password reset code', body)

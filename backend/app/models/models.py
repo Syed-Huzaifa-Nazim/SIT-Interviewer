@@ -39,6 +39,13 @@ class User(db.Model):
     # approvals and individual admin invites are completely unaffected by this column.
     otp_expires_at = db.Column(db.DateTime, nullable=True)
 
+    # Password-reset code. Deliberately SEPARATE from the otp_* columns above: those are
+    # the one-time interview credential, and letting a public "forgot password" flow write
+    # to them would let anyone who knows a CNIC re-arm or consume a candidate's interview
+    # login. Nothing here ever touches the interview OTP.
+    reset_otp_hash = db.Column(db.String(128), nullable=True)
+    reset_otp_expires_at = db.Column(db.DateTime, nullable=True)
+
     # Any access token issued before this moment is rejected (forced logout).
     session_revoked_at = db.Column(db.DateTime, nullable=True)
 
@@ -84,6 +91,24 @@ class User(db.Model):
         if not self.otp_hash:
             return False
         return bcrypt.checkpw(otp.encode('utf-8'), self.otp_hash.encode('utf-8'))
+
+    def set_reset_otp(self, otp, ttl_minutes=15):
+        salt = bcrypt.gensalt()
+        self.reset_otp_hash = bcrypt.hashpw(otp.encode('utf-8'), salt).decode('utf-8')
+        self.reset_otp_expires_at = datetime.datetime.utcnow() + datetime.timedelta(minutes=ttl_minutes)
+
+    def check_reset_otp(self, otp):
+        """True only for a code that is set, unexpired, and matches. Single use is enforced
+        by the caller clearing the code once the reset succeeds."""
+        if not self.reset_otp_hash or not self.reset_otp_expires_at:
+            return False
+        if datetime.datetime.utcnow() > self.reset_otp_expires_at:
+            return False
+        return bcrypt.checkpw(otp.encode('utf-8'), self.reset_otp_hash.encode('utf-8'))
+
+    def clear_reset_otp(self):
+        self.reset_otp_hash = None
+        self.reset_otp_expires_at = None
 
     def to_dict(self):
         return {

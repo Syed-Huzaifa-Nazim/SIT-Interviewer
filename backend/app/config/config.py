@@ -1,4 +1,5 @@
 import os
+import secrets
 from datetime import timedelta
 
 # Load dotenv if available (will fail silently if not found)
@@ -10,9 +11,36 @@ except ImportError:
 
 BASE_DIR = os.path.abspath(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
+
+def _required_secret(env_name):
+    """Returns the configured secret, or a random per-process one if it is unset.
+
+    These used to fall back to a fixed literal committed to this repository. A hard-coded
+    JWT signing key is not a weak secret, it is a published one: anyone with the source can
+    mint a token for any user id, including an admin, without ever touching the login
+    endpoint. No route check can defend against that, because such a token is genuinely
+    valid.
+
+    The fallback is random rather than fatal so a missing variable can't take the service
+    down mid-interview. The cost is that sessions do not survive a restart or span more than
+    one instance, which is why the warning below is loud: set the variable in the host's
+    environment and the behaviour goes back to normal.
+    """
+    value = os.environ.get(env_name)
+    if value:
+        return value
+    print(
+        f"\n[SECURITY] {env_name} is not set. Using a random key generated for this process.\n"
+        f"[SECURITY] Everyone will be signed out whenever the server restarts, and sessions\n"
+        f"[SECURITY] will not work across multiple instances. Set {env_name} in the\n"
+        f"[SECURITY] environment (any long random string) to fix this.\n"
+    )
+    return secrets.token_urlsafe(64)
+
+
 class Config:
     # Flask Settings
-    SECRET_KEY = os.environ.get('SECRET_KEY', 'super-secret-flask-key-change-me')
+    SECRET_KEY = _required_secret('SECRET_KEY')
     FLASK_ENV = os.environ.get('FLASK_ENV', 'development')
     DEBUG = os.environ.get('FLASK_DEBUG', 'True').lower() == 'true'
 
@@ -23,9 +51,21 @@ class Config:
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 
     # JWT Settings
-    JWT_SECRET_KEY = os.environ.get('JWT_SECRET_KEY', 'super-secret-jwt-key-change-me')
+    JWT_SECRET_KEY = _required_secret('JWT_SECRET_KEY')
     JWT_ACCESS_TOKEN_EXPIRES = timedelta(hours=1)
     JWT_REFRESH_TOKEN_EXPIRES = timedelta(days=7)
+
+    # Browser origins allowed to call this API, comma-separated (e.g.
+    # "https://sit-interviewer.vercel.app,http://localhost:5173"). Empty means allow any
+    # origin, which is only appropriate for local development.
+    CORS_ORIGINS = [o.strip() for o in os.environ.get('CORS_ORIGINS', '').split(',') if o.strip()]
+
+    # The startup admin account. The password MUST come from the environment: an admin
+    # password written into the source is a published credential for a publicly reachable
+    # login form. Setting ADMIN_PASSWORD also rotates the existing admin's password on the
+    # next boot, which is how a leaked one gets replaced.
+    ADMIN_EMAIL = os.environ.get('ADMIN_EMAIL', 'admin@interviewer.com')
+    ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', '')
 
     # Scratch directory for TRANSIENT processing files only (Whisper temp audio, resume
     # parsing). Files here are always deleted after use — no persistence (§3).

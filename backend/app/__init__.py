@@ -26,11 +26,17 @@ def create_app(config_class=Config):
         version="1.0.0"
     )
 
-    # Configure CORS
+    # Configure CORS. Pin this to the real frontend origins via CORS_ORIGINS in production;
+    # the wildcard is only the local-development fallback. allow_credentials is off because
+    # auth travels in an Authorization header, not a cookie — asking for credentialed
+    # wildcard CORS is rejected by browsers anyway.
+    allowed_origins = config_class.CORS_ORIGINS or ["*"]
+    if not config_class.CORS_ORIGINS:
+        print("[SECURITY] CORS_ORIGINS is not set — accepting requests from any origin.")
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
+        allow_origins=allowed_origins,
+        allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -84,12 +90,28 @@ def create_app(config_class=Config):
     except Exception as e:
         print(f"[index] ensure_indexes skipped: {e}")
 
-    # Seed Admin User
+    # Seed / maintain the admin account.
+    #
+    # This used to seed admin@interviewer.com with the password "admin123", written in this
+    # file. That is a working credential for anyone who has seen the repository, and it is
+    # exactly how someone signs into the Admin Portal "without credentials". The password
+    # now comes only from ADMIN_PASSWORD, and setting that variable also ROTATES an existing
+    # admin's password on the next boot — which is how a leaked one gets retired.
     try:
+        import secrets as _secrets
         from app.models import User, Token
-        admin_email = "admin@interviewer.com"
+        admin_email = config_class.ADMIN_EMAIL
+        admin_password = config_class.ADMIN_PASSWORD
         admin = User.query.filter_by(email=admin_email).first()
+
         if not admin:
+            # Without a configured password, seed an unusable random one rather than a
+            # guessable one: a locked-out admin is recoverable, a public admin login is not.
+            generated = None
+            if not admin_password:
+                generated = _secrets.token_urlsafe(18)
+                admin_password = generated
+
             print("Seeding dedicated admin account...")
             admin = User(
                 name="Administrator",
@@ -99,15 +121,39 @@ def create_app(config_class=Config):
                 experience_level="Senior",
                 job_role="Platform Manager"
             )
-            admin.set_password("admin123")
+            admin.set_password(admin_password)
             db.session.add(admin)
             db.session.flush()
-            
+
             token_account = Token(user_id=admin.id, tokens_available=999)
             db.session.add(token_account)
-            
+
             db.session.commit()
-            print("Dedicated admin seeded successfully!")
+            if generated:
+                print(
+                    f"[SECURITY] ADMIN_PASSWORD was not set, so a random admin password was\n"
+                    f"[SECURITY] generated. It is shown ONCE, here:\n"
+                    f"[SECURITY]     {admin_email} / {generated}\n"
+                    f"[SECURITY] Save it now, or set ADMIN_PASSWORD and restart to choose your own."
+                )
+            else:
+                print("Dedicated admin seeded successfully!")
+
+        elif admin_password and not admin.check_password(admin_password):
+            # ADMIN_PASSWORD changed (or is being applied for the first time to an account
+            # created under the old hard-coded default) — rotate to it and kill every token
+            # issued under the previous password.
+            import datetime as _dt
+            admin.set_password(admin_password)
+            admin.session_revoked_at = _dt.datetime.utcnow().replace(microsecond=0)
+            db.session.commit()
+            print("[SECURITY] Admin password rotated from ADMIN_PASSWORD; old sessions revoked.")
+
+        elif not admin_password:
+            print(
+                "[SECURITY] ADMIN_PASSWORD is not set. If this admin account still uses an\n"
+                "[SECURITY] old default password, set ADMIN_PASSWORD and restart to replace it."
+            )
     except Exception as e:
         db.session.rollback()
         print(f"Failed to seed admin on startup: {str(e)}")
