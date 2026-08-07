@@ -3,7 +3,7 @@ import base64
 import datetime
 from typing import Optional
 from fastapi import APIRouter, Request, HTTPException, status, Depends
-from sqlalchemy import or_
+from sqlalchemy import or_, func, case
 from app.database.db import db
 from app.models import (
     User, Token, Transaction, Interview, Feedback, AdminLog,
@@ -33,32 +33,61 @@ def _is_online(user):
         return False
     return (datetime.datetime.utcnow() - user.last_seen_at).total_seconds() <= ONLINE_WINDOW_SECONDS
 
+
+def _user_directory(user_ids=None):
+    """{user_id: User} in ONE query, for endpoints that decorate rows with a name/email.
+
+    The app runs in Singapore and the database is in Mumbai, so every round trip costs
+    roughly 60ms of pure network time regardless of how small or well-indexed the query is.
+    A `User.query.get()` inside a loop therefore charges 60ms PER ROW: the admin lists were
+    spending five to eleven seconds doing nothing but waiting. Fetching the whole directory
+    once turns any number of those lookups into a single trip.
+    """
+    query = User.query
+    if user_ids is not None:
+        ids = {uid for uid in user_ids if uid is not None}
+        if not ids:
+            return {}
+        query = query.filter(User.id.in_(ids))
+    return {u.id: u for u in query.all()}
+
 @admin_bp.get('/stats')
 async def get_stats(user: User = Depends(admin_required)):
-    total_users = User.query.filter_by(role='candidate').count()
-    active_users = User.query.filter_by(role='candidate', status='active').count()
-    banned_users = User.query.filter_by(status='banned').count()
-
-    total_interviews = Interview.query.filter_by(status='completed').count()
-    active_interviews = Interview.query.filter_by(status='active').count()
-    
+    # Each of these used to be its own round trip: six separate COUNTs, plus the whole
+    # transactions and tokens tables pulled into Python just to be summed. Aggregating in
+    # SQL collapses that to one trip per table and moves the arithmetic to the database,
+    # which is where it belongs — and stops the totals growing slower as the tables do.
     yesterday = datetime.datetime.utcnow() - datetime.timedelta(days=1)
-    daily_interviews = Interview.query.filter(
-        Interview.created_at >= yesterday,
-        Interview.status == 'completed'
-    ).count()
 
-    purchases = Transaction.query.filter_by(transaction_type='purchase').all()
-    total_revenue = sum(p.amount for p in purchases)
+    def _count_if(condition):
+        return func.count(case((condition, 1)))
 
-    tokens_query = Token.query.all()
-    total_available_tokens = sum(t.tokens_available for t in tokens_query)
-    total_consumed_tokens = sum(t.tokens_consumed for t in tokens_query)
+    total_users, active_users, banned_users = db.session.query(
+        _count_if(User.role == 'candidate'),
+        _count_if((User.role == 'candidate') & (User.status == 'active')),
+        _count_if(User.status == 'banned'),
+    ).one()
+
+    total_interviews, active_interviews, daily_interviews = db.session.query(
+        _count_if(Interview.status == 'completed'),
+        _count_if(Interview.status == 'active'),
+        _count_if((Interview.status == 'completed') & (Interview.created_at >= yesterday)),
+    ).one()
+
+    total_revenue = db.session.query(
+        func.coalesce(func.sum(Transaction.amount), 0.0)
+    ).filter(Transaction.transaction_type == 'purchase').scalar()
+
+    total_available_tokens, total_consumed_tokens = db.session.query(
+        func.coalesce(func.sum(Token.tokens_available), 0),
+        func.coalesce(func.sum(Token.tokens_consumed), 0),
+    ).one()
 
     recent_feedbacks = Feedback.query.order_by(Feedback.created_at.desc()).limit(5).all()
+    feedback_users = _user_directory(f.user_id for f in recent_feedbacks)
     feedbacks_data = []
     for f in recent_feedbacks:
-        u = User.query.get(f.user_id)
+        u = feedback_users.get(f.user_id)
         feedbacks_data.append({
             'id': f.id,
             'user_name': u.name if u else 'Unknown',
@@ -95,29 +124,42 @@ async def get_stats(user: User = Depends(admin_required)):
 
 @admin_bp.get('/users')
 async def list_users(user: User = Depends(admin_required)):
+    # Three queries total, not two per user. This endpoint used to issue one Token lookup
+    # and one Interview lookup for every row — 89 round trips for 44 candidates, which at
+    # Singapore-to-Mumbai latency is over five seconds of pure waiting.
     users = User.query.filter(User.role != 'admin').order_by(User.created_at.desc()).all()
-    users_list = []
 
-    for u in users:
-        t = Token.query.filter_by(user_id=u.id).first()
-        t_val = t.tokens_available if t else 0
-        # Most recent interview, so the frontend can link a candidate row straight to
-        # their latest report with zero extra requests per click (Admin Hub §5).
-        # Only interviews that actually HAVE a report qualify — the most recent Interview
-        # row can be one that's still in progress or was abandoned with no report ever
-        # generated, and linking a candidate's name to that produced a dead-end "Report
-        # not generated yet" error page instead of a useful result.
-        latest_interview = (
+    tokens_by_user = {
+        t.user_id: t.tokens_available
+        for t in Token.query.filter(Token.user_id.in_([u.id for u in users])).all()
+    } if users else {}
+
+    # Most recent interview per candidate, so the frontend can link a row straight to the
+    # latest report with no extra request per click (Admin Hub §5). Only interviews that
+    # actually HAVE a report qualify — the newest Interview row can be one still in
+    # progress, or abandoned with no report ever generated, and linking a candidate's name
+    # to that produced a dead-end "Report not generated yet" page instead of a result.
+    #
+    # DISTINCT ON is Postgres picking the first row of each user's ordered group, which is
+    # exactly "their latest reported interview" — the same answer the per-user query gave,
+    # in one trip instead of one per candidate.
+    latest_by_user = {
+        row.user_id: row.id
+        for row in (
             Interview.query
             .join(InterviewReport, InterviewReport.interview_id == Interview.id)
-            .filter(Interview.user_id == u.id)
-            .order_by(Interview.created_at.desc())
-            .first()
+            .distinct(Interview.user_id)
+            .order_by(Interview.user_id, Interview.created_at.desc())
+            .all()
         )
+    }
+
+    users_list = []
+    for u in users:
         u_dict = u.to_dict()
-        u_dict['tokens_available'] = t_val
+        u_dict['tokens_available'] = tokens_by_user.get(u.id, 0)
         u_dict['online'] = _is_online(u)
-        u_dict['latest_interview_id'] = latest_interview.id if latest_interview else None
+        u_dict['latest_interview_id'] = latest_by_user.get(u.id)
         users_list.append(u_dict)
 
     return users_list
@@ -329,17 +371,40 @@ async def list_reinterview_requests(user_id: Optional[int] = None, user: User = 
     if user_id is not None:
         requests_query = requests_query.filter_by(user_id=user_id)
     requests_q = requests_query.order_by(SecondInterviewRequest.requested_at.desc()).all()
+
+    # Up to four round trips per row otherwise: the candidate, the linked first interview,
+    # a fallback lookup for it, and the deciding admin.
+    people = _user_directory(
+        [r.user_id for r in requests_q] + [r.decided_by for r in requests_q]
+    )
+    linked_ids = {r.first_interview_id for r in requests_q if r.first_interview_id}
+    linked_interviews = (
+        {i.id: i for i in Interview.query.filter(Interview.id.in_(linked_ids)).all()}
+        if linked_ids else {}
+    )
+    # Fallback for legacy rows whose FK is null: the candidate's latest completed interview.
+    candidate_ids = {r.user_id for r in requests_q if r.user_id}
+    latest_completed = {}
+    if candidate_ids:
+        for itv in (
+            Interview.query
+            .filter(Interview.user_id.in_(candidate_ids), Interview.status == 'completed')
+            .distinct(Interview.user_id)
+            .order_by(Interview.user_id, Interview.created_at.desc())
+            .all()
+        ):
+            latest_completed[itv.user_id] = itv
+
     pending, decided = [], []
     for r in requests_q:
         d = r.to_dict()
-        candidate = User.query.get(r.user_id)
+        candidate = people.get(r.user_id)
         d['course_category'] = candidate.course_category if candidate else None
         d['course_status'] = candidate.course_status if candidate else None
 
-        first_itv = Interview.query.get(r.first_interview_id) if r.first_interview_id else None
+        first_itv = linked_interviews.get(r.first_interview_id) if r.first_interview_id else None
         if not first_itv and candidate:
-            first_itv = Interview.query.filter_by(user_id=candidate.id, status='completed') \
-                .order_by(Interview.created_at.desc()).first()
+            first_itv = latest_completed.get(candidate.id)
         # The stored FK can be null on legacy requests — always report the resolved id
         # (whichever path found it) so the frontend has a reliable "View First Interview" link.
         d['first_interview_id'] = first_itv.id if first_itv else None
@@ -348,7 +413,7 @@ async def list_reinterview_requests(user_id: Optional[int] = None, user: User = 
         d['first_interview_proctor_failed'] = bool(first_itv.is_proctor_failed) if first_itv else None
 
         if r.decided_by:
-            decider = User.query.get(r.decided_by)
+            decider = people.get(r.decided_by)
             d['decided_by_name'] = decider.name if decider else 'Unknown'
 
         (pending if r.status == 'pending' else decided).append(d)
@@ -989,9 +1054,10 @@ async def list_interviews(user_id: Optional[int] = None, user: User = Depends(ad
     if user_id is not None:
         query = query.filter_by(user_id=user_id)
     interviews = query.order_by(Interview.created_at.desc()).all()
+    users = _user_directory(i.user_id for i in interviews)
     interviews_list = []
     for i in interviews:
-        u = User.query.get(i.user_id)
+        u = users.get(i.user_id)
         d = i.to_dict()
         d['user_name'] = u.name if u else 'Unknown'
         d['user_email'] = u.email if u else ''
@@ -1001,9 +1067,10 @@ async def list_interviews(user_id: Optional[int] = None, user: User = Depends(ad
 @admin_bp.get('/transactions')
 async def list_transactions(user: User = Depends(admin_required)):
     transactions = Transaction.query.order_by(Transaction.created_at.desc()).all()
+    users = _user_directory(t.user_id for t in transactions)
     tx_list = []
     for t in transactions:
-        u = User.query.get(t.user_id)
+        u = users.get(t.user_id)
         d = t.to_dict()
         d['user_name'] = u.name if u else 'Unknown'
         d['user_email'] = u.email if u else ''
@@ -1013,10 +1080,16 @@ async def list_transactions(user: User = Depends(admin_required)):
 @admin_bp.get('/feedback')
 async def list_feedbacks(user: User = Depends(admin_required)):
     feedbacks = Feedback.query.order_by(Feedback.created_at.desc()).all()
+    users = _user_directory(f.user_id for f in feedbacks)
+    interview_ids = {f.interview_id for f in feedbacks if f.interview_id}
+    interviews = (
+        {i.id: i for i in Interview.query.filter(Interview.id.in_(interview_ids)).all()}
+        if interview_ids else {}
+    )
     feedbacks_list = []
     for f in feedbacks:
-        u = User.query.get(f.user_id)
-        i = Interview.query.get(f.interview_id) if f.interview_id else None
+        u = users.get(f.user_id)
+        i = interviews.get(f.interview_id) if f.interview_id else None
         feedbacks_list.append({
             'id': f.id,
             'user_name': u.name if u else 'Unknown',
@@ -1032,9 +1105,10 @@ async def list_feedbacks(user: User = Depends(admin_required)):
 @admin_bp.get('/logs')
 async def list_logs(user: User = Depends(admin_required)):
     logs = AdminLog.query.order_by(AdminLog.created_at.desc()).all()
+    admins = _user_directory(l.admin_id for l in logs)
     logs_list = []
     for l in logs:
-        u = User.query.get(l.admin_id)
+        u = admins.get(l.admin_id)
         d = l.to_dict()
         d['admin_name'] = u.name if u else 'System'
         d['admin_email'] = u.email if u else ''
@@ -1059,13 +1133,24 @@ async def scoring_analytics(user: User = Depends(admin_required)):
     """
     completed = Interview.query.filter_by(status='completed').order_by(Interview.created_at.desc()).all()
 
+    # Two extra queries for the whole report instead of two per interview: every response
+    # in one trip, grouped in memory, plus the candidate directory. At 81 completed
+    # interviews the old shape was ~160 round trips to build a single page.
+    responses_by_interview = {}
+    if completed:
+        for r in InterviewResponse.query.filter(
+            InterviewResponse.interview_id.in_([i.id for i in completed])
+        ).all():
+            responses_by_interview.setdefault(r.interview_id, []).append(r)
+    candidates = _user_directory(i.user_id for i in completed)
+
     all_scores, all_conf = [], []
     flagged_total, eval_total = 0, 0
     buckets = [0, 0, 0, 0, 0]  # 0-20, 20-40, 40-60, 60-80, 80-100
     interview_rows = []
 
     for itv in completed:
-        responses = InterviewResponse.query.filter_by(interview_id=itv.id).all()
+        responses = responses_by_interview.get(itv.id, [])
         if not responses:
             continue
 
@@ -1083,7 +1168,7 @@ async def scoring_analytics(user: User = Depends(admin_required)):
                 flagged += 1
         flagged_total += flagged
 
-        u = User.query.get(itv.user_id)
+        u = candidates.get(itv.user_id)
         interview_rows.append({
             'interview_id': itv.id,
             'candidate_name': u.name if u else 'Unknown',
