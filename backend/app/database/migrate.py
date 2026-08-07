@@ -10,8 +10,56 @@ startup: it only ever adds absent columns and never drops or rewrites data.
 Columns are added without NOT NULL (existing rows get NULL) — application code
 already treats these fields as optional/defaulted.
 """
+import time
+
 from sqlalchemy import inspect, text
 from app.database.db import engine, Base
+
+# Adding a nullable column is instant in Postgres — the slow part is never the rewrite, it
+# is waiting for the ACCESS EXCLUSIVE lock on a table that live traffic is using. During a
+# rolling deploy the PREVIOUS container is still serving (heartbeats and admin polls hit
+# `users` every few seconds), so an unbounded lock wait queues behind them AND blocks every
+# query that arrives after it — a boot-time migration can stall the running site.
+#
+# lock_timeout keeps each attempt short so we can never be that blocker, and the retries
+# let us slip into a gap between requests instead of giving up on the first collision.
+_LOCK_TIMEOUT_MS = 3000
+_ADD_COLUMN_ATTEMPTS = 6
+_RETRY_BACKOFF_SECONDS = 2
+
+
+def _add_column(table_name, col):
+    """Adds one column in its own short transaction. Raises if it never gets the lock."""
+    ddl_type = col.type.compile(engine.dialect)
+    last_error = None
+
+    for attempt in range(1, _ADD_COLUMN_ATTEMPTS + 1):
+        try:
+            with engine.begin() as conn:
+                # LOCAL: scoped to this transaction, so nothing leaks into the pooled
+                # connection once it goes back to the pool.
+                conn.execute(text(f'SET LOCAL lock_timeout = {_LOCK_TIMEOUT_MS}'))
+                conn.execute(text(f'ALTER TABLE {table_name} ADD COLUMN {col.name} {ddl_type}'))
+            print(f"[migrate] Added {table_name}.{col.name} ({ddl_type})")
+            return
+        except Exception as e:
+            last_error = e
+            if attempt < _ADD_COLUMN_ATTEMPTS:
+                print(
+                    f"[migrate] {table_name}.{col.name}: could not get the table lock "
+                    f"(attempt {attempt}/{_ADD_COLUMN_ATTEMPTS}), retrying in {_RETRY_BACKOFF_SECONDS}s"
+                )
+                time.sleep(_RETRY_BACKOFF_SECONDS)
+
+    # Deliberately fatal. Every mapped column appears in the ORM's SELECT list, so booting
+    # without one does not merely disable the new feature — it makes every query against
+    # this table fail. A failed deploy that leaves the previous version serving is by far
+    # the better outcome; run the ALTER manually against the database, then redeploy.
+    raise RuntimeError(
+        f"[migrate] Gave up adding {table_name}.{col.name} ({ddl_type}) after "
+        f"{_ADD_COLUMN_ATTEMPTS} attempts — the table lock was never free. "
+        f"Apply it manually:  ALTER TABLE {table_name} ADD COLUMN {col.name} {ddl_type};"
+    ) from last_error
 
 
 def ensure_schema():
@@ -26,14 +74,12 @@ def ensure_schema():
 
         existing_cols = {col['name'] for col in inspector.get_columns(table_name)}
         missing = [col for col in table.columns if col.name not in existing_cols]
-        if not missing:
-            continue
 
-        with engine.begin() as conn:
-            for col in missing:
-                ddl_type = col.type.compile(engine.dialect)
-                conn.execute(text(f'ALTER TABLE {table_name} ADD COLUMN {col.name} {ddl_type}'))
-                print(f"[migrate] Added {table_name}.{col.name} ({ddl_type})")
+        # One transaction per column rather than one for the whole table: a shared
+        # transaction holds the lock on every table it has touched until the last statement
+        # finishes, and makes one unlucky column roll back the ones that already succeeded.
+        for col in missing:
+            _add_column(table_name, col)
 
 
 # Hot columns that get filtered/sorted on frequently. Unique columns (users.email/cnic,
