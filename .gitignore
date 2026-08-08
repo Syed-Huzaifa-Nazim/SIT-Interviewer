@@ -6,6 +6,11 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.env
+# Backups/variants of an env file carry exactly the same secrets as the file itself.
+# `*.env` alone does not match them: a .env.bak written before an edit was picked up by
+# `git add -A` and staged for commit.
+*.env.*
+.env.*
 .venv
 venv/
 ENV/
