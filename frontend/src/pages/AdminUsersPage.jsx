@@ -38,8 +38,6 @@ import {
   MessageSquare,
   Mail,
   History,
-  Filter,
-  Check
 } from 'lucide-react';
 
 const INTERVIEW_STATUS_VARIANTS = {
@@ -53,25 +51,6 @@ const INTERVIEW_STATUS_VARIANTS = {
 
 // Shared select styling for the profile-editor form fields below.
 const selectClass = 'w-full glass-input text-sm appearance-none cursor-pointer';
-
-// One checkbox row inside a column filter dropdown, with a live count of how many users
-// in the current tab (Enrolled/Bulk) + search match that value.
-const FilterCheckbox = ({ checked, onChange, label, count }) => (
-  <label className="flex items-center justify-between gap-3 py-2 px-2.5 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-900/50 active:scale-[0.99] cursor-pointer transition-all duration-150">
-    <span className="flex items-center gap-2.5 text-xs font-semibold text-slate-700 dark:text-slate-300">
-      <span className={`w-4 h-4 rounded flex items-center justify-center border transition-all duration-200 shrink-0 ${
-        checked
-          ? 'bg-primary-600 border-primary-600 scale-105'
-          : 'border-slate-300 dark:border-slate-600'
-      }`}>
-        {checked && <Check size={11} className="text-white animate-check-pop" strokeWidth={3} />}
-      </span>
-      <input type="checkbox" checked={checked} onChange={onChange} className="hidden" />
-      {label}
-    </span>
-    <span className="text-[10px] text-slate-400 dark:text-slate-500 font-mono tabular-nums">{count}</span>
-  </label>
-);
 
 // Apply the three column facets + free-text search to a user list. Shared by the live
 // table filter so the visible rows and the per-column counts can never drift apart.
@@ -90,50 +69,6 @@ const applyFilterSet = (list, { course, istatus, access }, search) => {
     );
   });
 };
-
-// Excel-style column-header filter: click the funnel icon on a column to get a
-// checklist dropdown of that column's values (with live counts) instead of a separate
-// filters panel elsewhere on the page.
-const ColumnFilter = ({ label, options, selected, isOpen, onToggleOpen, onToggleValue, onClear }) => (
-  <div className="relative inline-block">
-    <button
-      type="button"
-      onClick={onToggleOpen}
-      className={`inline-flex items-center gap-1.5 font-bold transition ${
-        selected.length > 0 ? 'text-primary-600 dark:text-primary-400' : 'hover:text-slate-700 dark:hover:text-slate-200'
-      }`}
-    >
-      {label}
-      <Filter size={11} className={selected.length > 0 ? 'fill-current' : ''} />
-    </button>
-    {isOpen && (
-      <>
-        {/* Invisible full-screen backdrop closes the dropdown on any outside click —
-            `fixed` escapes the table's overflow-x-auto ancestor regardless of nesting. */}
-        <div className="fixed inset-0 z-10" onClick={onToggleOpen} />
-        <div className="absolute left-0 top-full mt-2 z-20 w-56 max-h-72 overflow-y-auto bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-2xl p-2 normal-case font-normal animate-fade-in">
-          <div className="flex items-center justify-between px-1.5 pb-1.5 mb-1 border-b border-slate-100 dark:border-slate-800">
-            <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wide">Filter by {label}</span>
-            {selected.length > 0 && (
-              <button type="button" onClick={onClear} className="text-[10px] font-bold text-primary-600 dark:text-primary-400 hover:underline">
-                Clear
-              </button>
-            )}
-          </div>
-          {options.map((opt) => (
-            <FilterCheckbox
-              key={opt.value}
-              label={opt.label}
-              count={opt.count}
-              checked={selected.includes(opt.value)}
-              onChange={() => onToggleValue(opt.value)}
-            />
-          ))}
-        </div>
-      </>
-    )}
-  </div>
-);
 
 const AdminUsersPage = () => {
   const [users, setUsers] = useState([]);
@@ -183,15 +118,6 @@ const AdminUsersPage = () => {
   const setSearchTerm = (val) => patchParams({ q: val, page: null });
   const setActiveTab = (tab) => patchParams({ tab, page: null });
   const setPage = (p) => patchParams({ page: p > 1 ? p : null });
-
-  // Excel-style column filters: only one dropdown open at a time, applied live (no
-  // separate "Apply" step) — each checkbox click commits straight to the URL.
-  const [openColumnFilter, setOpenColumnFilter] = useState(null); // null | 'course' | 'istatus' | 'access'
-  const toggleColumnFilter = (key) => setOpenColumnFilter((prev) => (prev === key ? null : key));
-  const toggleFilterValue = (param, current, val) => {
-    const next = current.includes(val) ? current.filter((v) => v !== val) : [...current, val];
-    patchParams({ [param]: next.length ? next.join(',') : null, page: null });
-  };
 
   const [batchHistoryOpen, setBatchHistoryOpen] = useState(false);
   const [batchHistory, setBatchHistory] = useState([]);
@@ -547,53 +473,22 @@ const AdminUsersPage = () => {
 
       <AdminTableCard>
         <div className="overflow-x-auto">
-          {/* This table is still raw th/td (the column-filter headers live in them), so it
-              does not inherit the px-3 the shared Table primitives carry. Without it the
-              cells sit flush against the card border — the first and last columns looked
-              cut off at the page edge. Applied here rather than on ~20 individual cells. */}
+          {/* Raw th/td rather than the shared Table primitives, so it does not inherit their
+              px-3. Without it the cells sit flush against the card border and the first and
+              last columns look cut off. Applied here rather than on ~20 individual cells. */}
           <table className="w-full border-collapse text-left text-xs [&_td]:px-3 [&_th]:px-3">
             <thead>
-              {/* Excel-style column filters: click the funnel icon on Course / Interview
-                  Status / Access to get a checklist dropdown right at the column, instead
-                  of a separate filters panel elsewhere on the page. */}
+              {/* Plain headers. Each of Course / Interview Status / Access used to carry its
+                  own funnel dropdown, built before the shared toolbar filter existed — the
+                  same three facets, over the same URL state, in a second hand-rolled popover
+                  with its own styling. Two controls doing one job made the header noisy and
+                  meant a filtered view looked different depending on which one you reached
+                  for. The toolbar filter beside the search box is now the single way in. */}
               <tr className="border-b border-border text-muted-foreground">
                 <th className="py-3 font-bold">User Details</th>
-                <th className="py-3 font-bold">
-                  <ColumnFilter
-                    label="Course"
-                    options={SIGNUP_CATEGORIES.map((cat) => ({ value: cat, label: cat, count: courseCounts[cat] || 0 }))}
-                    selected={courseFilters}
-                    isOpen={openColumnFilter === 'course'}
-                    onToggleOpen={() => toggleColumnFilter('course')}
-                    onToggleValue={(val) => toggleFilterValue('course', courseFilters, val)}
-                    onClear={() => patchParams({ course: null, page: null })}
-                  />
-                </th>
-                <th className="py-3 font-bold">
-                  <ColumnFilter
-                    label="Interview Status"
-                    options={Object.entries(INTERVIEW_STATUS_LABELS).map(([value, label]) => ({ value, label, count: istatusCounts[value] || 0 }))}
-                    selected={istatusFilters}
-                    isOpen={openColumnFilter === 'istatus'}
-                    onToggleOpen={() => toggleColumnFilter('istatus')}
-                    onToggleValue={(val) => toggleFilterValue('istatus', istatusFilters, val)}
-                    onClear={() => patchParams({ istatus: null, page: null })}
-                  />
-                </th>
-                <th className="py-3 font-bold">
-                  <ColumnFilter
-                    label="Access"
-                    options={[
-                      { value: 'active', label: 'Active', count: accessCounts.active || 0 },
-                      { value: 'banned', label: 'Banned', count: accessCounts.banned || 0 },
-                    ]}
-                    selected={accessFilters}
-                    isOpen={openColumnFilter === 'access'}
-                    onToggleOpen={() => toggleColumnFilter('access')}
-                    onToggleValue={(val) => toggleFilterValue('access', accessFilters, val)}
-                    onClear={() => patchParams({ access: null, page: null })}
-                  />
-                </th>
+                <th className="py-3 font-bold">Course</th>
+                <th className="py-3 font-bold">Interview Status</th>
+                <th className="py-3 font-bold">Access</th>
                 <th className="py-3 font-bold text-center">Tokens</th>
                 <th className="py-3 font-bold text-right">Actions</th>
               </tr>

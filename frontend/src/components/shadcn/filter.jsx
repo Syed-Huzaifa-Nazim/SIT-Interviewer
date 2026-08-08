@@ -40,6 +40,9 @@ function AdminFilter({ groups = [], value = {}, onChange, align = 'end', classNa
 
   const clearGroup = (groupKey) => onChange({ ...value, [groupKey]: [] });
 
+  const selectAllInGroup = (group) =>
+    onChange({ ...value, [group.key]: group.options.map((o) => o.value) });
+
   const clearAll = () => {
     const cleared = {};
     usableGroups.forEach((g) => {
@@ -47,6 +50,21 @@ function AdminFilter({ groups = [], value = {}, onChange, align = 'end', classNa
     });
     onChange({ ...value, ...cleared });
   };
+
+  // Flat list of everything currently applied, so the popover can lead with what is ON
+  // rather than making you open each group to find out. Each chip removes just itself.
+  const activeChips = React.useMemo(
+    () =>
+      usableGroups.flatMap((group) =>
+        (value[group.key] || []).map((v) => ({
+          groupKey: group.key,
+          groupLabel: group.label,
+          value: v,
+          label: group.options.find((o) => o.value === v)?.label ?? v,
+        }))
+      ),
+    [usableGroups, value]
+  );
 
   if (!usableGroups.length) return null;
 
@@ -88,7 +106,14 @@ function AdminFilter({ groups = [], value = {}, onChange, align = 'end', classNa
           )}
         >
           <header className="flex items-center justify-between gap-2 border-b border-border px-3 py-2.5">
-            <span className="text-xs font-bold text-foreground">Filters</span>
+            <span className="flex items-baseline gap-1.5">
+              <span className="text-xs font-bold text-foreground">Filters</span>
+              {activeCount > 0 && (
+                <span className="text-[10px] font-semibold tabular-nums text-muted-foreground">
+                  {activeCount} applied
+                </span>
+              )}
+            </span>
             <div className="flex items-center gap-1">
               {activeCount > 0 && (
                 <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={clearAll}>
@@ -103,6 +128,28 @@ function AdminFilter({ groups = [], value = {}, onChange, align = 'end', classNa
             </div>
           </header>
 
+          {/* What is currently applied, before the full checklists. Reading the active set
+              used to mean opening every group in turn. */}
+          {activeChips.length > 0 && (
+            <div className="flex flex-wrap gap-1 border-b border-border bg-muted/40 px-2.5 py-2">
+              {activeChips.map((chip) => (
+                <button
+                  key={`${chip.groupKey}:${chip.value}`}
+                  type="button"
+                  onClick={() => toggle(chip.groupKey, chip.value)}
+                  // Named by its group too: several facets can offer the same label, and a
+                  // row of chips all announcing just "active" is unusable on a screen reader.
+                  aria-label={`Remove ${chip.groupLabel}: ${chip.label}`}
+                  title={`Remove ${chip.groupLabel}: ${chip.label}`}
+                  className="group inline-flex max-w-full cursor-pointer items-center gap-1 rounded-md border border-primary/30 bg-primary/10 py-0.5 pl-1.5 pr-1 text-[10px] font-semibold text-primary transition-colors hover:bg-primary/20"
+                >
+                  <span className="truncate">{chip.label}</span>
+                  <X className="size-2.5 shrink-0 opacity-60 group-hover:opacity-100" strokeWidth={3} />
+                </button>
+              ))}
+            </div>
+          )}
+
           {/* Capped so a facet with many values scrolls inside the popover rather than
               growing it past the bottom of the window. */}
           <div className="max-h-[22rem] overflow-y-auto p-2">
@@ -110,52 +157,90 @@ function AdminFilter({ groups = [], value = {}, onChange, align = 'end', classNa
               const selected = value[group.key] || [];
               return (
                 <section key={group.key} className={cn(gi > 0 && 'mt-1 border-t border-border pt-2')}>
-                  <div className="flex items-center justify-between px-1.5 pb-1">
-                    <span className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
-                      {group.label}
+                  <div className="flex items-center justify-between gap-2 px-1.5 pb-1">
+                    <span className="flex min-w-0 items-baseline gap-1.5">
+                      <span className="truncate text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+                        {group.label}
+                      </span>
+                      {selected.length > 0 && (
+                        <span className="shrink-0 text-[10px] font-semibold tabular-nums text-primary">
+                          {selected.length}
+                        </span>
+                      )}
                     </span>
-                    {selected.length > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => clearGroup(group.key)}
-                        className="cursor-pointer text-[10px] font-bold text-primary hover:underline"
-                      >
-                        Clear
-                      </button>
-                    )}
+                    {/* All / Clear rather than only Clear: picking most of a long facet one
+                        box at a time is the tedious case this removes. */}
+                    <span className="flex shrink-0 items-center gap-1.5 text-[10px] font-bold">
+                      {selected.length < group.options.length && (
+                        <button
+                          type="button"
+                          onClick={() => selectAllInGroup(group)}
+                          className="cursor-pointer text-muted-foreground hover:text-foreground hover:underline"
+                        >
+                          All
+                        </button>
+                      )}
+                      {selected.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => clearGroup(group.key)}
+                          className="cursor-pointer text-primary hover:underline"
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </span>
                   </div>
 
                   {group.options.map((opt) => {
                     const checked = selected.includes(opt.value);
+                    // An option matching nothing is dimmed rather than hidden: knowing a
+                    // category exists but is currently empty is information, and hiding it
+                    // would make the list shift around as the data changes.
+                    const empty = opt.count === 0 && !checked;
                     return (
-                      <label
-                        key={opt.value}
-                        className="flex cursor-pointer items-center justify-between gap-3 rounded-lg px-2 py-1.5 transition-colors hover:bg-accent"
-                      >
-                        <span className="flex min-w-0 items-center gap-2.5 text-xs font-semibold text-foreground">
+                        <label
+                          key={opt.value}
+                          className={cn(
+                            'flex cursor-pointer items-center justify-between gap-3 rounded-md px-2 py-1.5 transition-colors',
+                            checked ? 'bg-primary/8 hover:bg-primary/12' : 'hover:bg-accent',
+                            empty && 'opacity-45'
+                          )}
+                        >
                           <span
                             className={cn(
-                              'grid size-4 shrink-0 place-items-center rounded border transition-all',
-                              checked ? 'border-primary bg-primary' : 'border-input'
+                              'flex min-w-0 items-center gap-2.5 text-xs',
+                              checked ? 'font-bold text-foreground' : 'font-medium text-foreground'
                             )}
                           >
-                            {checked && <Check className="size-3 text-primary-foreground" strokeWidth={3} />}
+                            <span
+                              className={cn(
+                                'grid size-4 shrink-0 place-items-center rounded-[5px] border transition-all',
+                                checked ? 'border-primary bg-primary' : 'border-input bg-card'
+                              )}
+                            >
+                              {checked && <Check className="size-3 text-primary-foreground" strokeWidth={3} />}
+                            </span>
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => toggle(group.key, opt.value)}
+                              className="sr-only"
+                            />
+                            <span className="truncate">{opt.label}</span>
                           </span>
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={() => toggle(group.key, opt.value)}
-                            className="sr-only"
-                          />
-                          <span className="truncate">{opt.label}</span>
-                        </span>
-                        {opt.count !== undefined && (
-                          <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground">
-                            {opt.count}
-                          </span>
-                        )}
-                      </label>
-                    );
+                          {opt.count !== undefined && (
+                            <span
+                              className={cn(
+                                'shrink-0 rounded px-1 py-0.5 text-[10px] font-semibold tabular-nums',
+                                checked ? 'bg-primary/15 text-primary' : 'text-muted-foreground'
+                              )}
+                            >
+                              {opt.count}
+                            </span>
+                          )}
+                        </label>
+                      );
                   })}
                 </section>
               );

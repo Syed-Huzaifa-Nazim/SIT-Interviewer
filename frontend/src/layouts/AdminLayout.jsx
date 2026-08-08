@@ -240,11 +240,17 @@ const AdminLayout = ({ children }) => {
   );
 
   return (
-    <div className="flex min-h-screen bg-background font-sans">
+    // The shell is locked to the viewport and ONLY <main> scrolls. Previously the outer box
+    // was min-h-screen, so the whole page scrolled and main's overflow-y-auto never
+    // engaged — the sidebar had to fake staying put with `sticky`, which re-pins on every
+    // scroll and reads as the rail detaching and lagging behind the content.
+    // dvh rather than vh so mobile browsers measure the visible area, not the area behind
+    // the address bar.
+    <div className="flex h-dvh overflow-hidden bg-background font-sans">
       {/* ---------------------------------------------------------- desktop sidebar */}
       <aside
         className={cn(
-          'sticky top-0 hidden h-screen shrink-0 flex-col border-r border-sidebar-border bg-sidebar transition-[width] duration-300 lg:flex',
+          'hidden h-full shrink-0 flex-col border-r border-sidebar-border bg-sidebar transition-[width] duration-300 lg:flex',
           collapsed ? 'w-16' : 'w-64'
         )}
       >
@@ -279,8 +285,12 @@ const AdminLayout = ({ children }) => {
       </AnimatePresence>
 
       {/* ------------------------------------------------------------ content area */}
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-30 flex h-16 shrink-0 items-center justify-between gap-3 border-b border-border bg-card/85 px-4 backdrop-blur-md lg:px-6">
+      {/* min-h-0 is what lets <main> actually scroll: without it a flex child refuses to
+          shrink below its content height and the overflow escapes the shell instead. */}
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        {/* No longer sticky — main is the only scroll container, so the header simply
+            stays where it is. */}
+        <header className="z-30 flex h-16 shrink-0 items-center justify-between gap-3 border-b border-border bg-card px-4 lg:px-6">
           <div className="flex min-w-0 items-center gap-2">
             <Button
               variant="ghost"

@@ -113,7 +113,33 @@ describe('AdminFilter', () => {
     const onChange = vi.fn();
     render(<AdminFilter groups={groups} value={{ status: ['active'] }} onChange={onChange} />);
     await user.click(screen.getByRole('button', { name: 'Filters, 1 active' }));
-    await user.click(await screen.findByText('active'));
+    // By the checkbox, not by text: an applied value now also appears as a chip in the
+    // active-filters strip, so its label alone matches two elements.
+    await user.click(await screen.findByRole('checkbox', { name: /active/i }));
     expect(onChange).toHaveBeenCalledWith({ status: [] });
+  });
+
+  it('lists what is applied as chips, and a chip removes just its own value', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(
+      <AdminFilter groups={groups} value={{ status: ['active'], course: ['AI'] }} onChange={onChange} />
+    );
+    await user.click(screen.getByRole('button', { name: 'Filters, 2 active' }));
+
+    // The strip exists so the applied set is readable without opening each group.
+    await user.click(await screen.findByRole('button', { name: 'Remove Status: active' }));
+    expect(onChange).toHaveBeenCalledWith({ status: [], course: ['AI'] });
+  });
+
+  it('selects every option in one group with All', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<AdminFilter groups={groups} value={{}} onChange={onChange} />);
+    await user.click(screen.getByRole('button', { name: 'Filters' }));
+
+    const allButtons = await screen.findAllByRole('button', { name: 'All' });
+    await user.click(allButtons[0]);
+    expect(onChange).toHaveBeenCalledWith({ status: ['active', 'banned'] });
   });
 });
