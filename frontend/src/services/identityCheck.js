@@ -21,8 +21,14 @@ const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.15/mode
 // Euclidean distance between two 128-d descriptors below which they are the same person.
 // 0.6 is face-api's standard threshold; anything above is treated as a different face.
 export const IDENTITY_MATCH_THRESHOLD = 0.6;
-// How often the session re-verifies the candidate mid-interview.
-export const IDENTITY_CHECK_INTERVAL_MS = 30000;
+// How often the session re-verifies the candidate mid-interview. Was 30s, then 5s — with the
+// required 2 consecutive mismatches (IDENTITY_MISMATCH_STRIKES) below, 30s meant up to a full
+// MINUTE between someone else taking over the camera and the session actually terminating,
+// which is exactly what was reported as "doesn't terminate" (it was working, just far too
+// slowly to look like it). 2s keeps the same 2-strike safety margin against a single bad frame
+// (motion blur, a hand across the face) while bringing worst-case detection-to-termination down
+// to ~4s — a genuine face swap now reads as close to instant.
+export const IDENTITY_CHECK_INTERVAL_MS = 2000;
 // A single bad reading can come from motion blur, a hand across the face or bad lighting,
 // so a mismatch must repeat this many times in a row before the interview is terminated.
 export const IDENTITY_MISMATCH_STRIKES = 2;
