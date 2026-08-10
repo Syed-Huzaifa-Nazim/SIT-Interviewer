@@ -387,6 +387,138 @@ class MixtralService:
         # Fallback Mock Question Generator (domain-aware)
         return cls._generate_mock_questions(interview_type, job_role, experience_level, difficulty, num_questions, custom_jd)
 
+    @classmethod
+    def generate_mcqs(cls, job_role, experience_level, difficulty, num_mcqs=10):
+        """Generate the MCQ round (§ MCQ round): single-select, 4 options each.
+
+        Returns a list of {"question_text", "options": [4 strings], "correct_index"}.
+        Same LLM-then-deterministic-fallback shape as generate_questions above, so a down
+        API never blocks the interview — it just falls back to a small generic bank.
+        """
+        import uuid
+        system_prompt = (
+            "You are an expert technical interviewer writing a multiple-choice quiz round. "
+            "Return ONLY a JSON object of the form "
+            '{"questions": [{"question_text": string, "options": [string, string, string, string], '
+            '"correct_index": integer}]} '
+            f"containing EXACTLY {num_mcqs} questions. "
+            "Each question must have EXACTLY 4 options, single-select, with exactly one correct answer "
+            "identified by 'correct_index' (0-3, zero-based). "
+            "STRICT DOMAIN LOCK: every question MUST be directly relevant to the specified role/domain. "
+            "Keep questions and options short — this is read on screen with a 1-minute timer per question, "
+            "not spoken aloud. Favour concrete technical recall (syntax, definitions, behavior, complexity) "
+            "over open-ended judgment calls, since MCQs need one unambiguous correct answer."
+        )
+        user_prompt = (
+            f"Generate exactly {num_mcqs} multiple-choice questions for a {difficulty} difficulty, "
+            f"{experience_level} level technical assessment for the role: {job_role}. "
+            f"Make the set fresh and non-repetitive (variation id: {str(uuid.uuid4())[:8]})."
+        )
+
+        api_result = cls._call_llm(system_prompt, user_prompt, temperature=0.5)
+        if api_result and isinstance(api_result.get('questions'), list) and api_result['questions']:
+            cleaned = []
+            for q in api_result['questions'][:num_mcqs]:
+                if not isinstance(q, dict):
+                    continue
+                text = (q.get('question_text') or '').strip()
+                options = q.get('options')
+                if not text or not isinstance(options, list) or len(options) != 4:
+                    continue
+                options = [str(o).strip() for o in options]
+                if any(not o for o in options):
+                    continue
+                try:
+                    correct_index = int(q.get('correct_index'))
+                except (TypeError, ValueError):
+                    continue
+                if correct_index not in (0, 1, 2, 3):
+                    continue
+                cleaned.append({
+                    'question_text': text,
+                    'options': options,
+                    'correct_index': correct_index,
+                })
+            if len(cleaned) >= num_mcqs:
+                return cleaned[:num_mcqs]
+
+        # Offline / fallback: small generic technical MCQ bank, cycled/truncated to length.
+        # Not role-aware (unlike _generate_mock_questions' large per-role library) — this is
+        # a safety net for when the LLM is unreachable, not the primary path.
+        fallback_bank = [
+            {
+                'question_text': 'Which data structure uses First-In-First-Out (FIFO) ordering?',
+                'options': ['Stack', 'Queue', 'Binary Tree', 'Hash Map'],
+                'correct_index': 1,
+            },
+            {
+                'question_text': 'What is the time complexity of binary search on a sorted array of n elements?',
+                'options': ['O(n)', 'O(n log n)', 'O(log n)', 'O(1)'],
+                'correct_index': 2,
+            },
+            {
+                'question_text': 'In HTTP, which status code indicates a successful request?',
+                'options': ['404', '500', '301', '200'],
+                'correct_index': 3,
+            },
+            {
+                'question_text': 'Which of these is NOT a core principle of object-oriented programming?',
+                'options': ['Encapsulation', 'Inheritance', 'Normalization', 'Polymorphism'],
+                'correct_index': 2,
+            },
+            {
+                'question_text': 'What does SQL\'s "JOIN" clause primarily do?',
+                'options': [
+                    'Deletes rows from a table',
+                    'Combines rows from two or more tables based on a related column',
+                    'Creates a new database',
+                    'Sorts a result set',
+                ],
+                'correct_index': 1,
+            },
+            {
+                'question_text': 'Which HTTP method is idempotent by design?',
+                'options': ['POST', 'PUT', 'PATCH', 'CONNECT'],
+                'correct_index': 1,
+            },
+            {
+                'question_text': 'What is the primary purpose of version control systems like Git?',
+                'options': [
+                    'Compiling source code',
+                    'Tracking and managing changes to code over time',
+                    'Running automated tests',
+                    'Deploying applications to production',
+                ],
+                'correct_index': 1,
+            },
+            {
+                'question_text': 'Which of the following best describes a race condition?',
+                'options': [
+                    'A syntax error caught at compile time',
+                    'Two or more threads accessing shared data with an unpredictable outcome',
+                    'A network request that times out',
+                    'A database index that is out of date',
+                ],
+                'correct_index': 1,
+            },
+            {
+                'question_text': 'In REST API design, which HTTP method is typically used to partially update a resource?',
+                'options': ['GET', 'PATCH', 'DELETE', 'OPTIONS'],
+                'correct_index': 1,
+            },
+            {
+                'question_text': 'What is the main benefit of using an index on a frequently queried database column?',
+                'options': [
+                    'It reduces the table\'s storage size',
+                    'It speeds up read queries at some cost to write speed',
+                    'It enforces uniqueness automatically',
+                    'It encrypts the column\'s data',
+                ],
+                'correct_index': 1,
+            },
+        ]
+        return (fallback_bank * ((num_mcqs // len(fallback_bank)) + 1))[:num_mcqs]
+
     @staticmethod
     def _clamp_score(value, default=0.0):
         try:
