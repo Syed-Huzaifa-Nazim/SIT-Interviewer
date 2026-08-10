@@ -12,6 +12,10 @@ export const HAND_DETECTED_VOICE_MESSAGE = 'Please keep your hand away from your
 export const NO_FACE_VOICE_MESSAGE = 'Please make sure your face is visible to the camera.';
 export const MULTIPLE_FACES_VOICE_MESSAGE = 'Multiple faces detected. Please ensure you are alone.';
 export const TERMINATION_VOICE_MESSAGE = 'Interview terminated due to repeated violations.';
+// Distinct wording from TERMINATION_VOICE_MESSAGE (repeated violations) — an identity failure
+// is a single, immediate hard block, not an accumulation of strikes, so it says why in those
+// terms rather than reusing the "repeated violations" phrasing that wouldn't be true here.
+export const IDENTITY_TERMINATION_VOICE_MESSAGE = 'Identity verification failed. This interview is being terminated.';
 
 // Same voice-selection heuristic as InterviewSession.jsx's speakQuestion (Google/Natural >
 // Microsoft > any English voice), so a spoken proctoring alert uses the identical AI voice
