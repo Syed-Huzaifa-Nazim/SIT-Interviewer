@@ -6,6 +6,7 @@ import base64
 import tempfile
 import subprocess
 import threading
+import concurrent.futures
 from fastapi import APIRouter, Request, HTTPException, status, Depends, UploadFile, File, Form
 from sqlalchemy import text
 from app.database.db import db
@@ -316,15 +317,30 @@ async def start_interview(request: Request, user_id: int = Depends(get_current_u
         db.session.add(interview)
         db.session.flush()
 
-        questions_list = MixtralService.generate_questions(
-            interview_type=interview_type,
-            job_role=job_role,
-            experience_level=experience_level,
-            difficulty=difficulty,
-            num_questions=num_questions,
-            custom_jd=custom_jd,
-            custom_skills=custom_skills
-        )
+        # The 5 main questions and the 10 MCQs are two independent LLM calls with no shared
+        # state — run them CONCURRENTLY (not one after the other) so interview creation takes
+        # as long as the slower of the two, not their sum. Sequential generation was adding
+        # the full MCQ-generation latency on top of the existing question latency, making
+        # "Start Interview" noticeably slower than before the MCQ round existed.
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            questions_future = pool.submit(
+                MixtralService.generate_questions,
+                interview_type=interview_type,
+                job_role=job_role,
+                experience_level=experience_level,
+                difficulty=difficulty,
+                num_questions=num_questions,
+                custom_jd=custom_jd,
+                custom_skills=custom_skills
+            )
+            mcqs_future = pool.submit(
+                MixtralService.generate_mcqs,
+                job_role=job_role,
+                experience_level=experience_level,
+                difficulty=difficulty,
+            )
+            questions_list = questions_future.result()
+            mcqs_list = mcqs_future.result()
 
         # Completed-course candidates open on a hands-on coding-sandbox exercise instead of
         # a verbal question. It REPLACES the generated first question rather than being added
@@ -368,6 +384,21 @@ async def start_interview(request: Request, user_id: int = Depends(get_current_u
                 time_limit_seconds=question_time_limit(q_type)  # per-question timer (§2)
             )
             db.session.add(question)
+
+        # MCQ round (§ MCQ round): 10 single-select questions appended after the main
+        # questions — generated concurrently with the main questions above, so the whole
+        # interview is ready before the candidate starts with no added latency.
+        for m_idx, m_data in enumerate(mcqs_list):
+            mcq_question = InterviewQuestion(
+                interview_id=interview.id,
+                question_text=m_data['question_text'],
+                question_type='mcq',
+                mcq_options=json.dumps(m_data['options']),
+                mcq_correct_index=m_data['correct_index'],
+                order_num=len(questions_list) + m_idx + 1,
+                time_limit_seconds=question_time_limit('mcq'),
+            )
+            db.session.add(mcq_question)
 
         db.session.commit()
 
@@ -799,6 +830,32 @@ def _run_answer_scoring(interview_id, question_id, response_id, user_id,
         db.session.remove()
 
 
+def _score_mcq_response(response, question):
+    """Grade an MCQ response instantly and deterministically — no LLM call, no background
+    thread, since correctness is just a string comparison against the answer key
+    (question.mcq_correct_index), never exposed to the candidate (see InterviewQuestion.
+    to_dict). A skipped/timed-out MCQ (empty response_text) is simply incorrect."""
+    correct_text = None
+    try:
+        options = json.loads(question.mcq_options or '[]')
+        if question.mcq_correct_index is not None and 0 <= question.mcq_correct_index < len(options):
+            correct_text = options[question.mcq_correct_index]
+    except Exception:
+        correct_text = None
+
+    submitted = (response.response_text or '').strip()
+    is_correct = bool(correct_text) and submitted == correct_text.strip()
+
+    response.score = 100.0 if is_correct else 0.0
+    response.technical_score = response.score
+    response.communication_score = None
+    response.confidence_score = None
+    response.feedback = 'Correct.' if is_correct else 'Incorrect.'
+    response.scoring_status = 'scored'
+    db.session.commit()
+    _finalize_report_if_ready(question.interview_id)
+
+
 def _finalize_report_if_ready(interview_id):
     """Generate the interview report once ALL answers are scored — exactly once. A failed
     answer counts as resolved so one bad answer can't stall the whole report. Uses an atomic
@@ -942,14 +999,31 @@ async def submit_answer(
     if not question:
         raise HTTPException(status_code=400, detail="Question does not belong to this interview")
 
+    # Server-side timer enforcement (§2.3): `started_at` is anchored authoritatively by
+    # /start-question and can't be reset by a reload, but until now nothing here actually
+    # checked it — a candidate who intercepted or skipped the client's auto-submit could
+    # submit a fresh answer well past the deadline with timed_out=false and have it accepted
+    # (and scored) as on-time. grace_seconds absorbs normal request latency, not a loophole
+    # to pause on. Whatever they typed during the stolen extra time is discarded below
+    # (server_forced_timeout), not just relabeled — otherwise the "enforcement" would be
+    # cosmetic bookkeeping while the late answer still counted.
+    server_forced_timeout = False
+    if question.started_at and not timed_out:
+        grace_seconds = 5
+        elapsed = (datetime.datetime.utcnow() - question.started_at).total_seconds()
+        if elapsed > (question.time_limit_seconds or 240) + grace_seconds:
+            timed_out = True
+            server_forced_timeout = True
+
     os.makedirs(Config.UPLOAD_FOLDER, exist_ok=True)
     local_audio_path = None
     audio_content_type = None
 
     # Write any recording to a local temp file quickly (fast local IO only). Whisper needs a
     # local file to read, and the background worker both transcribes it and uploads it to
-    # Supabase — keeping both off the request path.
-    if audio:
+    # Supabase — keeping both off the request path. Skipped entirely for a server-forced
+    # timeout (see above) — the recording was made during time that had already run out.
+    if audio and not server_forced_timeout:
         filename = audio.filename
         if filename and allowed_file(filename):
             safe_name = f"user_{user_id}_int_{interview_id}_q_{question_id}_{int(datetime.datetime.utcnow().timestamp())}.webm"
@@ -962,12 +1036,14 @@ async def submit_answer(
 
     # Best-available text to store immediately (typed answer is authoritative; otherwise the
     # live browser transcript). The authoritative Whisper transcript replaces this in the
-    # background for voice answers.
+    # background for voice answers. A server-forced timeout discards whatever text arrived —
+    # it was composed during time that had already run out, so it earns no credit.
     initial_text = ''
-    if response_text and response_text.strip():
-        initial_text = response_text.strip()
-    elif fallback_text and fallback_text.strip():
-        initial_text = fallback_text.strip()
+    if not server_forced_timeout:
+        if response_text and response_text.strip():
+            initial_text = response_text.strip()
+        elif fallback_text and fallback_text.strip():
+            initial_text = fallback_text.strip()
 
     # A normal (non-timeout) submission must carry SOMETHING (text or audio). A timed-out
     # question may legitimately be an empty skip (§2.2).
@@ -1030,13 +1106,18 @@ async def submit_answer(
 
         response_id = resp_record.id
 
-        # Kick off async scoring — the candidate does NOT wait for this.
-        threading.Thread(
-            target=_run_answer_scoring,
-            args=(interview_id, question_id, response_id, user_id,
-                  local_audio_path, audio_content_type, fallback_text, bool(timed_out)),
-            daemon=True
-        ).start()
+        if question.question_type == 'mcq':
+            # Deterministic, instant — no LLM/transcription needed, so no reason to defer
+            # this to a background thread the way verbal answers are (§ MCQ round).
+            _score_mcq_response(resp_record, question)
+        else:
+            # Kick off async scoring — the candidate does NOT wait for this.
+            threading.Thread(
+                target=_run_answer_scoring,
+                args=(interview_id, question_id, response_id, user_id,
+                      local_audio_path, audio_content_type, fallback_text, bool(timed_out)),
+                daemon=True
+            ).start()
 
         return {
             'message': 'Answer submitted successfully',
