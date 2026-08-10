@@ -11,6 +11,7 @@ import {
   NO_FACE_VOICE_MESSAGE,
   MULTIPLE_FACES_VOICE_MESSAGE,
   TERMINATION_VOICE_MESSAGE,
+  IDENTITY_TERMINATION_VOICE_MESSAGE,
 } from '../utils/proctorVoiceAlerts';
 import {
   loadFaceApi,
@@ -63,6 +64,37 @@ const pickSessionRecorderMimeType = () => {
   return SESSION_RECORDER_MIME_CANDIDATES.find((type) => MediaRecorder.isTypeSupported(type)) || null;
 };
 
+// Answer-audio recorder candidates (separate concern from the session video recorder above —
+// this is the per-question clip sent to Whisper). Unlike the session recording, the backend
+// receives this as ONE complete file per question (not concatenated slices), so unlike the
+// video recorder it's free to fall back to a non-WebM container — Safari has no WebM support
+// at all, and 'mp4' is its native MediaRecorder format. `startMic` previously constructed a
+// MediaRecorder with a hardcoded 'audio/webm', which threw on any browser that didn't accept
+// that exact string — the constructor throw happened BEFORE the live Web Speech API captions
+// were started, so on an unsupported browser the candidate lost both the recording AND live
+// captions, surfaced only as a generic "Could not access microphone" error even though the
+// mic permission itself was granted fine.
+const ANSWER_RECORDER_MIME_CANDIDATES = [
+  'audio/webm;codecs=opus',
+  'audio/webm',
+  'audio/ogg;codecs=opus',
+  'audio/mp4',
+];
+
+const pickAnswerRecorderMimeType = () => {
+  if (typeof MediaRecorder === 'undefined' || !MediaRecorder.isTypeSupported) return null;
+  return ANSWER_RECORDER_MIME_CANDIDATES.find((type) => MediaRecorder.isTypeSupported(type)) || null;
+};
+
+// The server infers the audio format from this filename's extension (Config.ALLOWED_EXTENSIONS
+// already permits all of these) — must match whatever pickAnswerRecorderMimeType negotiated,
+// or Whisper is handed a file whose real bytes don't match its claimed container/codec.
+const answerRecorderFileName = (mimeType) => {
+  if (mimeType && mimeType.includes('ogg')) return 'response.ogg';
+  if (mimeType && mimeType.includes('mp4')) return 'response.m4a';
+  return 'response.webm';
+};
+
 const InterviewSession = () => {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -73,6 +105,29 @@ const InterviewSession = () => {
   const [currentIdx, setCurrentIdx] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  // Intro stage (§ intro stage): a 1-minute welcome/rules screen. Camera and proctoring
+  // already start on mount regardless of this — the intro just gates which UI renders, so
+  // proctoring is live from the very start of the session.
+  //
+  // Placement: normally the very first thing the candidate sees, before Question 1. BUT a
+  // completed-course candidate's Question 1 is replaced with the opening coding-sandbox
+  // exercise (backend interview_routes.py, `opening_problem`) — for that candidate the
+  // sandbox must appear FIRST, with the welcome/rules screen running immediately AFTER it and
+  // before the rest of the (verbal) questions, not before it. The lazy initializer below reads
+  // the redirect's own question list (the normal path — arrives synchronously via router
+  // state) so the very first render already opens on the sandbox instead of showing an intro
+  // that would then need to be swapped out.
+  const openedWithSandbox = questions[0]?.question_type === 'coding_sandbox';
+  const [sessionStage, setSessionStage] = useState(() => {
+    const initialQuestions = location.state?.questions || [];
+    return initialQuestions[0]?.question_type === 'coding_sandbox' ? 'questions' : 'intro';
+  }); // 'intro' | 'questions'
+  const INTRO_DURATION_SECONDS = 60;
+  const [introRemaining, setIntroRemaining] = useState(INTRO_DURATION_SECONDS);
+  // Guards the intro from showing twice — once up front (normal case) or once right after the
+  // opening sandbox (sandbox-first case), but never both, and never again on a later reload.
+  const introShownRef = useRef(false);
 
   // Response modes: 'voice' (default) or 'text'
   const [inputMode, setInputMode] = useState('voice');
@@ -107,6 +162,19 @@ const InterviewSession = () => {
 
   const videoRef = useRef(null);
   const streamRef = useRef(null);
+  // Callback ref instead of a plain ref: the intro screen and the main question screen each
+  // mount their OWN <video> element (only one is ever in the DOM at a time, gated by
+  // sessionStage), so switching stages destroys and recreates the node behind videoRef. A
+  // plain ref would leave the new node with no srcObject — camera looking "off"/blank —
+  // until some other effect happened to re-touch it. This re-attaches the live stream the
+  // instant either <video> mounts, so the preview never goes blank on a stage transition.
+  const attachVideoRef = useCallback((node) => {
+    videoRef.current = node;
+    if (node && streamRef.current) {
+      node.srcObject = streamRef.current;
+      node.play().catch(() => {});
+    }
+  }, []);
   const lastViolationTimeRef = useRef({});
   // When ANY hard violation was last counted (across all types). Guards against a lag
   // spike tripping several checks at once and instantly terminating the interview.
@@ -161,6 +229,9 @@ const InterviewSession = () => {
   const recognitionRef = useRef(null);
   const micActiveRef = useRef(false);
   const submittingRef = useRef(false);
+  // Format actually negotiated for the answer recorder (see pickAnswerRecorderMimeType) — the
+  // Blob type and the uploaded filename's extension must both match this exactly.
+  const answerRecorderMimeTypeRef = useRef(null);
 
   // Full-session video recording (DB Integration §2): records the SAME 640×480 proctoring
   // camera stream (no second camera request), video-only WebM at a modest bitrate. One
@@ -208,6 +279,40 @@ const InterviewSession = () => {
   // offering a mute toggle for it) is noise, so both are suppressed for this question type.
   const isSandboxQuestion =
     activeQuestion?.question_type === 'coding_sandbox' && !!activeQuestion?.sandbox_problem_id;
+  // MCQ round (§ MCQ round): single-select, answered by clicking an option — no voice/text
+  // input, same reasoning as the sandbox suppression above.
+  const isMcqQuestion = activeQuestion?.question_type === 'mcq';
+
+  // Intro stage countdown — local only (nothing gradeable is at risk here, unlike the
+  // per-question timer, so no server anchor is needed). Advances on whichever comes first:
+  // this timer reaching 0, or the candidate clicking "Start Interview" (handleStartInterview).
+  useEffect(() => {
+    if (sessionStage !== 'intro') return undefined;
+    if (introRemaining <= 0) {
+      introShownRef.current = true;
+      setSessionStage('questions');
+      return undefined;
+    }
+    const t = setTimeout(() => setIntroRemaining((prev) => prev - 1), 1000);
+    return () => clearTimeout(t);
+  }, [sessionStage, introRemaining]);
+
+  const handleStartInterview = () => {
+    introShownRef.current = true;
+    setSessionStage('questions');
+  };
+
+  // Sandbox-first placement (see the sessionStage declaration above): once the opening
+  // sandbox question has been submitted (currentIdx moves off 0), show the welcome/rules
+  // screen exactly once, before the rest of the questions begin. No-op for every other
+  // candidate — sessionStage already opened on 'intro' for them.
+  useEffect(() => {
+    if (introShownRef.current || !openedWithSandbox) return;
+    if (currentIdx < 1) return;
+    introShownRef.current = true;
+    setIntroRemaining(INTRO_DURATION_SECONDS);
+    setSessionStage('intro');
+  }, [currentIdx, openedWithSandbox]);
 
   // 1. Setup Session Timers
   useEffect(() => {
@@ -223,7 +328,23 @@ const InterviewSession = () => {
           return;
         }
         setQuestions(res.data.questions);
-        setCurrentIdx(res.data.responses_count || 0);
+        const resumedIdx = res.data.responses_count || 0;
+        setCurrentIdx(resumedIdx);
+        // This branch only runs when the page had no navigation state to work from — i.e. a
+        // reload/return mid-interview, not the initial redirect from the setup gate.
+        if (resumedIdx > 0) {
+          // Already past Question 1 (and, if this candidate opened on the sandbox, already
+          // past the post-sandbox intro too) — the welcome screen must NOT replay on reload
+          // (it used to, making an already-answered sandbox question appear to be followed by
+          // "the intro").
+          introShownRef.current = true;
+          setSessionStage('questions');
+        } else if (res.data.questions[0]?.question_type === 'coding_sandbox') {
+          // Reloaded before answering anything, and this candidate opens on the sandbox — show
+          // it directly instead of the default intro-first ordering (handled by the lazy
+          // sessionStage initializer for the normal, non-reload redirect path).
+          setSessionStage('questions');
+        }
       } catch (err) {
         console.warn('Could not retrieve interview details:', err);
         setError('Failed to fetch active questions. Please return to Dashboard.');
@@ -351,7 +472,19 @@ const InterviewSession = () => {
   const terminateForIdentity = async (distance) => {
     if (identityFailedRef.current) return;
     identityFailedRef.current = true;
+    // Also latch the REGULAR proctoring termination guard. Without this, the ordinary
+    // face/gaze/hands detection loops (which keep running independently of identity checking)
+    // kept right on beeping, popping violation alerts, and could even race their own 5-strike
+    // termination + navigate() at the same time as this one — a face swap naturally also looks
+    // like a violation to MediaPipe (a brief no-face, or two faces in frame during the actual
+    // hand-off), so this window was exactly when the regular proctoring loop was most likely to
+    // fire. That produced the overlapping violation sound and the extra delay reported here —
+    // two termination paths doing their own uploads/navigate at once, not one clean one.
+    proctorTerminatedRef.current = true;
     setIdentityAlert('Identity check failed — the person on camera is not the verified candidate. This session is being terminated.');
+    // Spoken the moment termination is decided (interrupts anything mid-utterance, same as the
+    // 5-strike TERMINATION_VOICE_MESSAGE) rather than only showing the silent text banner.
+    if (!isMuted) speakPhrase(IDENTITY_TERMINATION_VOICE_MESSAGE, { interrupt: true });
     const snapshot = captureSnapshot();
     try {
       await api.post(`/interviews/${id}/identity-failed`, {
@@ -361,6 +494,12 @@ const InterviewSession = () => {
     } catch (err) {
       console.error('Failed to report the identity failure:', err);
     }
+    // Give the spoken line a moment to actually play before the redirect unmounts the page —
+    // matches the 400ms used ahead of the 5-strike termination's navigate(). Kept short
+    // deliberately: the api.post above already ran first and gave the voice a head start, so
+    // this is just a small top-up, not the primary wait — on a slow/cold-started backend the
+    // network call itself already took far longer than the voice line needs to finish playing.
+    await new Promise((r) => setTimeout(r, 400));
     await uploadSessionVideo();
     stopCamera();
     clearBaseline();
@@ -1361,8 +1500,16 @@ const InterviewSession = () => {
   };
 
   // When the active question changes, reset the answer state and (re)start its timer.
+  //
+  // Gated on sessionStage === 'questions': activeQuestion is already set (from the redirect's
+  // own question list, or after the opening sandbox) WHILE the welcome/intro screen is still
+  // showing, and this effect keys off currentIdx alone — so without this gate it fired the
+  // instant the page mounted, anchoring and counting down the first question's 4-minute timer
+  // in the background before the candidate had even left the intro screen. sessionStage is
+  // in the dependency array so the timer starts fresh the moment intro actually ends (button
+  // click or its own countdown), not before.
   useEffect(() => {
-    if (!activeQuestion) return;
+    if (!activeQuestion || sessionStage !== 'questions') return undefined;
     // reset per-question answer state
     liveTranscriptRef.current = '';
     setLiveTranscript('');
@@ -1378,7 +1525,7 @@ const InterviewSession = () => {
 
     return () => clearCountdown();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentIdx, questions.length]);
+  }, [currentIdx, questions.length, sessionStage]);
 
   // ------------------------------------------------------------------ Voice capture (§3)
   const getSpeechRecognition = () => {
@@ -1429,31 +1576,48 @@ const InterviewSession = () => {
       if (!audioStreamRef.current) {
         audioStreamRef.current = await navigator.mediaDevices.getUserMedia({ audio: true });
       }
-      if (!mediaRecorderRef.current || mediaRecorderRef.current.state === 'inactive') {
-        const mr = new MediaRecorder(audioStreamRef.current, { mimeType: 'audio/webm' });
-        mr.ondataavailable = (e) => {
-          if (e.data && e.data.size > 0) audioChunksRef.current.push(e.data);
-        };
-        mediaRecorderRef.current = mr;
-        mr.start(500);
-      } else if (mediaRecorderRef.current.state === 'paused') {
-        mediaRecorderRef.current.resume();
-      }
-
-      // Live captions via the browser Web Speech API (best-effort; Whisper stays authoritative).
-      if (sttSupported) {
-        if (!recognitionRef.current) recognitionRef.current = getSpeechRecognition();
-        try { if (recognitionRef.current) recognitionRef.current.start(); } catch (e) { /* already running */ }
-      }
-
-      micActiveRef.current = true;
-      setMicActive(true);
-      setIsRecording(true);
-      setHasRecorded(true);
     } catch (err) {
+      // getUserMedia itself failed — this IS a genuine permission/device problem, unlike the
+      // recorder-construction failure handled separately below.
       console.error('Mic access error:', err);
       setError('Could not access microphone. Please allow microphone access in your browser and try again — voice is required for this interview.');
+      return;
     }
+
+    // Recorder construction and live captions are independent capabilities — one failing must
+    // never block the other, and neither failing should be reported as "microphone access"
+    // (permission was already granted above by the time either of these run).
+    if (!mediaRecorderRef.current || mediaRecorderRef.current.state === 'inactive') {
+      try {
+        const mimeType = pickAnswerRecorderMimeType();
+        if (!mimeType) {
+          console.warn('Answer recording unavailable: no supported audio mimeType.');
+        } else {
+          const mr = new MediaRecorder(audioStreamRef.current, { mimeType });
+          mr.ondataavailable = (e) => {
+            if (e.data && e.data.size > 0) audioChunksRef.current.push(e.data);
+          };
+          mediaRecorderRef.current = mr;
+          answerRecorderMimeTypeRef.current = mr.mimeType || mimeType;
+          mr.start(500);
+        }
+      } catch (e) {
+        console.warn('Answer recorder could not start; live captions still apply if supported.', e);
+      }
+    } else if (mediaRecorderRef.current.state === 'paused') {
+      mediaRecorderRef.current.resume();
+    }
+
+    // Live captions via the browser Web Speech API (best-effort; Whisper stays authoritative).
+    if (sttSupported) {
+      if (!recognitionRef.current) recognitionRef.current = getSpeechRecognition();
+      try { if (recognitionRef.current) recognitionRef.current.start(); } catch (e) { /* already running */ }
+    }
+
+    micActiveRef.current = true;
+    setMicActive(true);
+    setIsRecording(true);
+    setHasRecorded(true);
   };
 
   const stopMic = () => {
@@ -1491,19 +1655,24 @@ const InterviewSession = () => {
     }
   };
 
-  // Assemble the recorded audio (across pause/resume cycles) into one blob.
+  // Assemble the recorded audio (across pause/resume cycles) into one blob. The Blob's type
+  // must be whatever pickAnswerRecorderMimeType actually negotiated (answerRecorderMimeTypeRef)
+  // — labelling it 'audio/webm' regardless of the real encoding, as this used to, sent Whisper
+  // a file whose declared container didn't match its actual bytes on any browser that fell back
+  // to a non-webm format.
   const finalizeAudioBlob = () => {
+    const blobType = answerRecorderMimeTypeRef.current || 'audio/webm';
     return new Promise((resolve) => {
       const mr = mediaRecorderRef.current;
       if (!mr || mr.state === 'inactive') {
-        resolve(audioChunksRef.current.length ? new Blob(audioChunksRef.current, { type: 'audio/webm' }) : null);
+        resolve(audioChunksRef.current.length ? new Blob(audioChunksRef.current, { type: blobType }) : null);
         return;
       }
       mr.onstop = () => {
-        resolve(audioChunksRef.current.length ? new Blob(audioChunksRef.current, { type: 'audio/webm' }) : null);
+        resolve(audioChunksRef.current.length ? new Blob(audioChunksRef.current, { type: blobType }) : null);
       };
       try { mr.stop(); } catch (e) {
-        resolve(audioChunksRef.current.length ? new Blob(audioChunksRef.current, { type: 'audio/webm' }) : null);
+        resolve(audioChunksRef.current.length ? new Blob(audioChunksRef.current, { type: blobType }) : null);
       }
     });
   };
@@ -1667,7 +1836,7 @@ const InterviewSession = () => {
 
     if (!asText && inputMode === 'voice') {
       if (audioBlob && audioBlob.size > 0) {
-        formData.append('audio', audioBlob, 'response.webm');
+        formData.append('audio', audioBlob, answerRecorderFileName(answerRecorderMimeTypeRef.current));
       }
       // Live browser transcript travels as the fallback/authoritative-backup answer.
       formData.append('fallback_text', voiceText || '');
@@ -1713,8 +1882,15 @@ const InterviewSession = () => {
   };
 
   const handleAutoSubmit = () => {
-    // Timer expired — submit whatever exists (a skip if empty).
-    submitAnswer({ timedOut: true });
+    // Timer expired — submit whatever exists (a skip if empty). An unanswered MCQ always
+    // submits a clean empty string via overrideText (bypassing voice/text state entirely,
+    // same reasoning as the sandbox's submitAnswerWithText) rather than risking stale
+    // leftover text/voice state from a previous question type being sent as the "answer".
+    if (isMcqQuestion) {
+      submitAnswer({ timedOut: true, overrideText: '' });
+    } else {
+      submitAnswer({ timedOut: true });
+    }
   };
 
   // Clean up audio + timer on unmount.
@@ -1729,7 +1905,7 @@ const InterviewSession = () => {
   const speakQuestion = () => {
     if ('speechSynthesis' in window && activeQuestion) {
       window.speechSynthesis.cancel();
-      if (isMuted || isSandboxQuestion) return;
+      if (isMuted || isSandboxQuestion || isMcqQuestion) return;
       const utterance = new SpeechSynthesisUtterance(activeQuestion.question_text);
       utterance.rate = 0.95;
 
@@ -1744,16 +1920,21 @@ const InterviewSession = () => {
     }
   };
 
-  // Speak question automatically by default when it loads or index changes
+  // Speak question automatically by default when it loads or index changes.
+  //
+  // Gated on sessionStage === 'questions' for the same reason as the timer-start effect above
+  // — activeQuestion is already set while the welcome/intro screen is showing, so without this
+  // gate the recruiter voice started reading the question out loud in the background under the
+  // intro card, before the candidate had even clicked "Start Interview".
   useEffect(() => {
-    if (activeQuestion && !isMuted && !isSandboxQuestion) {
+    if (activeQuestion && sessionStage === 'questions' && !isMuted && !isSandboxQuestion && !isMcqQuestion) {
       const timer = setTimeout(() => {
         speakQuestion();
       }, 350);
       return () => clearTimeout(timer);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentIdx, questions.length, isMuted]);
+  }, [currentIdx, questions.length, isMuted, sessionStage]);
 
   // Clean up speech synthesis on page transition
   useEffect(() => {
@@ -1769,6 +1950,189 @@ const InterviewSession = () => {
       <Card className="text-center max-w-md mx-auto">
         <Spinner size="md" label="Loading interview workspace..." />
       </Card>
+    );
+  }
+
+  // Proctoring is already live during the intro screen (camera/MediaPipe start on mount,
+  // independent of sessionStage), so a violation CAN be counted while it's showing. These
+  // banners used to only exist in the post-intro layout below — a candidate could rack up
+  // real strikes (or even hit the identity/camera-loss paths) during the 60s intro with zero
+  // visual feedback that anything was wrong. All five are `fixed`-positioned overlays, so
+  // rendering the same fragment from both branches below is safe — no layout coupling.
+  const proctorAlertsUI = (
+    <>
+      {/* Hard violation warning — a fixed, prominent banner pinned to the top-center of the
+          viewport so it's impossible to miss during the interview (it used to sit inline and
+          scroll out of view). Sits above everything, including full-screen mode. */}
+      {violationAlert && (
+        <div className="fixed top-5 left-1/2 -translate-x-1/2 z-[80] px-6 py-4 bg-red-600 border-2 border-red-300 text-white rounded-xl text-sm md:text-base font-bold flex items-center gap-3 animate-bounce shadow-2xl shadow-red-950/50 max-w-[92vw]">
+          <AlertTriangle className="shrink-0" size={22} />
+          <span>{violationAlert}</span>
+        </div>
+      )}
+
+      {/* Identity failure — a hard block, not a strike. Shown as a full-cover overlay
+          because the session is already being torn down behind it. */}
+      {identityAlert && (
+        <div className="fixed inset-0 z-[90] bg-slate-950/90 backdrop-blur-sm flex flex-col items-center justify-center gap-4 p-6 text-center">
+          <div className="w-16 h-16 rounded-full bg-red-600/20 border-2 border-red-500 text-red-400 flex items-center justify-center">
+            <ScanFace size={32} />
+          </div>
+          <h2 className="text-xl font-extrabold text-white">Identity Verification Failed</h2>
+          <p className="text-sm text-slate-300 max-w-md leading-relaxed">{identityAlert}</p>
+          <Spinner size="lg" />
+        </div>
+      )}
+
+      {/* Soft (non-terminating) full-face warning (§4) — also pinned near the top, just
+          below the hard-warning slot, in a calmer amber style. */}
+      {softAlert && (
+        <div className="fixed top-24 left-1/2 -translate-x-1/2 z-[75] px-5 py-3.5 bg-amber-500 border-2 border-amber-300 text-white rounded-xl text-sm font-bold flex items-center gap-2.5 shadow-2xl shadow-amber-950/40 max-w-[92vw]">
+          <ScanFace className="shrink-0" size={18} />
+          <span>{softAlert}</span>
+        </div>
+      )}
+
+      {/* Camera-stall recovery (§ reliability) — deliberately calm, NOT the red violation
+          style: a transient "reconnecting" state while we re-acquire the stream, and a
+          persistent notice if it couldn't be restored (the interview continues; the gap is
+          logged for admin review, not counted against the candidate). */}
+      {cameraReconnecting && !cameraLost && (
+        <div className="fixed top-40 left-1/2 -translate-x-1/2 z-[75] px-5 py-3.5 bg-sky-600 border-2 border-sky-300 text-white rounded-xl text-sm font-semibold flex items-center gap-2.5 shadow-2xl shadow-sky-950/40 max-w-[92vw]">
+          <Camera className="shrink-0 animate-pulse" size={18} />
+          <span>Reconnecting to your camera…</span>
+        </div>
+      )}
+      {cameraLost && (
+        <div className="fixed top-40 left-1/2 -translate-x-1/2 z-[75] px-5 py-3.5 bg-orange-600 border-2 border-orange-300 text-white rounded-xl text-sm font-semibold flex items-center gap-2.5 shadow-2xl shadow-orange-950/40 max-w-[92vw]">
+          <CameraOff className="shrink-0" size={18} />
+          <span>Camera unavailable — the interview will continue, and this has been noted for review.</span>
+        </div>
+      )}
+    </>
+  );
+
+  if (sessionStage === 'intro') {
+    // Reflects what's actually LEFT from here, not the interview's original total — matters
+    // for the sandbox-first candidate (openedWithSandbox), who sees this screen after Question
+    // 1 is already done, so it should say "4 remaining", not repeat "5".
+    const mainQuestionCount = Math.max(
+      0,
+      questions.filter((q) => q.question_type !== 'mcq').length - currentIdx
+    );
+    const mcqCount = questions.filter((q) => q.question_type === 'mcq').length;
+    const briefingItems = [
+      {
+        icon: Sparkles,
+        title: 'Interview structure',
+        detail: `${mainQuestionCount} interview question${mainQuestionCount === 1 ? '' : 's'} (${formatTime(240)} each), then ${mcqCount} quick multiple-choice questions (${formatTime(60)} each).`,
+      },
+      {
+        icon: TimerIcon,
+        title: 'Timed responses',
+        detail: 'Each question auto-submits the moment its timer runs out — answer as much as you can before then.',
+      },
+      {
+        icon: ShieldAlert,
+        title: 'Proctoring active',
+        detail: 'Your camera stays on and is monitored for the whole session — stay visible and centered in frame.',
+      },
+    ];
+    const introProgressPct = Math.max(0, Math.min(100, (introRemaining / INTRO_DURATION_SECONDS) * 100));
+    return (
+      <div className="max-w-3xl mx-auto animate-fade-in">
+        {proctorAlertsUI}
+        <video ref={screenVideoRef} autoPlay playsInline muted className="hidden" aria-hidden="true" />
+        <Card padding={false} className="overflow-hidden">
+          {/* Header band */}
+          <div className="px-6 md:px-8 pt-5 pb-4 text-center space-y-1 border-b border-slate-200 dark:border-slate-800">
+            <span className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-widest text-primary-600 dark:text-primary-400">
+              <Sparkles size={12} /> Interview Session
+            </span>
+            <h1 className="text-xl md:text-2xl font-extrabold text-slate-900 dark:text-white">
+              Before You Begin
+            </h1>
+            <p className="text-xs md:text-sm text-slate-500 dark:text-slate-400 max-w-md mx-auto leading-relaxed">
+              Confirm your camera, then review the session details below.
+            </p>
+          </div>
+
+          {/* Side-by-side on md+: camera left, briefing right — keeps the whole card inside
+              one viewport with no page scroll, instead of stacking everything tall. */}
+          <div className="px-6 md:px-8 py-5 grid grid-cols-1 md:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] gap-5 items-start">
+            {/* Camera preview */}
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                  Camera Preview
+                </span>
+                {cameraOn && (
+                  <span className="inline-flex items-center gap-1.5 text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
+                    <span className="relative flex h-1.5 w-1.5">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                      <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500" />
+                    </span>
+                    Live
+                  </span>
+                )}
+              </div>
+              <div className="relative aspect-video rounded-xl bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 overflow-hidden flex items-center justify-center">
+                {cameraOn ? (
+                  <video
+                    ref={attachVideoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    onLoadedMetadata={(e) => {
+                      e.target.play().catch(err => console.log("Metadata play error:", err));
+                    }}
+                    className="w-full h-full object-cover scale-x-[-1]"
+                  />
+                ) : (
+                  <div className="text-center space-y-1.5 text-slate-400 dark:text-slate-600 py-6">
+                    <CameraOff size={24} className="mx-auto" />
+                    <span className="text-xs font-semibold block text-slate-500 dark:text-slate-400">Camera Feed Off</span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Briefing panel */}
+            <div className="rounded-xl border border-slate-200 dark:border-slate-800 divide-y divide-slate-200 dark:divide-slate-800 overflow-hidden">
+              {briefingItems.map(({ icon: Icon, title, detail }) => (
+                <div key={title} className="flex items-start gap-2.5 p-3 bg-white dark:bg-slate-900/40">
+                  <div className="shrink-0 w-7 h-7 rounded-lg bg-primary-50 dark:bg-primary-500/10 border border-primary-100 dark:border-primary-500/20 flex items-center justify-center">
+                    <Icon size={13} className="text-primary-600 dark:text-primary-400" />
+                  </div>
+                  <div className="space-y-0.5">
+                    <p className="text-xs font-bold text-slate-800 dark:text-slate-100">{title}</p>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-snug">{detail}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Footer CTA band */}
+          <div className="px-6 md:px-8 py-4 bg-slate-50 dark:bg-slate-900/60 border-t border-slate-200 dark:border-slate-800 space-y-2.5">
+            <div className="flex items-center justify-between text-xs font-semibold text-slate-500 dark:text-slate-400">
+              <span className="inline-flex items-center gap-1.5">
+                <Clock size={13} /> Starting automatically
+              </span>
+              <span className="font-mono font-bold text-slate-700 dark:text-slate-200">{formatTime(introRemaining)}</span>
+            </div>
+            <div className="w-full h-1 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
+              <div
+                className="h-full bg-primary-500 transition-all duration-1000 ease-linear"
+                style={{ width: `${introProgressPct}%` }}
+              />
+            </div>
+            <Button onClick={handleStartInterview} className="w-full">
+              Start Interview
+            </Button>
+          </div>
+        </Card>
+      </div>
     );
   }
 
@@ -1825,7 +2189,7 @@ const InterviewSession = () => {
               </span>
               {violationsCount > 0 && (
                 <Badge variant="error" size="lg" className="!normal-case !tracking-normal border-l border-slate-200 dark:border-slate-800 pl-2 ml-1 rounded-none border-0">
-                  {violationsCount}/4
+                  {violationsCount}/{MAX_VIOLATIONS}
                 </Badge>
               )}
             </div>
@@ -1852,54 +2216,7 @@ const InterviewSession = () => {
         </div>
       </Card>
 
-      {/* Hard violation warning — a fixed, prominent banner pinned to the top-center of the
-          viewport so it's impossible to miss during the interview (it used to sit inline and
-          scroll out of view). Sits above everything, including full-screen mode. */}
-      {violationAlert && (
-        <div className="fixed top-5 left-1/2 -translate-x-1/2 z-[80] px-6 py-4 bg-red-600 border-2 border-red-300 text-white rounded-xl text-sm md:text-base font-bold flex items-center gap-3 animate-bounce shadow-2xl shadow-red-950/50 max-w-[92vw]">
-          <AlertTriangle className="shrink-0" size={22} />
-          <span>{violationAlert}</span>
-        </div>
-      )}
-
-      {/* Identity failure — a hard block, not a strike. Shown as a full-cover overlay
-          because the session is already being torn down behind it. */}
-      {identityAlert && (
-        <div className="fixed inset-0 z-[90] bg-slate-950/90 backdrop-blur-sm flex flex-col items-center justify-center gap-4 p-6 text-center">
-          <div className="w-16 h-16 rounded-full bg-red-600/20 border-2 border-red-500 text-red-400 flex items-center justify-center">
-            <ScanFace size={32} />
-          </div>
-          <h2 className="text-xl font-extrabold text-white">Identity Verification Failed</h2>
-          <p className="text-sm text-slate-300 max-w-md leading-relaxed">{identityAlert}</p>
-          <Spinner size="lg" />
-        </div>
-      )}
-
-      {/* Soft (non-terminating) full-face warning (§4) — also pinned near the top, just
-          below the hard-warning slot, in a calmer amber style. */}
-      {softAlert && (
-        <div className="fixed top-24 left-1/2 -translate-x-1/2 z-[75] px-5 py-3.5 bg-amber-500 border-2 border-amber-300 text-white rounded-xl text-sm font-bold flex items-center gap-2.5 shadow-2xl shadow-amber-950/40 max-w-[92vw]">
-          <ScanFace className="shrink-0" size={18} />
-          <span>{softAlert}</span>
-        </div>
-      )}
-
-      {/* Camera-stall recovery (§ reliability) — deliberately calm, NOT the red violation
-          style: a transient "reconnecting" state while we re-acquire the stream, and a
-          persistent notice if it couldn't be restored (the interview continues; the gap is
-          logged for admin review, not counted against the candidate). */}
-      {cameraReconnecting && !cameraLost && (
-        <div className="fixed top-40 left-1/2 -translate-x-1/2 z-[75] px-5 py-3.5 bg-sky-600 border-2 border-sky-300 text-white rounded-xl text-sm font-semibold flex items-center gap-2.5 shadow-2xl shadow-sky-950/40 max-w-[92vw]">
-          <Camera className="shrink-0 animate-pulse" size={18} />
-          <span>Reconnecting to your camera…</span>
-        </div>
-      )}
-      {cameraLost && (
-        <div className="fixed top-40 left-1/2 -translate-x-1/2 z-[75] px-5 py-3.5 bg-orange-600 border-2 border-orange-300 text-white rounded-xl text-sm font-semibold flex items-center gap-2.5 shadow-2xl shadow-orange-950/40 max-w-[92vw]">
-          <CameraOff className="shrink-0" size={18} />
-          <span>Camera unavailable — the interview will continue, and this has been noted for review.</span>
-        </div>
-      )}
+      {proctorAlertsUI}
 
       {error && <Alert variant="error">{error}</Alert>}
 
@@ -1957,7 +2274,7 @@ const InterviewSession = () => {
               {cameraOn ? (
                 <>
                   <video
-                    ref={videoRef}
+                    ref={attachVideoRef}
                     autoPlay
                     playsInline
                     muted
@@ -1985,20 +2302,25 @@ const InterviewSession = () => {
                   Integrity Security Board
                 </span>
                 <Badge
-                  variant={violationsCount >= 3 ? 'error' : violationsCount >= 1 ? 'warning' : 'success'}
+                  variant={violationsCount >= 4 ? 'error' : violationsCount >= 1 ? 'warning' : 'success'}
                   className="!text-[9px]"
                 >
-                  {violationsCount}/4 Violations
+                  {violationsCount}/{MAX_VIOLATIONS} Violations
                 </Badge>
               </div>
+              {/* One segment per strike up to MAX_VIOLATIONS, so the terminating (5th) strike
+                  gets its own distinct segment instead of looking identical to the 4th
+                  warning — a candidate terminated on strike 5 used to see the exact same
+                  "4/4, all bars red" state as someone merely warned for the 4th time. */}
               <div className="w-full bg-slate-200 dark:bg-slate-950 h-1.5 rounded-full overflow-hidden flex gap-0.5">
                 <div className={`h-full flex-1 rounded-l transition-all duration-300 ${violationsCount >= 1 ? 'bg-amber-500' : 'bg-slate-300 dark:bg-slate-800'}`} />
                 <div className={`h-full flex-1 transition-all duration-300 ${violationsCount >= 2 ? 'bg-orange-500' : 'bg-slate-300 dark:bg-slate-800'}`} />
                 <div className={`h-full flex-1 transition-all duration-300 ${violationsCount >= 3 ? 'bg-red-500' : 'bg-slate-300 dark:bg-slate-800'}`} />
-                <div className={`h-full flex-1 rounded-r transition-all duration-300 ${violationsCount >= 4 ? 'bg-red-700' : 'bg-slate-300 dark:bg-slate-800'}`} />
+                <div className={`h-full flex-1 transition-all duration-300 ${violationsCount >= 4 ? 'bg-red-600' : 'bg-slate-300 dark:bg-slate-800'}`} />
+                <div className={`h-full flex-1 rounded-r transition-all duration-300 ${violationsCount >= 5 ? 'bg-red-800' : 'bg-slate-300 dark:bg-slate-800'}`} />
               </div>
               <p className="text-[10px] text-slate-500 leading-normal">
-                Keep your full face visible and centered. Accumulating 4 integrity infractions automatically voids and terminates this session.
+                Keep your full face visible and centered. A 5th integrity infraction automatically voids and terminates this session.
               </p>
             </div>
           </Card>
@@ -2030,9 +2352,9 @@ const InterviewSession = () => {
                 <Badge variant="primary" size="lg" className="capitalize !normal-case">
                   {questionTypeLabel(activeQuestion?.question_type)}
                 </Badge>
-                {/* Nothing is spoken for a written coding exercise, so the voice toggle is
-                    hidden rather than left sitting there doing nothing. */}
-                {!isSandboxQuestion && (
+                {/* Nothing is spoken for a written coding exercise or an on-screen MCQ, so
+                    the voice toggle is hidden rather than left sitting there doing nothing. */}
+                {!isSandboxQuestion && !isMcqQuestion && (
                   <button
                     onClick={() => {
                       const newMuted = !isMuted;
@@ -2108,6 +2430,27 @@ const InterviewSession = () => {
                     submitAnswerWithText(answerText);
                   }}
                 />
+              ) : isMcqQuestion ? (
+                // Single-select MCQ (§ MCQ round): clicking an option submits it immediately
+                // via the same overrideText path the sandbox uses above — no separate confirm
+                // step, consistent with the tight 1-minute-per-question pacing. The forward-
+                // only question loop this file already has (currentIdx only ever advances)
+                // is what satisfies "no going back" — nothing extra needed for that here.
+                <div className="w-full max-w-lg space-y-3">
+                  {(activeQuestion.mcq_options || []).map((option, idx) => (
+                    <button
+                      key={idx}
+                      disabled={loading}
+                      onClick={() => submitAnswerWithText(option)}
+                      className="w-full text-left px-5 py-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-primary-500 hover:bg-primary-50/60 dark:hover:bg-primary-500/5 disabled:opacity-50 disabled:cursor-not-allowed transition font-medium text-slate-700 dark:text-slate-200"
+                    >
+                      <span className="inline-flex items-center justify-center w-6 h-6 mr-3 rounded-full bg-slate-100 dark:bg-slate-800 text-[11px] font-bold text-slate-500 dark:text-slate-400 align-middle">
+                        {String.fromCharCode(65 + idx)}
+                      </span>
+                      {option}
+                    </button>
+                  ))}
+                </div>
               ) : (
                 <div className="flex flex-col items-center space-y-5 w-full max-w-lg">
                   {/* Mic control */}
