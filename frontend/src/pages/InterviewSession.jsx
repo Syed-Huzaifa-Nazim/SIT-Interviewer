@@ -2140,14 +2140,19 @@ const InterviewSession = () => {
   const combinedTranscript = `${liveTranscript}${interimText ? (liveTranscript ? ' ' : '') + interimText : ''}`.trim();
 
   return (
-    <div className="max-w-6xl mx-auto space-y-6 animate-fade-in">
+    /* Vertical rhythm through this whole screen is deliberately tighter than the rest of
+       the app (space-y-4 / gap-4 rather than 6, smaller card padding). The candidate is
+       under a countdown and needs the question, their camera and the mic control visible
+       at once; anything that pushes the answer controls below the fold makes them scroll
+       while the clock runs. Nothing is removed — only the whitespace between it. */
+    <div className="max-w-6xl mx-auto space-y-4 animate-fade-in">
       {/* Hidden sink for the shared-screen stream — frames are grabbed from here for the
           proctoring screenshot archive. Never shown to the candidate. */}
       <video ref={screenVideoRef} autoPlay playsInline muted className="hidden" aria-hidden="true" />
 
       {/* Session Header */}
-      <Card padding={false} className="px-5 py-4 md:px-6">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <Card padding={false} className="px-5 py-3 md:px-6">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="space-y-0.5">
             <Badge variant="primary" size="lg" className="!normal-case !tracking-normal mb-1">
               Session Active
@@ -2200,13 +2205,14 @@ const InterviewSession = () => {
             </div>
           </div>
 
-          {/* Interview progress indicator */}
-          <div className="mt-4 space-y-1.5">
+          {/* Interview progress indicator. The label row is folded into a single line with
+              the bar so the header stays one compact strip. */}
+          <div className="mt-2 w-full space-y-1">
             <div className="flex items-center justify-between text-[11px] font-semibold text-slate-500 dark:text-slate-400">
               <span>Progress</span>
               <span>{currentIdx} / {questions.length} completed</span>
             </div>
-            <div className="w-full h-1.5 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden">
+            <div className="w-full h-1 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden">
               <div
                 className="h-full bg-gradient-to-r from-primary-500 to-accent-500 rounded-full transition-all duration-500"
                 style={{ width: `${questions.length ? (currentIdx / questions.length) * 100 : 0}%` }}
@@ -2220,32 +2226,36 @@ const InterviewSession = () => {
 
       {error && <Alert variant="error">{error}</Alert>}
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
         {/* Left Column — kept sticky on desktop: the coding sandbox on the right can run
             much taller than this panel (examples, constraints, editor, console), and
             without this the candidate's own camera feed and violation board would scroll
             out of view exactly while they're most likely to trip a violation. */}
-        <div className="lg:col-span-4 space-y-6 lg:sticky lg:top-6 lg:self-start">
-          <Card className="text-center space-y-4 relative overflow-hidden">
+        <div className="lg:col-span-4 space-y-4 lg:sticky lg:top-4 lg:self-start">
+          {/* Status strip, laid out horizontally. This used to be a centred column — a
+              64px avatar stacked above the label — which cost ~180px of height to convey
+              one line of state. Side by side it reads the same and takes a third of that,
+              which is height the camera feed and mic control need more. */}
+          <Card padding={false} className="flex items-center gap-3 px-4 py-3 relative overflow-hidden">
             <div className="absolute top-0 right-0 w-24 h-24 bg-primary-500/5 rounded-full blur-lg pointer-events-none" />
 
-            <div className="w-16 h-16 rounded-full bg-gradient-to-tr from-primary-500 to-indigo-500 mx-auto flex items-center justify-center border border-primary-400/30 relative">
-              <Activity className={`text-white ${isRecording ? 'animate-pulse' : ''}`} size={24} />
+            <div className="w-10 h-10 shrink-0 rounded-full bg-gradient-to-tr from-primary-500 to-indigo-500 flex items-center justify-center border border-primary-400/30 relative">
+              <Activity className={`text-white ${isRecording ? 'animate-pulse' : ''}`} size={18} />
               {isRecording && (
                 <span className="absolute inset-0 rounded-full border-2 border-primary-500 animate-ping" />
               )}
             </div>
 
-            <div>
-              <h4 className="font-bold text-sm text-slate-800 dark:text-slate-200">AI Recruiter</h4>
-              <span className="text-[10px] text-slate-500 uppercase font-semibold block mt-0.5">
+            <div className="min-w-0">
+              <h4 className="font-bold text-sm text-slate-800 dark:text-slate-200 leading-tight">AI Recruiter</h4>
+              <span className="text-[10px] text-slate-500 uppercase font-semibold block">
                 {loading ? 'Analyzing response...' : micActive ? 'Listening...' : 'Awaiting Reply'}
               </span>
             </div>
           </Card>
 
           <Card
-            className={`space-y-4 transition-all ${
+            className={`space-y-3 transition-all ${
               violationsCount > 0 ? 'border-red-500/35 shadow-lg shadow-red-950/5' : ''
             }`}
           >
@@ -2295,7 +2305,7 @@ const InterviewSession = () => {
               )}
             </div>
 
-            <div className="p-4 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl space-y-2">
+            <div className="p-3 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl space-y-1.5">
               <div className="flex items-center justify-between">
                 <span className="text-[10px] font-bold text-slate-600 dark:text-slate-300 flex items-center gap-1.5 uppercase tracking-wider">
                   <ShieldAlert size={12} className="text-red-400" />
@@ -2328,7 +2338,7 @@ const InterviewSession = () => {
 
         {/* Right Column */}
         <div className="lg:col-span-8">
-          <Card className="min-h-[400px] flex flex-col justify-between relative overflow-hidden md:p-8">
+          <Card className="min-h-[320px] flex flex-col justify-between relative overflow-hidden md:p-6">
             {(loading || savingVideo) && (
               <div className="absolute inset-0 bg-white/90 dark:bg-slate-950/85 backdrop-blur-sm z-30 rounded-2xl flex flex-col items-center justify-center gap-4">
                 <div className="p-4 bg-gradient-to-tr from-primary-500 to-indigo-500 rounded-2xl animate-bounce shadow-xl">
@@ -2481,7 +2491,7 @@ const InterviewSession = () => {
                       </span>
                       {micActive && <span className="text-[10px] font-semibold text-red-500 flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" /> Recording</span>}
                     </div>
-                    <div className="w-full min-h-24 max-h-44 overflow-y-auto p-3.5 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl text-sm text-slate-700 dark:text-slate-200 leading-relaxed whitespace-pre-wrap">
+                    <div className="w-full min-h-20 max-h-36 overflow-y-auto p-3 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl text-sm text-slate-700 dark:text-slate-200 leading-relaxed whitespace-pre-wrap">
                       {combinedTranscript
                         ? (
                           <>

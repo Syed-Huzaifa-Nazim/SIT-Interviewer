@@ -8,13 +8,20 @@ const api = axios.create({
   },
 });
 
-// --- Cold-start detection ------------------------------------------------------
-// Free-tier hosts (Render included) spin the backend down after a period of
-// inactivity; the next request can take 30-50s to wake it back up. A request that
-// slow looks identical to a hung/broken app unless we tell the user what's actually
-// happening. Any request still pending past SLOW_THRESHOLD_MS is assumed to be a
-// cold start; ColdStartNotice.jsx subscribes to this to show a "waking up" banner.
-const SLOW_THRESHOLD_MS = 4000;
+// --- Slow-request notice -------------------------------------------------------
+// This started life as cold-start detection for Render's free tier, which spun the
+// backend down after idling and took 30-50s to wake it. The backend now runs on
+// Railway and never sleeps, so nothing here detects a cold start — it only measures
+// how long a request has been in flight. The banner it drives was reworded to match
+// (see ColdStartNotice.jsx); leaving it saying "waking up the server" made every
+// ordinary slow request look like an outage.
+//
+// The threshold used to be 4s, which was far too eager: several legitimate requests
+// exceed that by design — starting an interview waits on LLM question generation, and
+// the final submit-answer waits on report generation. Candidates saw the banner during
+// normal operation, on every interview. 12s is past anything the app does on purpose,
+// so the banner now only appears when something is genuinely wrong.
+const SLOW_THRESHOLD_MS = 12000;
 let slowCount = 0;
 const slowListeners = new Set();
 
