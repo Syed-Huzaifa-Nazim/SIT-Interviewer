@@ -57,25 +57,24 @@ def is_coding_format(question_type):
 
 
 # Per-question answer time budget in seconds, keyed by question type (Timer feature §2).
-# Confirmed defaults: conceptual / HR / behavioral 120s, scenario 180s, coding 300s.
-# The coding formats are verbal, so they get talk-time budgets rather than the 300s
-# write-code budget: concept is a quick recall answer, logic/debug need reasoning aloud,
-# and a full scenario walkthrough gets the most room.
+# Every main-question type gets a flat 4 minutes (240s) — previously varied by type
+# (120s/180s/240s/300s/600s), unified per a direct product decision to keep the whole
+# interview's per-question pacing predictable regardless of question type.
 QUESTION_TIME_LIMITS = {
-    'conceptual': 120,
-    'hr': 120,
-    'behavioral': 120,
-    'scenario': 180,
-    'coding': 300,  # legacy type, kept so pre-existing questions keep their budget
-    CODING_CONCEPT: 120,
-    CODING_LOGIC: 180,
-    CODING_DEBUG: 180,
+    'conceptual': 240,
+    'hr': 240,
+    'behavioral': 240,
+    'scenario': 240,
+    'coding': 240,  # legacy type, kept so pre-existing questions keep their budget
+    CODING_CONCEPT: 240,
+    CODING_LOGIC: 240,
+    CODING_DEBUG: 240,
     CODING_SCENARIO: 240,
-    # Hands-on sandbox exercise: the candidate actually writes and runs code here rather
-    # than talking through it, so it needs a materially larger budget than a verbal question.
-    'coding_sandbox': 600,
+    'coding_sandbox': 240,
+    # MCQ round (§ MCQ): 10 questions, 1 minute each, appended after the main questions.
+    'mcq': 60,
 }
-DEFAULT_QUESTION_TIME_LIMIT = 120
+DEFAULT_QUESTION_TIME_LIMIT = 240
 
 
 def question_time_limit(question_type):
