@@ -1,4 +1,5 @@
 import datetime
+import json
 import bcrypt
 from app.database.db import db
 
@@ -265,6 +266,11 @@ class InterviewQuestion(db.Model):
     # solve in the live editor. Everything needed to render and grade it is looked up from
     # the problem bank by this id, so no question content is duplicated into the DB.
     sandbox_problem_id = db.Column(db.String(100), nullable=True)
+    # Set only on a 'mcq' question (§ MCQ round). mcq_options is a JSON-encoded list of 4
+    # option strings; mcq_correct_index (0-3) is the answer key and is NEVER included in
+    # to_dict() below — it must never reach the candidate-facing API response.
+    mcq_options = db.Column(db.Text, nullable=True)
+    mcq_correct_index = db.Column(db.Integer, nullable=True)
     order_num = db.Column(db.Integer, nullable=False)
 
     # Per-question timer (§2). ``time_limit_seconds`` is set at creation from the
@@ -285,6 +291,14 @@ class InterviewQuestion(db.Model):
         return max(0, int(round(limit - elapsed)))
 
     def to_dict(self):
+        # mcq_correct_index is deliberately excluded — it is the answer key and must never
+        # reach the candidate-facing API response.
+        mcq_options = None
+        if self.mcq_options:
+            try:
+                mcq_options = json.loads(self.mcq_options)
+            except Exception:
+                mcq_options = None
         return {
             'id': self.id,
             'interview_id': self.interview_id,
@@ -292,6 +306,7 @@ class InterviewQuestion(db.Model):
             'question_type': self.question_type,
             'code_snippet': self.code_snippet,
             'sandbox_problem_id': self.sandbox_problem_id,
+            'mcq_options': mcq_options,
             'order_num': self.order_num,
             'time_limit_seconds': self.time_limit_seconds or 120,
             'started_at': self.started_at.isoformat() if self.started_at else None,
