@@ -2,7 +2,7 @@ import re
 import datetime
 import secrets
 import jwt
-from fastapi import APIRouter, Request, HTTPException, status, Depends
+from fastapi import APIRouter, Body, Request, HTTPException, status, Depends
 from fastapi.responses import JSONResponse
 from app.database.db import db
 from app.models import User, Token, Transaction, Notification, Interview, SecondInterviewRequest
@@ -98,8 +98,8 @@ def _handle_reinterview_signup(existing_user, name, email):
 
 
 @auth_bp.post('/register')
-async def register(request: Request):
-    data = await request.json() or {}
+def register(payload: dict = Body(default=None)):
+    data = payload or {}
 
     name = data.get('name')
     email = data.get('email')
@@ -247,7 +247,7 @@ async def register(request: Request):
 
 
 @auth_bp.get('/signup-options')
-async def signup_options():
+def signup_options():
     """Public: drives the signup form so a single backend flag (ONGOING_CATEGORY_ENABLED)
     controls the 'Coming Soon' state everywhere without a frontend redeploy (Update §1)."""
     return {
@@ -259,8 +259,8 @@ async def signup_options():
 
 
 @auth_bp.post('/login')
-async def login(request: Request):
-    data = await request.json() or {}
+def login(payload: dict = Body(default=None)):
+    data = payload or {}
     identifier = data.get('email') or data.get('identifier') or data.get('cnic')
     password = data.get('password')
 
@@ -341,8 +341,8 @@ async def login(request: Request):
 
 
 @auth_bp.post('/refresh')
-async def refresh(request: Request):
-    data = await request.json() or {}
+def refresh(request: Request, payload: dict = Body(default=None)):
+    data = payload or {}
     refresh_token = data.get('refresh_token')
     if not refresh_token:
         # Fallback to authorization header
@@ -398,14 +398,14 @@ _RESET_GENERIC_MESSAGE = (
 
 
 @auth_bp.post('/forgot-password')
-async def forgot_password(request: Request):
+def forgot_password(payload: dict = Body(default=None)):
     """Issues a random, hashed, expiring reset code and EMAILS it to the account owner.
 
     The code is never returned in the response. The previous implementation accepted a
     hard-coded '123456' and even handed it back to the caller, so anyone who knew an
     email address could take over that account — including the admin account.
     """
-    data = await request.json() or {}
+    data = payload or {}
     email = (data.get('email') or '').strip()
 
     if not email:
@@ -439,8 +439,8 @@ async def forgot_password(request: Request):
 
 
 @auth_bp.post('/reset-password')
-async def reset_password(request: Request):
-    data = await request.json() or {}
+def reset_password(payload: dict = Body(default=None)):
+    data = payload or {}
     email = (data.get('email') or '').strip()
     otp = (data.get('otp') or '').strip()
     new_password = data.get('new_password')
@@ -483,5 +483,5 @@ async def reset_password(request: Request):
 
 
 @auth_bp.post('/logout')
-async def logout():
+def logout():
     return {'message': 'Logged out successfully'}

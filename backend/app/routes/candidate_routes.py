@@ -13,7 +13,7 @@ candidate_bp = APIRouter()
 
 
 @candidate_bp.post('/official-interview/complete')
-async def complete_official_session(user_id: int = Depends(get_current_user_id)):
+def complete_official_session(user_id: int = Depends(get_current_user_id)):
     """Called by the thank-you screen after the one-time interview concludes.
 
     Marks the candidate as interviewed (which drives the §3.4 re-signup detection)

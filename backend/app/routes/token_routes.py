@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request, HTTPException, status, Depends
+from fastapi import APIRouter, Body, HTTPException, status, Depends
 from app.database.db import db
 from app.models import Token, Transaction, Notification
 from app.utils.security import get_current_user_id
@@ -6,7 +6,7 @@ from app.utils.security import get_current_user_id
 token_bp = APIRouter()
 
 @token_bp.get('/balance')
-async def get_balance(user_id: int = Depends(get_current_user_id)):
+def get_balance(user_id: int = Depends(get_current_user_id)):
     token_account = Token.query.filter_by(user_id=user_id).first()
     
     if not token_account:
@@ -17,8 +17,8 @@ async def get_balance(user_id: int = Depends(get_current_user_id)):
     return token_account.to_dict()
 
 @token_bp.post('/purchase')
-async def purchase_tokens(request: Request, user_id: int = Depends(get_current_user_id)):
-    data = await request.json() or {}
+def purchase_tokens(payload: dict = Body(default=None), user_id: int = Depends(get_current_user_id)):
+    data = payload or {}
     
     tokens_to_buy = data.get('tokens', 5)
     amount = data.get('amount', 9.99)
@@ -63,6 +63,6 @@ async def purchase_tokens(request: Request, user_id: int = Depends(get_current_u
         raise HTTPException(status_code=500, detail=f"Purchase transaction failed: {str(e)}")
 
 @token_bp.get('/transactions')
-async def get_transactions(user_id: int = Depends(get_current_user_id)):
+def get_transactions(user_id: int = Depends(get_current_user_id)):
     transactions = Transaction.query.filter_by(user_id=user_id).order_by(Transaction.created_at.desc()).all()
     return [t.to_dict() for t in transactions]

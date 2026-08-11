@@ -1,5 +1,5 @@
 import datetime
-from fastapi import APIRouter, Request, HTTPException, status, Depends, UploadFile, File
+from fastapi import APIRouter, Body, HTTPException, status, Depends, UploadFile, File
 from app.database.db import db
 from app.models import User, Token, Interview, ResumeAnalysis
 from app.utils.security import get_current_user_id
@@ -8,7 +8,7 @@ from app.utils.supabase_service import SupabaseService
 user_bp = APIRouter()
 
 @user_bp.post('/heartbeat')
-async def heartbeat(user_id: int = Depends(get_current_user_id)):
+def heartbeat(user_id: int = Depends(get_current_user_id)):
     """Lightweight presence ping (§4.2): the frontend calls this every ~20s while a
     user is active; the admin hub shows anyone seen within the last minute as online."""
     user = User.query.get(user_id)
@@ -22,7 +22,7 @@ async def heartbeat(user_id: int = Depends(get_current_user_id)):
     return {'online': True}
 
 @user_bp.post('/presence/offline')
-async def mark_offline(user_id: int = Depends(get_current_user_id)):
+def mark_offline(user_id: int = Depends(get_current_user_id)):
     """Explicit "went offline" signal, fired on logout and on tab/browser close
     (via a keepalive fetch from `beforeunload`/`pagehide`) so the admin hub reflects
     it immediately instead of waiting out the heartbeat timeout window."""
@@ -37,7 +37,7 @@ async def mark_offline(user_id: int = Depends(get_current_user_id)):
     return {'online': False}
 
 @user_bp.get('/profile')
-async def get_profile(user_id: int = Depends(get_current_user_id)):
+def get_profile(user_id: int = Depends(get_current_user_id)):
     user = User.query.get(user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -51,12 +51,12 @@ async def get_profile(user_id: int = Depends(get_current_user_id)):
     }
 
 @user_bp.put('/profile')
-async def update_profile(request: Request, user_id: int = Depends(get_current_user_id)):
+def update_profile(payload: dict = Body(default=None), user_id: int = Depends(get_current_user_id)):
     user = User.query.get(user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    data = await request.json() or {}
+    data = payload or {}
     
     name = data.get('name')
     country = data.get('country')
@@ -83,7 +83,7 @@ async def update_profile(request: Request, user_id: int = Depends(get_current_us
         raise HTTPException(status_code=500, detail=f"Failed to update profile: {str(e)}")
 
 @user_bp.get('/achievements')
-async def get_achievements(user_id: int = Depends(get_current_user_id)):
+def get_achievements(user_id: int = Depends(get_current_user_id)):
     interviews_taken = Interview.query.filter_by(user_id=user_id, status='completed').count()
     resumes_uploaded = ResumeAnalysis.query.filter_by(user_id=user_id).count()
     
@@ -172,7 +172,7 @@ async def get_achievements(user_id: int = Depends(get_current_user_id)):
     }
 
 @user_bp.post('/profile/picture')
-async def upload_profile_pic(file: UploadFile = File(...), user_id: int = Depends(get_current_user_id)):
+def upload_profile_pic(file: UploadFile = File(...), user_id: int = Depends(get_current_user_id)):
     user = User.query.get(user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -186,7 +186,7 @@ async def upload_profile_pic(file: UploadFile = File(...), user_id: int = Depend
         raise HTTPException(status_code=400, detail="Only PNG, JPG, JPEG, GIF, and WEBP formats are supported.")
         
     try:
-        contents = await file.read()
+        contents = file.file.read()
         public_url = SupabaseService.upload_profile_picture(user_id, contents, filename, content_type)
         
         user.profile_pic_url = public_url

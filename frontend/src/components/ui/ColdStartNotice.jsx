@@ -2,11 +2,15 @@ import { useEffect, useState } from 'react';
 import { onSlowRequestChange } from '../../services/api';
 
 /**
- * Free-tier hosting (Render et al.) spins the backend down after idling and takes
- * 30-50s to wake back up on the next request. Without this, that delay looks
- * indistinguishable from the app being broken. api.js flags any request still
- * pending past a few seconds as a likely cold start; this just surfaces that as a
- * plain, reassuring banner instead of silence.
+ * Surfaces an unusually slow in-flight request so a long wait doesn't look
+ * indistinguishable from the app being broken. api.js flags anything still pending
+ * past its threshold; this renders that as a plain, reassuring banner.
+ *
+ * The wording deliberately no longer mentions the server "waking up". That text was
+ * written for Render's free tier, which really did spin the backend down; on Railway
+ * it never sleeps, so the old copy told candidates the server was asleep whenever a
+ * request was merely slow — alarming and, more to the point, untrue. The banner now
+ * says only what is actually known: the request is still running.
  */
 export default function ColdStartNotice() {
   const [visible, setVisible] = useState(false);
@@ -23,7 +27,7 @@ export default function ColdStartNotice() {
           <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500" />
         </span>
         <p className="text-xs font-medium text-amber-800 dark:text-amber-200">
-          Waking up the server — this can take up to a minute on the first request.
+          Still working — this is taking longer than usual. Please don't close this tab.
         </p>
       </div>
     </div>

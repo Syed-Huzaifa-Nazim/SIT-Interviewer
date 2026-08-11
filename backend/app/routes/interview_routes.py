@@ -6,7 +6,8 @@ import base64
 import tempfile
 import subprocess
 import threading
-from fastapi import APIRouter, Request, HTTPException, status, Depends, UploadFile, File, Form
+import concurrent.futures
+from fastapi import APIRouter, Body, HTTPException, status, Depends, UploadFile, File, Form
 from sqlalchemy import text
 from app.database.db import db
 from app.models import (
@@ -22,6 +23,35 @@ from app.utils.candidate import question_time_limit
 from app.utils.supabase_service import SupabaseService
 
 interview_bp = APIRouter()
+
+# ---------------------------------------------------------------------------------------
+# Why every handler below is `def` and not `async def`
+#
+# Nothing in this file is actually asynchronous: the database is synchronous SQLAlchemy,
+# Supabase Storage is called with blocking `requests`, and the LLM/Whisper services block
+# on network I/O. A FastAPI handler declared `async def` runs ON the event loop, so a
+# blocking body there stops the loop — and the app is a SINGLE uvicorn process, so that
+# means the entire backend serves exactly one request at a time while every other
+# candidate's request waits in line.
+#
+# That is not theoretical. Every candidate POSTs a session-recording slice to
+# /upload-video-part every 30 seconds, and that handler blocks on a multi-megabyte upload
+# to Supabase. With a cohort of twenty, an upload is in flight almost continuously and the
+# server is permanently backlogged; /start (two LLM calls) and the final /submit-answer
+# (report generation) freeze it for seconds at a time on top of that. Candidates saw this
+# as every request crawling — the frontend's slow-request banner even mislabelled it as the
+# server "waking up".
+#
+# Declared `def`, FastAPI runs the handler in its worker threadpool instead and the loop
+# stays free, so requests genuinely overlap. The rest of the stack already assumed this:
+# db_session_middleware stamps the session scope before call_next specifically so it
+# propagates into that worker thread, and the connection pool (25 + 35 overflow) is sized
+# well above the threadpool's default 40 workers.
+#
+# Consequence to respect when editing: a `def` handler cannot `await`. Read a JSON body
+# with `payload: dict = Body(...)` and an upload with `file.file.read()` (both synchronous)
+# rather than reintroducing `await request.json()` / `await file.read()`.
+# ---------------------------------------------------------------------------------------
 
 # Interview answer recordings are automatically purged this many days after they are
 # created. Each deletion is stamped on the RecordingLog audit trail.
@@ -204,8 +234,8 @@ def allowed_file(filename: str) -> bool:
     return '.' in filename and filename.rsplit('.', 1)[-1].lower() in Config.ALLOWED_EXTENSIONS
 
 @interview_bp.post('/start')
-async def start_interview(request: Request, user_id: int = Depends(get_current_user_id)):
-    data = await request.json() or {}
+def start_interview(payload: dict = Body(default=None), user_id: int = Depends(get_current_user_id)):
+    data = payload or {}
 
     interview_type = data.get('type')  # technical, HR, behavioral, custom
     job_role = data.get('job_role')
@@ -316,29 +346,39 @@ async def start_interview(request: Request, user_id: int = Depends(get_current_u
         db.session.add(interview)
         db.session.flush()
 
-        # Reverted back to sequential (see below) — the 5 main questions and the 10 MCQs are two
-        # independent LLM calls with no shared state, so running them concurrently via a
-        # ThreadPoolExecutor looked like a safe win on paper (bounded by the slower call, not
-        # their sum). In practice interview creation got noticeably SLOWER after switching to
-        # concurrent calls (~3 minutes instead of the ~30s baseline) — consistent with the LLM
-        # provider throttling/queueing two simultaneous requests from the same API key rather
-        # than truly serving them in parallel, so each one ends up independently hitting its own
-        # retry/timeout logic (Config.LLM_TIMEOUT × Config.LLM_MAX_RETRIES) waiting behind the
-        # other. Sequential calls avoid that contention entirely.
-        questions_list = MixtralService.generate_questions(
-            interview_type=interview_type,
-            job_role=job_role,
-            experience_level=experience_level,
-            difficulty=difficulty,
-            num_questions=num_questions,
-            custom_jd=custom_jd,
-            custom_skills=custom_skills
-        )
-        mcqs_list = MixtralService.generate_mcqs(
-            job_role=job_role,
-            experience_level=experience_level,
-            difficulty=difficulty,
-        )
+        # The 5 main questions and the 10 MCQs are two independent LLM calls with no shared
+        # state — run them CONCURRENTLY (not one after the other) so interview creation takes
+        # as long as the slower of the two, not their sum. Sequential generation was adding
+        # the full MCQ-generation latency on top of the existing question latency, making
+        # "Start Interview" noticeably slower than before the MCQ round existed.
+        #
+        # NOTE: this was briefly reverted to sequential on saqib-colab after concurrent calls
+        # measured ~3 minutes instead of the ~30s sequential baseline — but that testing predated
+        # the interview_routes.py event-loop fix merged in from huzaifa (this route used to be
+        # `async def` running fully synchronous work directly on the event loop, which one theory
+        # says was the actual source of that slowdown: two ThreadPoolExecutor calls contending
+        # with an already-blocked loop, not the LLM provider itself). Restored to concurrent now
+        # that the route is a plain `def` (Starlette runs it in its own worker thread) — re-revert
+        # to sequential if it's still measured slow under the real deployment.
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            questions_future = pool.submit(
+                MixtralService.generate_questions,
+                interview_type=interview_type,
+                job_role=job_role,
+                experience_level=experience_level,
+                difficulty=difficulty,
+                num_questions=num_questions,
+                custom_jd=custom_jd,
+                custom_skills=custom_skills
+            )
+            mcqs_future = pool.submit(
+                MixtralService.generate_mcqs,
+                job_role=job_role,
+                experience_level=experience_level,
+                difficulty=difficulty,
+            )
+            questions_list = questions_future.result()
+            mcqs_list = mcqs_future.result()
 
         # Completed-course candidates open on a hands-on coding-sandbox exercise instead of
         # a verbal question. It REPLACES the generated first question rather than being added
@@ -413,12 +453,12 @@ async def start_interview(request: Request, user_id: int = Depends(get_current_u
         raise HTTPException(status_code=500, detail=f"Failed to initiate interview: {str(e)}")
 
 @interview_bp.get('/history')
-async def get_history(user_id: int = Depends(get_current_user_id)):
+def get_history(user_id: int = Depends(get_current_user_id)):
     interviews = Interview.query.filter_by(user_id=user_id).order_by(Interview.created_at.desc()).all()
     return [i.to_dict() for i in interviews]
 
 @interview_bp.get('/stats/summary')
-async def get_stats_summary(user_id: int = Depends(get_current_user_id)):
+def get_stats_summary(user_id: int = Depends(get_current_user_id)):
     completed_interviews = Interview.query.filter_by(user_id=user_id, status='completed').all()
     total_interviews = len(completed_interviews)
     total_score = sum(i.overall_score for i in completed_interviews if i.overall_score is not None)
@@ -430,7 +470,7 @@ async def get_stats_summary(user_id: int = Depends(get_current_user_id)):
     }
 
 @interview_bp.get('/{interview_id}/details')
-async def get_interview_details(interview_id: int, user_id: int = Depends(get_current_user_id)):
+def get_interview_details(interview_id: int, user_id: int = Depends(get_current_user_id)):
     interview = Interview.query.filter_by(id=interview_id, user_id=user_id).first()
     if not interview:
         raise HTTPException(status_code=404, detail="Interview session not found")
@@ -444,12 +484,13 @@ async def get_interview_details(interview_id: int, user_id: int = Depends(get_cu
     }
 
 @interview_bp.post('/{interview_id}/start-question')
-async def start_question(interview_id: int, request: Request, user_id: int = Depends(get_current_user_id)):
+def start_question(interview_id: int, payload: dict = Body(default=None),
+                   user_id: int = Depends(get_current_user_id)):
     """Anchor the server-side countdown for a question the first time it is presented
     (§2.3 backend-enforced timer). Idempotent: calling it again (e.g. after a page
     reload / reconnect) returns the already-reduced remaining time, so the clock keeps
     running server-side and can't be reset or extended by the client."""
-    data = await request.json() or {}
+    data = payload or {}
     question_id = data.get('question_id')
     if not question_id:
         raise HTTPException(status_code=400, detail="question_id is required")
@@ -475,7 +516,7 @@ async def start_question(interview_id: int, request: Request, user_id: int = Dep
 
 
 @interview_bp.get('/{interview_id}/timer')
-async def get_timer(interview_id: int, question_id: int, user_id: int = Depends(get_current_user_id)):
+def get_timer(interview_id: int, question_id: int, user_id: int = Depends(get_current_user_id)):
     """Lightweight resync endpoint: returns the authoritative remaining time for a
     question so the visual countdown re-aligns to the server after any drift/reconnect."""
     interview = Interview.query.filter_by(id=interview_id, user_id=user_id).first()
@@ -492,7 +533,7 @@ async def get_timer(interview_id: int, question_id: int, user_id: int = Depends(
 
 
 @interview_bp.post('/{interview_id}/upload-video-part')
-async def upload_session_video_part(
+def upload_session_video_part(
     interview_id: int,
     part_index: int = Form(...),
     video: UploadFile = File(...),
@@ -511,7 +552,7 @@ async def upload_session_video_part(
     if not interview:
         raise HTTPException(status_code=404, detail="Interview session not found")
 
-    contents = await video.read()
+    contents = video.file.read()
     if not contents:
         raise HTTPException(status_code=400, detail="Empty video part")
     # Generous per-part ceiling: a 30s slice is a couple of MB, so anything near this is a
@@ -543,7 +584,7 @@ async def upload_session_video_part(
 
 
 @interview_bp.post('/{interview_id}/finalize-video')
-async def finalize_session_video(interview_id: int, user_id: int = Depends(get_current_user_id)):
+def finalize_session_video(interview_id: int, user_id: int = Depends(get_current_user_id)):
     """Join the uploaded parts into the final recording and attach it to the interview.
 
     Safe to call more than once and safe to never call at all: the parts remain in storage
@@ -583,7 +624,7 @@ async def finalize_session_video(interview_id: int, user_id: int = Depends(get_c
 
 
 @interview_bp.post('/{interview_id}/upload-video')
-async def upload_session_video(
+def upload_session_video(
     interview_id: int,
     video: UploadFile = File(...),
     user_id: int = Depends(get_current_user_id)
@@ -621,7 +662,7 @@ async def upload_session_video(
             db.session.rollback()
             print(f"[upload-video] Could not persist failure log for interview {interview_id}: {log_err}")
 
-    contents = await video.read()
+    contents = video.file.read()
     if not contents:
         _log_failed("Empty video payload")
         raise HTTPException(status_code=400, detail="Empty video payload")
@@ -667,7 +708,7 @@ async def upload_session_video(
 
 
 @interview_bp.post('/transcribe')
-async def transcribe_audio(audio: UploadFile = File(...), user_id: int = Depends(get_current_user_id)):
+def transcribe_audio(audio: UploadFile = File(...), user_id: int = Depends(get_current_user_id)):
     """API endpoint to receive raw audio and return transcription quickly."""
     filename = audio.filename
     if not filename or not allowed_file(filename):
@@ -678,7 +719,7 @@ async def transcribe_audio(audio: UploadFile = File(...), user_id: int = Depends
     save_path = os.path.join(Config.UPLOAD_FOLDER, temp_filename)
 
     try:
-        contents = await audio.read()
+        contents = audio.file.read()
         with open(save_path, "wb") as f:
             f.write(contents)
         print(f"[transcribe] Received {len(contents)} bytes of audio from user {user_id}.")
@@ -828,11 +869,41 @@ def _run_answer_scoring(interview_id, question_id, response_id, user_id,
         db.session.remove()
 
 
+def _finalize_report_in_background(interview_id):
+    """Run report finalization off the request thread.
+
+    Scoring an MCQ is instant, but finalizing is not: the last scored answer in an
+    interview triggers _finalize_report_if_ready, which calls the LLM to write the report.
+    MCQs are always the closing round, so that landed on the candidate's very last
+    submit-answer and held the response open for the full generation — the one moment they
+    are most eager to be done. Verbal answers never had this problem because their whole
+    scoring path, finalization included, already runs in a thread.
+
+    Nothing waits on the report here: submit-answer replies scoring_status 'processing' and
+    the report page polls until it exists, which is the same contract the verbal path has
+    always used.
+    """
+    def _worker():
+        try:
+            _finalize_report_if_ready(interview_id)
+        except Exception as e:
+            print(f"[scoring] Report finalization failed for interview {interview_id}: {e}")
+        finally:
+            # Outside the request middleware, so this thread owns its session and must
+            # return the connection itself or it leaks and holds locks (see app/__init__).
+            db.session.remove()
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+
 def _score_mcq_response(response, question):
-    """Grade an MCQ response instantly and deterministically — no LLM call, no background
-    thread, since correctness is just a string comparison against the answer key
+    """Grade an MCQ response instantly and deterministically — no LLM call needed, since
+    correctness is just a string comparison against the answer key
     (question.mcq_correct_index), never exposed to the candidate (see InterviewQuestion.
-    to_dict). A skipped/timed-out MCQ (empty response_text) is simply incorrect."""
+    to_dict). A skipped/timed-out MCQ (empty response_text) is simply incorrect.
+
+    The grade is written synchronously because it is free; only the report generation it
+    may trigger is deferred (see _finalize_report_in_background)."""
     correct_text = None
     try:
         options = json.loads(question.mcq_options or '[]')
@@ -851,7 +922,7 @@ def _score_mcq_response(response, question):
     response.feedback = 'Correct.' if is_correct else 'Incorrect.'
     response.scoring_status = 'scored'
     db.session.commit()
-    _finalize_report_if_ready(question.interview_id)
+    _finalize_report_in_background(question.interview_id)
 
 
 def _finalize_report_if_ready(interview_id):
@@ -964,7 +1035,7 @@ def _finalize_report_if_ready(interview_id):
 
 
 @interview_bp.post('/{interview_id}/submit-answer')
-async def submit_answer(
+def submit_answer(
     interview_id: int,
     question_id: int = Form(...),
     response_text: str = Form(""),
@@ -1026,7 +1097,7 @@ async def submit_answer(
         if filename and allowed_file(filename):
             safe_name = f"user_{user_id}_int_{interview_id}_q_{question_id}_{int(datetime.datetime.utcnow().timestamp())}.webm"
             save_path = os.path.join(Config.UPLOAD_FOLDER, safe_name)
-            contents = await audio.read()
+            contents = audio.file.read()
             with open(save_path, "wb") as f:
                 f.write(contents)
             local_audio_path = save_path
@@ -1130,7 +1201,7 @@ async def submit_answer(
         raise HTTPException(status_code=500, detail=f"Failed to submit response: {str(e)}")
 
 @interview_bp.get('/{interview_id}/report')
-async def get_report(interview_id: int, user_id: int = Depends(get_current_user_id)):
+def get_report(interview_id: int, user_id: int = Depends(get_current_user_id)):
     user = User.query.get(user_id)
     if user.role == 'admin':
         interview = Interview.query.get(interview_id)
@@ -1176,8 +1247,8 @@ async def get_report(interview_id: int, user_id: int = Depends(get_current_user_
     }
 
 @interview_bp.post('/evaluate-code')
-async def evaluate_code(request: Request, user_id: int = Depends(get_current_user_id)):
-    data = await request.json() or {}
+def evaluate_code(payload: dict = Body(default=None), user_id: int = Depends(get_current_user_id)):
+    data = payload or {}
     code = data.get('code', '')
     language = data.get('language', 'python').lower()
     
@@ -1435,7 +1506,8 @@ def check_and_apply_user_ban(user_id):
         db.session.add(sys_log)
 
 @interview_bp.post('/{interview_id}/proctor-log')
-async def log_proctoring_violation(interview_id: int, request: Request, user_id: int = Depends(get_current_user_id)):
+def log_proctoring_violation(interview_id: int, payload: dict = Body(default=None),
+                             user_id: int = Depends(get_current_user_id)):
     interview = Interview.query.filter_by(id=interview_id, user_id=user_id).first()
     
     if not interview:
@@ -1444,7 +1516,7 @@ async def log_proctoring_violation(interview_id: int, request: Request, user_id:
     if interview.status == 'completed':
         return {'message': 'Interview already completed', 'auto_terminate': False}
 
-    data = await request.json() or {}
+    data = payload or {}
     violation_type = data.get('type')
     details = data.get('details', '')
     snapshot_image = data.get('snapshot_image')
@@ -1551,7 +1623,8 @@ async def log_proctoring_violation(interview_id: int, request: Request, user_id:
 
 
 @interview_bp.post('/{interview_id}/proctor-snapshot')
-async def upload_proctor_snapshot(interview_id: int, request: Request, user_id: int = Depends(get_current_user_id)):
+def upload_proctor_snapshot(interview_id: int, payload: dict = Body(default=None),
+                            user_id: int = Depends(get_current_user_id)):
     """Receive a proctoring screenshot of the candidate's actual computer screen (periodic
     monitoring or captured on a suspicious event) and file it in the PRIVATE Supabase
     proctor-snapshots archive. Best-effort and non-blocking: a storage hiccup returns a
@@ -1564,7 +1637,7 @@ async def upload_proctor_snapshot(interview_id: int, request: Request, user_id: 
     # client firing its snapshot for that same violation — rejecting on 'completed' would
     # drop the terminating violation's frame. Archiving it is exactly what we want.
 
-    data = await request.json() or {}
+    data = payload or {}
     image = data.get('image')
     kind = data.get('kind', 'screen')
     label = data.get('label', 'periodic')
@@ -1584,8 +1657,8 @@ async def upload_proctor_snapshot(interview_id: int, request: Request, user_id: 
 
 
 @interview_bp.post('/{interview_id}/identity-failed')
-async def identity_verification_failed(interview_id: int, request: Request,
-                                       user_id: int = Depends(get_current_user_id)):
+def identity_verification_failed(interview_id: int, payload: dict = Body(default=None),
+                                 user_id: int = Depends(get_current_user_id)):
     """Hard-terminate an interview because the person on camera is no longer the person who
     passed the pre-interview identity check.
 
@@ -1600,7 +1673,7 @@ async def identity_verification_failed(interview_id: int, request: Request,
     if interview.status == 'completed':
         return {'message': 'Interview already completed', 'terminated': False}
 
-    data = await request.json() or {}
+    data = payload or {}
     details = (data.get('details') or 'Face on camera did not match the verified candidate.')[:255]
     snapshot_image = data.get('snapshot_image')
 
@@ -1656,13 +1729,14 @@ async def identity_verification_failed(interview_id: int, request: Request,
     return {'message': 'Interview terminated — identity verification failed', 'terminated': True}
 
 @interview_bp.post('/{interview_id}/fail-proctoring')
-async def force_fail_proctoring(interview_id: int, request: Request, user_id: int = Depends(get_current_user_id)):
+def force_fail_proctoring(interview_id: int, payload: dict = Body(default=None),
+                          user_id: int = Depends(get_current_user_id)):
     interview = Interview.query.filter_by(id=interview_id, user_id=user_id).first()
     
     if not interview:
         raise HTTPException(status_code=404, detail="Interview session not found")
 
-    data = await request.json() or {}
+    data = payload or {}
     snapshot_image = data.get('snapshot_image')
     snapshot_description = data.get('snapshot_description', 'Interview manually failed or integrity checkpoint breached.')
 

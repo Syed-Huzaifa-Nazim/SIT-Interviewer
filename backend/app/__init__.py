@@ -41,7 +41,23 @@ def create_app(config_class=Config):
         allow_headers=["*"],
     )
 
-    # Scoped database session cleanup middleware
+    # Scoped database session cleanup middleware.
+    #
+    # This middleware is the one place that has to stay `async` — it wraps call_next. Every
+    # ROUTE HANDLER in app/routes, by contrast, is deliberately declared `def` rather than
+    # `async def`, and new ones must follow suit. Nothing in this app is actually
+    # asynchronous: the ORM is synchronous SQLAlchemy, Supabase Storage is called with
+    # blocking `requests`, candidate code runs under subprocess.run(), password checks are
+    # bcrypt, and the LLM/Whisper/SMTP services all block on network I/O. An `async def`
+    # handler runs those bodies ON the event loop, and the app is a single uvicorn process,
+    # so one of them stalls every other request in flight — a whole cohort mid-interview
+    # queues behind one admin opening a recording, or one candidate's infinite loop hitting
+    # the sandbox timeout. Declared `def`, FastAPI dispatches to its worker threadpool
+    # instead and requests genuinely overlap. The pool in db.py (25 + 35 overflow) is sized
+    # above that threadpool for exactly this reason.
+    #
+    # The practical constraint: a `def` handler cannot await. Take a JSON body with
+    # `payload: dict = Body(default=None)` and read an upload with `file.file.read()`.
     @app.middleware("http")
     async def db_session_middleware(request: Request, call_next):
         # Stamp a per-request session identity BEFORE call_next so it propagates into the

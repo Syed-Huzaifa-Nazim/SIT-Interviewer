@@ -10,7 +10,7 @@ dependency at that point.
 """
 
 import json
-from fastapi import APIRouter, Request, HTTPException, Depends
+from fastapi import APIRouter, Body, HTTPException, Depends
 from app.database.db import db
 from app.models import User, CodeSubmission
 from app.coding.problem_bank import list_problems, get_problem, public_problem, is_sql_problem
@@ -51,12 +51,12 @@ coding_bp = APIRouter()
 
 
 @coding_bp.get('/problems')
-async def get_problems(user: User = Depends(admin_required)):
+def get_problems(user: User = Depends(admin_required)):
     return {'problems': list_problems()}
 
 
 @coding_bp.get('/problems/{problem_id}')
-async def get_single_problem(problem_id: str, user: User = Depends(admin_required)):
+def get_single_problem(problem_id: str, user: User = Depends(admin_required)):
     problem = get_problem(problem_id)
     if not problem:
         raise HTTPException(status_code=404, detail="Coding problem not found")
@@ -68,15 +68,15 @@ async def get_single_problem(problem_id: str, user: User = Depends(admin_require
 # assigned them, so the rest of the sandbox stays admin-only.
 
 @coding_bp.get('/interview-problem/{problem_id}')
-async def get_interview_problem(problem_id: str, user_id: int = Depends(get_current_user_id)):
+def get_interview_problem(problem_id: str, user_id: int = Depends(get_current_user_id)):
     problem = _assigned_problem_or_403(problem_id, user_id)
     return {'problem': public_problem(problem)}
 
 
 @coding_bp.post('/interview-run')
-async def interview_run(request: Request, user_id: int = Depends(get_current_user_id)):
+def interview_run(payload: dict = Body(default=None), user_id: int = Depends(get_current_user_id)):
     """Run the candidate's code against the VISIBLE sample tests only."""
-    data = await request.json() or {}
+    data = payload or {}
     problem = _assigned_problem_or_403(data.get('problem_id'), user_id)
     language = (data.get('language') or '').lower()
     sample_tests = [dict(t, hidden=False) for t in problem.get('sample_tests', [])]
@@ -86,9 +86,9 @@ async def interview_run(request: Request, user_id: int = Depends(get_current_use
 
 
 @coding_bp.post('/interview-submit')
-async def interview_submit(request: Request, user_id: int = Depends(get_current_user_id)):
+def interview_submit(payload: dict = Body(default=None), user_id: int = Depends(get_current_user_id)):
     """Evaluate against ALL tests and persist the submission against the interview."""
-    data = await request.json() or {}
+    data = payload or {}
     problem = _assigned_problem_or_403(data.get('problem_id'), user_id)
     language = (data.get('language') or '').lower()
     code = data.get('code', '')
@@ -159,9 +159,9 @@ def _load_request(problem_id, language):
 
 
 @coding_bp.post('/run')
-async def run_code(request: Request, user: User = Depends(admin_required)):
+def run_code(payload: dict = Body(default=None), user: User = Depends(admin_required)):
     """Run against the visible SAMPLE tests only (no persistence)."""
-    data = await request.json() or {}
+    data = payload or {}
     problem = _load_request(data.get('problem_id'), data.get('language'))
     language = data.get('language').lower()
     code = data.get('code', '')
@@ -173,9 +173,9 @@ async def run_code(request: Request, user: User = Depends(admin_required)):
 
 
 @coding_bp.post('/submit')
-async def submit_code(request: Request, user: User = Depends(admin_required)):
+def submit_code(payload: dict = Body(default=None), user: User = Depends(admin_required)):
     """Evaluate against ALL tests (sample + hidden) and persist the result."""
-    data = await request.json() or {}
+    data = payload or {}
     problem = _load_request(data.get('problem_id'), data.get('language'))
     language = data.get('language').lower()
     code = data.get('code', '')

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request, HTTPException, status, Depends
+from fastapi import APIRouter, Body, HTTPException, status, Depends
 from app.database.db import db
 from app.models import Notification
 from app.utils.security import get_current_user_id
@@ -6,13 +6,13 @@ from app.utils.security import get_current_user_id
 notification_bp = APIRouter()
 
 @notification_bp.get('')
-async def get_notifications(user_id: int = Depends(get_current_user_id)):
+def get_notifications(user_id: int = Depends(get_current_user_id)):
     notifications = Notification.query.filter_by(user_id=user_id).order_by(Notification.created_at.desc()).all()
     return [n.to_dict() for n in notifications]
 
 @notification_bp.post('/read')
-async def mark_as_read(request: Request, user_id: int = Depends(get_current_user_id)):
-    data = await request.json() or {}
+def mark_as_read(payload: dict = Body(default=None), user_id: int = Depends(get_current_user_id)):
+    data = payload or {}
     notification_id = data.get('notification_id')
 
     try:
