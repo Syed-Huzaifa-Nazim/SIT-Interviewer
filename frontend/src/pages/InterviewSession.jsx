@@ -12,6 +12,7 @@ import {
   MULTIPLE_FACES_VOICE_MESSAGE,
   TERMINATION_VOICE_MESSAGE,
   IDENTITY_TERMINATION_VOICE_MESSAGE,
+  INTRO_START_VOICE_MESSAGE,
 } from '../utils/proctorVoiceAlerts';
 import {
   loadFaceApi,
@@ -44,7 +45,8 @@ import {
   ShieldAlert,
   AlertTriangle,
   Timer as TimerIcon,
-  ScanFace
+  ScanFace,
+  CheckCircle2
 } from 'lucide-react';
 
 // Ordered WebM codec candidates for the session recorder, broadest-compatibility-first.
@@ -119,19 +121,41 @@ const InterviewSession = () => {
   // state) so the very first render already opens on the sandbox instead of showing an intro
   // that would then need to be swapped out.
   const openedWithSandbox = questions[0]?.question_type === 'coding_sandbox';
+  // 'ready' is a short "About to begin" gate shown immediately BEFORE the intro card — its own
+  // explicit button, separate from the intro's own "Start Interview" button, so the candidate
+  // gets an unambiguous heads-up that the welcome/rules screen (and its 60s countdown) is about
+  // to start, instead of it just appearing the instant the page mounts.
   const [sessionStage, setSessionStage] = useState(() => {
     const initialQuestions = location.state?.questions || [];
-    return initialQuestions[0]?.question_type === 'coding_sandbox' ? 'questions' : 'intro';
-  }); // 'intro' | 'questions'
+    return initialQuestions[0]?.question_type === 'coding_sandbox' ? 'questions' : 'ready';
+  }); // 'ready' | 'intro' | 'questions'
   const INTRO_DURATION_SECONDS = 60;
   const [introRemaining, setIntroRemaining] = useState(INTRO_DURATION_SECONDS);
   // Guards the intro from showing twice — once up front (normal case) or once right after the
   // opening sandbox (sandbox-first case), but never both, and never again on a later reload.
   const introShownRef = useRef(false);
+  // One-time "the session has started" cue (voice + banner) the moment the intro screen first
+  // appears — see the effect below, near handleStartInterview.
+  const [introStartToast, setIntroStartToast] = useState(false);
+  const introStartAnnouncedRef = useRef(false);
+  // While true, the intro's 60s countdown is paused at its starting value — held for exactly
+  // as long as INTRO_START_VOICE_MESSAGE takes to finish speaking, so the announcement doesn't
+  // eat into the candidate's actual reading time (the countdown used to start ticking the
+  // instant the intro card mounted, running in parallel with the ~5s voice line).
+  const [introCountdownHeld, setIntroCountdownHeld] = useState(false);
 
   // Response modes: 'voice' (default) or 'text'
   const [inputMode, setInputMode] = useState('voice');
   const [typedAnswer, setTypedAnswer] = useState('');
+
+  // MCQ round (§ MCQ round): a click only SELECTS an option (highlighted, not submitted) — a
+  // separate "Submit Answer" button confirms it. selectedMcqOptionRef mirrors the state for
+  // the same reason liveTranscriptRef does below: handleAutoSubmit runs inside a setInterval
+  // closure captured once when the question's timer starts, so reading the state variable
+  // directly there would see whatever was selected (or nothing) at that original render, not
+  // whatever the candidate has since clicked.
+  const [selectedMcqOption, setSelectedMcqOption] = useState(null);
+  const selectedMcqOptionRef = useRef(null);
 
   // Live transcript (§3): accumulated final text + current interim words for the active
   // question. `liveTranscriptRef` mirrors the accumulated finals so async submit handlers
@@ -286,8 +310,11 @@ const InterviewSession = () => {
   // Intro stage countdown — local only (nothing gradeable is at risk here, unlike the
   // per-question timer, so no server anchor is needed). Advances on whichever comes first:
   // this timer reaching 0, or the candidate clicking "Start Interview" (handleStartInterview).
+  // Held at its starting value (introCountdownHeld) while INTRO_START_VOICE_MESSAGE is still
+  // being spoken — see the announce effect below — so the candidate gets the full 60s to
+  // actually read the screen instead of losing several seconds to the announcement.
   useEffect(() => {
-    if (sessionStage !== 'intro') return undefined;
+    if (sessionStage !== 'intro' || introCountdownHeld) return undefined;
     if (introRemaining <= 0) {
       introShownRef.current = true;
       setSessionStage('questions');
@@ -295,7 +322,7 @@ const InterviewSession = () => {
     }
     const t = setTimeout(() => setIntroRemaining((prev) => prev - 1), 1000);
     return () => clearTimeout(t);
-  }, [sessionStage, introRemaining]);
+  }, [sessionStage, introRemaining, introCountdownHeld]);
 
   const handleStartInterview = () => {
     introShownRef.current = true;
@@ -311,8 +338,44 @@ const InterviewSession = () => {
     if (currentIdx < 1) return;
     introShownRef.current = true;
     setIntroRemaining(INTRO_DURATION_SECONDS);
-    setSessionStage('intro');
+    setSessionStage('ready');
   }, [currentIdx, openedWithSandbox]);
+
+  // The 'ready' gate's own button — separate from handleStartInterview below, which starts the
+  // INTERVIEW from the intro card. This one only advances from 'ready' into the intro card
+  // itself, so the candidate gets a deliberate "about to begin" moment first.
+  const handleReadyContinue = () => setSessionStage('intro');
+
+  // Announce the welcome/rules screen the moment it first appears — whether that's at the very
+  // start of the session or, for a sandbox-first candidate, right after the opening sandbox
+  // question — with a spoken line plus a brief on-screen "Interview Started" banner, so the
+  // transition into the session is clearly signalled rather than the card just silently
+  // appearing. Fires at most once per session (introStartAnnouncedRef), since sessionStage only
+  // ever becomes 'intro' once.
+  useEffect(() => {
+    if (sessionStage !== 'intro' || introStartAnnouncedRef.current) return undefined;
+    introStartAnnouncedRef.current = true;
+    setIntroStartToast(true);
+    const toastTimer = setTimeout(() => setIntroStartToast(false), 3500);
+    let safetyTimer = null;
+    if (!isMuted) {
+      // Hold the countdown, then release it the moment the line actually finishes — with a
+      // safety-net timer in case onend/onerror never fires (some browsers are unreliable
+      // here), so a speech-synthesis quirk can never permanently freeze the countdown.
+      setIntroCountdownHeld(true);
+      safetyTimer = setTimeout(() => setIntroCountdownHeld(false), 8000);
+      speakPhrase(INTRO_START_VOICE_MESSAGE, {
+        onEnd: () => {
+          clearTimeout(safetyTimer);
+          setIntroCountdownHeld(false);
+        },
+      });
+    }
+    return () => {
+      clearTimeout(toastTimer);
+      if (safetyTimer) clearTimeout(safetyTimer);
+    };
+  }, [sessionStage, isMuted]);
 
   // 1. Setup Session Timers
   useEffect(() => {
@@ -500,8 +563,19 @@ const InterviewSession = () => {
     // this is just a small top-up, not the primary wait — on a slow/cold-started backend the
     // network call itself already took far longer than the voice line needs to finish playing.
     await new Promise((r) => setTimeout(r, 400));
-    await uploadSessionVideo();
+    // Mirrors the 5-strike termination path below: flush the last recorder chunk with a short
+    // bounded wait, THEN fire the full video finalize/upload in the BACKGROUND (not awaited).
+    // This used to `await uploadSessionVideo()` directly — that call ends in a POST to
+    // /finalize-video with up to a 180s timeout and up to 3 retries, which could keep the
+    // candidate stuck on this termination screen for minutes while the video finished
+    // assembling server-side. The slices are already safe in storage the moment they're
+    // uploaded, so nothing is lost by not waiting here.
+    await Promise.race([
+      (async () => { await finalizeSessionVideo(); flushVideoPart(); await partQueueRef.current; })(),
+      new Promise((r) => setTimeout(r, 4000)),
+    ]);
     stopCamera();
+    uploadSessionVideo();
     clearBaseline();
     navigate(`/interview/report/${id}`, { state: { proctorFailed: true }, replace: true });
   };
@@ -1515,6 +1589,8 @@ const InterviewSession = () => {
     setLiveTranscript('');
     setInterimText('');
     setTypedAnswer('');
+    selectedMcqOptionRef.current = null;
+    setSelectedMcqOption(null);
     audioChunksRef.current = [];
     setHasRecorded(false);
     faceBadSinceRef.current = null;
@@ -1882,12 +1958,14 @@ const InterviewSession = () => {
   };
 
   const handleAutoSubmit = () => {
-    // Timer expired — submit whatever exists (a skip if empty). An unanswered MCQ always
-    // submits a clean empty string via overrideText (bypassing voice/text state entirely,
-    // same reasoning as the sandbox's submitAnswerWithText) rather than risking stale
-    // leftover text/voice state from a previous question type being sent as the "answer".
+    // Timer expired — submit whatever exists (a skip if empty). An MCQ submits whichever
+    // option was selected (selectedMcqOptionRef — see its declaration for why a ref, not the
+    // state, is read here) via overrideText, same as clicking "Submit Answer" would; an
+    // unanswered one submits a clean empty string, bypassing voice/text state entirely (same
+    // reasoning as the sandbox's submitAnswerWithText) rather than risking stale leftover
+    // text/voice state from a previous question type being sent as the "answer".
     if (isMcqQuestion) {
-      submitAnswer({ timedOut: true, overrideText: '' });
+      submitAnswer({ timedOut: true, overrideText: selectedMcqOptionRef.current || '' });
     } else {
       submitAnswer({ timedOut: true });
     }
@@ -2012,6 +2090,74 @@ const InterviewSession = () => {
     </>
   );
 
+  if (sessionStage === 'ready') {
+    // A short, deliberate "about to begin" gate shown BEFORE the intro card (see the
+    // sessionStage declaration for why) — its own explicit button, not a countdown, so the
+    // candidate has to consciously choose to proceed rather than the welcome/rules screen and
+    // its 60s timer just appearing the instant the page mounts.
+    return (
+      <div className="max-w-lg mx-auto animate-fade-in">
+        {proctorAlertsUI}
+        <video ref={screenVideoRef} autoPlay playsInline muted className="hidden" aria-hidden="true" />
+        <Card padding={false} className="overflow-hidden">
+          <div className="px-6 md:px-8 pt-8 pb-4 text-center space-y-1">
+            <span className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-widest text-primary-600 dark:text-primary-400">
+              <Sparkles size={12} /> Interview Session
+            </span>
+            <h1 className="text-xl md:text-2xl font-extrabold text-slate-900 dark:text-white">
+              You're All Set
+            </h1>
+            <p className="text-sm text-slate-500 dark:text-slate-400 max-w-sm mx-auto leading-relaxed">
+              Your camera is live below. When you're ready, continue to see your interview details before it begins.
+            </p>
+          </div>
+
+          <div className="px-6 md:px-8 pb-6">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                Camera Preview
+              </span>
+              {cameraOn && (
+                <span className="inline-flex items-center gap-1.5 text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
+                  <span className="relative flex h-1.5 w-1.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                    <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500" />
+                  </span>
+                  Live
+                </span>
+              )}
+            </div>
+            <div className="relative aspect-video max-h-56 mx-auto rounded-xl bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 overflow-hidden flex items-center justify-center">
+              {cameraOn ? (
+                <video
+                  ref={attachVideoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  onLoadedMetadata={(e) => {
+                    e.target.play().catch(err => console.log("Metadata play error:", err));
+                  }}
+                  className="w-full h-full object-cover scale-x-[-1]"
+                />
+              ) : (
+                <div className="text-center space-y-1.5 text-slate-400 dark:text-slate-600 py-6">
+                  <CameraOff size={24} className="mx-auto" />
+                  <span className="text-xs font-semibold block text-slate-500 dark:text-slate-400">Camera Feed Off</span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="px-6 md:px-8 py-4 bg-slate-50 dark:bg-slate-900/60 border-t border-slate-200 dark:border-slate-800">
+            <Button onClick={handleReadyContinue} className="w-full">
+              Continue
+            </Button>
+          </div>
+        </Card>
+      </div>
+    );
+  }
+
   if (sessionStage === 'intro') {
     // Reflects what's actually LEFT from here, not the interview's original total — matters
     // for the sandbox-first candidate (openedWithSandbox), who sees this screen after Question
@@ -2042,6 +2188,14 @@ const InterviewSession = () => {
     return (
       <div className="max-w-3xl mx-auto animate-fade-in">
         {proctorAlertsUI}
+        {/* One-time "session started" cue — paired with the spoken INTRO_START_VOICE_MESSAGE
+            (see the effect that sets introStartToast) — auto-dismisses on its own. */}
+        {introStartToast && (
+          <div className="fixed top-5 left-1/2 -translate-x-1/2 z-[75] px-5 py-3.5 bg-emerald-600 border-2 border-emerald-300 text-white rounded-xl text-sm font-bold flex items-center gap-2.5 shadow-2xl shadow-emerald-950/40 max-w-[92vw] animate-fade-in">
+            <CheckCircle2 className="shrink-0" size={18} />
+            <span>Interview Started — review the details below.</span>
+          </div>
+        )}
         <video ref={screenVideoRef} autoPlay playsInline muted className="hidden" aria-hidden="true" />
         <Card padding={false} className="overflow-hidden">
           {/* Header band */}
@@ -2431,25 +2585,50 @@ const InterviewSession = () => {
                   }}
                 />
               ) : isMcqQuestion ? (
-                // Single-select MCQ (§ MCQ round): clicking an option submits it immediately
-                // via the same overrideText path the sandbox uses above — no separate confirm
-                // step, consistent with the tight 1-minute-per-question pacing. The forward-
-                // only question loop this file already has (currentIdx only ever advances)
-                // is what satisfies "no going back" — nothing extra needed for that here.
+                // Single-select MCQ (§ MCQ round): clicking an option only SELECTS it
+                // (highlighted below) — it does not submit by itself. A candidate confirms
+                // with the "Submit Answer" button, matching every other question type's
+                // explicit-submit pattern instead of a bare click silently locking in an
+                // answer. If the timer runs out first, handleAutoSubmit submits whichever
+                // option is currently selected (or an empty skip if none is). The forward-only
+                // question loop this file already has (currentIdx only ever advances) is what
+                // satisfies "no going back" — nothing extra needed for that here.
                 <div className="w-full max-w-lg space-y-3">
-                  {(activeQuestion.mcq_options || []).map((option, idx) => (
-                    <button
-                      key={idx}
-                      disabled={loading}
-                      onClick={() => submitAnswerWithText(option)}
-                      className="w-full text-left px-5 py-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-primary-500 hover:bg-primary-50/60 dark:hover:bg-primary-500/5 disabled:opacity-50 disabled:cursor-not-allowed transition font-medium text-slate-700 dark:text-slate-200"
-                    >
-                      <span className="inline-flex items-center justify-center w-6 h-6 mr-3 rounded-full bg-slate-100 dark:bg-slate-800 text-[11px] font-bold text-slate-500 dark:text-slate-400 align-middle">
-                        {String.fromCharCode(65 + idx)}
-                      </span>
-                      {option}
-                    </button>
-                  ))}
+                  {(activeQuestion.mcq_options || []).map((option, idx) => {
+                    const isSelected = selectedMcqOption === option;
+                    return (
+                      <button
+                        key={idx}
+                        disabled={loading}
+                        onClick={() => {
+                          selectedMcqOptionRef.current = option;
+                          setSelectedMcqOption(option);
+                        }}
+                        className={`w-full text-left px-5 py-4 rounded-xl border transition font-medium disabled:opacity-50 disabled:cursor-not-allowed ${
+                          isSelected
+                            ? 'border-primary-500 bg-primary-50/80 dark:bg-primary-500/10 text-slate-900 dark:text-white ring-1 ring-primary-500'
+                            : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-primary-500 hover:bg-primary-50/60 dark:hover:bg-primary-500/5 text-slate-700 dark:text-slate-200'
+                        }`}
+                      >
+                        <span className={`inline-flex items-center justify-center w-6 h-6 mr-3 rounded-full text-[11px] font-bold align-middle ${
+                          isSelected
+                            ? 'bg-primary-500 text-white'
+                            : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'
+                        }`}>
+                          {String.fromCharCode(65 + idx)}
+                        </span>
+                        {option}
+                      </button>
+                    );
+                  })}
+                  <Button
+                    onClick={() => submitAnswerWithText(selectedMcqOption)}
+                    disabled={loading || !selectedMcqOption}
+                    icon={Send}
+                    className="w-full"
+                  >
+                    Submit Answer
+                  </Button>
                 </div>
               ) : (
                 <div className="flex flex-col items-center space-y-5 w-full max-w-lg">
