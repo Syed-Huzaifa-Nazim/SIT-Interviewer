@@ -6,7 +6,6 @@ import base64
 import tempfile
 import subprocess
 import threading
-import concurrent.futures
 from fastapi import APIRouter, Request, HTTPException, status, Depends, UploadFile, File, Form
 from sqlalchemy import text
 from app.database.db import db
@@ -317,30 +316,29 @@ async def start_interview(request: Request, user_id: int = Depends(get_current_u
         db.session.add(interview)
         db.session.flush()
 
-        # The 5 main questions and the 10 MCQs are two independent LLM calls with no shared
-        # state — run them CONCURRENTLY (not one after the other) so interview creation takes
-        # as long as the slower of the two, not their sum. Sequential generation was adding
-        # the full MCQ-generation latency on top of the existing question latency, making
-        # "Start Interview" noticeably slower than before the MCQ round existed.
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-            questions_future = pool.submit(
-                MixtralService.generate_questions,
-                interview_type=interview_type,
-                job_role=job_role,
-                experience_level=experience_level,
-                difficulty=difficulty,
-                num_questions=num_questions,
-                custom_jd=custom_jd,
-                custom_skills=custom_skills
-            )
-            mcqs_future = pool.submit(
-                MixtralService.generate_mcqs,
-                job_role=job_role,
-                experience_level=experience_level,
-                difficulty=difficulty,
-            )
-            questions_list = questions_future.result()
-            mcqs_list = mcqs_future.result()
+        # Reverted back to sequential (see below) — the 5 main questions and the 10 MCQs are two
+        # independent LLM calls with no shared state, so running them concurrently via a
+        # ThreadPoolExecutor looked like a safe win on paper (bounded by the slower call, not
+        # their sum). In practice interview creation got noticeably SLOWER after switching to
+        # concurrent calls (~3 minutes instead of the ~30s baseline) — consistent with the LLM
+        # provider throttling/queueing two simultaneous requests from the same API key rather
+        # than truly serving them in parallel, so each one ends up independently hitting its own
+        # retry/timeout logic (Config.LLM_TIMEOUT × Config.LLM_MAX_RETRIES) waiting behind the
+        # other. Sequential calls avoid that contention entirely.
+        questions_list = MixtralService.generate_questions(
+            interview_type=interview_type,
+            job_role=job_role,
+            experience_level=experience_level,
+            difficulty=difficulty,
+            num_questions=num_questions,
+            custom_jd=custom_jd,
+            custom_skills=custom_skills
+        )
+        mcqs_list = MixtralService.generate_mcqs(
+            job_role=job_role,
+            experience_level=experience_level,
+            difficulty=difficulty,
+        )
 
         # Completed-course candidates open on a hands-on coding-sandbox exercise instead of
         # a verbal question. It REPLACES the generated first question rather than being added
