@@ -2,7 +2,7 @@ import re
 import base64
 import datetime
 from typing import Optional
-from fastapi import APIRouter, Request, HTTPException, status, Depends
+from fastapi import APIRouter, Body, HTTPException, status, Depends
 from sqlalchemy import or_, func, case
 from app.database.db import db
 from app.models import (
@@ -52,7 +52,7 @@ def _user_directory(user_ids=None):
     return {u.id: u for u in query.all()}
 
 @admin_bp.get('/stats')
-async def get_stats(user: User = Depends(admin_required)):
+def get_stats(user: User = Depends(admin_required)):
     # Each of these used to be its own round trip: six separate COUNTs, plus the whole
     # transactions and tokens tables pulled into Python just to be summed. Aggregating in
     # SQL collapses that to one trip per table and moves the arithmetic to the database,
@@ -123,7 +123,7 @@ async def get_stats(user: User = Depends(admin_required)):
     }
 
 @admin_bp.get('/users')
-async def list_users(user: User = Depends(admin_required)):
+def list_users(user: User = Depends(admin_required)):
     # Three queries total, not two per user. This endpoint used to issue one Token lookup
     # and one Interview lookup for every row — 89 round trips for 44 candidates, which at
     # Singapore-to-Mumbai latency is over five seconds of pure waiting.
@@ -166,7 +166,7 @@ async def list_users(user: User = Depends(admin_required)):
 
 
 @admin_bp.get('/users/{target_user_id}')
-async def get_user_detail(target_user_id: int, user: User = Depends(admin_required)):
+def get_user_detail(target_user_id: int, user: User = Depends(admin_required)):
     """Single-candidate fetch for the Admin Hub profile page — same shape as one row of
     GET /users, so a direct load/refresh/bookmark of the profile page doesn't need the
     full list re-fetched just to find one row."""
@@ -190,7 +190,7 @@ async def get_user_detail(target_user_id: int, user: User = Depends(admin_requir
 
 
 @admin_bp.get('/users/{target_user_id}/proctoring')
-async def get_user_proctoring(target_user_id: int, user: User = Depends(admin_required)):
+def get_user_proctoring(target_user_id: int, user: User = Depends(admin_required)):
     """Admin-only: the proctoring snapshot + summary for a candidate's most recent
     interview. A camera snapshot is captured both when an interview is completed and
     when it is auto-terminated for a proctoring breach, so this drives the review panel
@@ -223,7 +223,7 @@ async def get_user_proctoring(target_user_id: int, user: User = Depends(admin_re
 
 
 @admin_bp.put('/users/{target_user_id}/profile')
-async def update_user_profile(target_user_id: int, request: Request, user: User = Depends(admin_required)):
+def update_user_profile(target_user_id: int, payload: dict = Body(default=None), user: User = Depends(admin_required)):
     """Full candidate profile editing (§4.1) — including course status, which only
     an admin may change after signup (§2.2)."""
     target = User.query.get(target_user_id)
@@ -232,7 +232,7 @@ async def update_user_profile(target_user_id: int, request: Request, user: User 
     if target.role == 'admin' and target.id != user.id:
         raise HTTPException(status_code=400, detail="Cannot edit another administrator's account")
 
-    data = await request.json() or {}
+    data = payload or {}
     changes = []
 
     if data.get('name'):
@@ -307,7 +307,7 @@ async def update_user_profile(target_user_id: int, request: Request, user: User 
 
 
 @admin_bp.post('/users/{target_user_id}/send-interview-invite')
-async def send_interview_invite(target_user_id: int, user: User = Depends(admin_required)):
+def send_interview_invite(target_user_id: int, user: User = Depends(admin_required)):
     """Issue (or re-issue) one-time interview credentials to a completed-course
     candidate (§2.2 confirmed workflow: admin manually triggers the OTP email).
 
@@ -364,7 +364,7 @@ async def send_interview_invite(target_user_id: int, user: User = Depends(admin_
 
 
 @admin_bp.get('/reinterview-requests')
-async def list_reinterview_requests(user_id: Optional[int] = None, user: User = Depends(admin_required)):
+def list_reinterview_requests(user_id: Optional[int] = None, user: User = Depends(admin_required)):
     """Approval queue for second-interview attempts (§4.3). Optional user_id scopes this to
     one candidate's approval history (cross-linked from their profile)."""
     requests_query = SecondInterviewRequest.query
@@ -422,7 +422,7 @@ async def list_reinterview_requests(user_id: Optional[int] = None, user: User = 
 
 
 @admin_bp.post('/reinterview-requests/{request_id}/decision')
-async def decide_reinterview_request(request_id: int, request: Request, user: User = Depends(admin_required)):
+def decide_reinterview_request(request_id: int, payload: dict = Body(default=None), user: User = Depends(admin_required)):
     """Approve → fresh one-time credentials emailed; Reject → ineligibility email (§3.4)."""
     req = SecondInterviewRequest.query.get(request_id)
     if not req:
@@ -430,7 +430,7 @@ async def decide_reinterview_request(request_id: int, request: Request, user: Us
     if req.status != 'pending':
         raise HTTPException(status_code=400, detail=f"This request has already been {req.status}")
 
-    data = await request.json() or {}
+    data = payload or {}
     decision = (data.get('decision') or '').lower()
     if decision not in ('approve', 'reject'):
         raise HTTPException(status_code=400, detail="Decision must be 'approve' or 'reject'")
@@ -475,14 +475,14 @@ async def decide_reinterview_request(request_id: int, request: Request, user: Us
 
 
 @admin_bp.get('/email-logs')
-async def list_email_logs(user: User = Depends(admin_required)):
+def list_email_logs(user: User = Depends(admin_required)):
     """Outbound email audit (§1): failed sends surface here instead of dying silently."""
     logs = EmailLog.query.order_by(EmailLog.created_at.desc()).limit(200).all()
     return [l.to_dict() for l in logs]
 
 
 @admin_bp.get('/recording-logs')
-async def list_recording_logs(user: User = Depends(admin_required)):
+def list_recording_logs(user: User = Depends(admin_required)):
     """Interview-recording lifecycle audit: when each answer recording was created and,
     once the retention window elapses, when it was automatically deleted."""
     logs = RecordingLog.query.order_by(RecordingLog.created_at.desc()).limit(300).all()
@@ -490,7 +490,7 @@ async def list_recording_logs(user: User = Depends(admin_required)):
 
 
 @admin_bp.get('/pending-actions/count')
-async def pending_actions_count(user: User = Depends(admin_required)):
+def pending_actions_count(user: User = Depends(admin_required)):
     """Counts for the in-portal admin badge (Update §4) — replaces admin email alerts."""
     reinterview_pending = SecondInterviewRequest.query.filter_by(status='pending').count()
     return {
@@ -544,19 +544,19 @@ def _send_post_interview_email(target_user_id, admin, kind):
 
 
 @admin_bp.post('/users/{target_user_id}/send-clearance')
-async def send_clearance_email(target_user_id: int, user: User = Depends(admin_required)):
+def send_clearance_email(target_user_id: int, user: User = Depends(admin_required)):
     """'Send Clearance Email' (Update §5): informs the candidate/instructor they cleared."""
     return _send_post_interview_email(target_user_id, user, 'clearance')
 
 
 @admin_bp.post('/users/{target_user_id}/send-hr-invite')
-async def send_hr_invite_email(target_user_id: int, user: User = Depends(admin_required)):
+def send_hr_invite_email(target_user_id: int, user: User = Depends(admin_required)):
     """'Send HR Assessment Invite' (Update §5): distinct next-stage HR invitation."""
     return _send_post_interview_email(target_user_id, user, 'hr_invite')
 
 
 @admin_bp.post('/users/{target_user_id}/send-proctor-snapshot')
-async def send_proctor_snapshot_email(target_user_id: int, user: User = Depends(admin_required)):
+def send_proctor_snapshot_email(target_user_id: int, user: User = Depends(admin_required)):
     """Email the candidate their proctoring camera snapshot (attached) along with a
     termination + 30-day-block notice. Uses the snapshot from the candidate's most
     recent interview report."""
@@ -619,7 +619,7 @@ async def send_proctor_snapshot_email(target_user_id: int, user: User = Depends(
     return {'message': f'Proctoring snapshot emailed to {target.email}'}
 
 @admin_bp.post('/users/{target_user_id}/ban')
-async def toggle_ban(target_user_id: int, user: User = Depends(admin_required)):
+def toggle_ban(target_user_id: int, user: User = Depends(admin_required)):
     admin_id = user.id
     target_user = User.query.get(target_user_id)
 
@@ -652,9 +652,9 @@ async def toggle_ban(target_user_id: int, user: User = Depends(admin_required)):
         raise HTTPException(status_code=500, detail=f"Failed to update user status: {str(e)}")
 
 @admin_bp.post('/users/{target_user_id}/tokens')
-async def override_tokens(target_user_id: int, request: Request, user: User = Depends(admin_required)):
+def override_tokens(target_user_id: int, payload: dict = Body(default=None), user: User = Depends(admin_required)):
     admin_id = user.id
-    data = await request.json() or {}
+    data = payload or {}
     new_balance = data.get('tokens_available')
 
     if new_balance is None or int(new_balance) < 0:
@@ -779,7 +779,7 @@ def _anonymize_user_in_logs(target):
 
 
 @admin_bp.delete('/users/{target_user_id}')
-async def delete_user(target_user_id: int, user: User = Depends(admin_required)):
+def delete_user(target_user_id: int, user: User = Depends(admin_required)):
     """Permanently delete a candidate/instructor account and ALL their data — database
     rows AND Supabase Storage files (Cascade §4). Admin accounts are hard-blocked.
 
@@ -862,7 +862,7 @@ def _delete_record(model, record_id, admin, label, action, pre_delete=None):
 
 
 @admin_bp.delete('/interviews/{interview_id}')
-async def delete_interview(interview_id: int, user: User = Depends(admin_required)):
+def delete_interview(interview_id: int, user: User = Depends(admin_required)):
     """Delete an interview and its questions/responses/report (ORM cascade), plus its
     stored media — answer audio, session video and proctoring snapshots — from Supabase
     Storage (Cascade §4). Detaches any feedback / code submissions that referenced it so
@@ -899,37 +899,37 @@ async def delete_interview(interview_id: int, user: User = Depends(admin_require
 
 
 @admin_bp.delete('/feedback/{feedback_id}')
-async def delete_feedback(feedback_id: int, user: User = Depends(admin_required)):
+def delete_feedback(feedback_id: int, user: User = Depends(admin_required)):
     return _delete_record(Feedback, feedback_id, user, 'Feedback', 'DELETE_FEEDBACK')
 
 
 @admin_bp.delete('/transactions/{transaction_id}')
-async def delete_transaction(transaction_id: int, user: User = Depends(admin_required)):
+def delete_transaction(transaction_id: int, user: User = Depends(admin_required)):
     return _delete_record(Transaction, transaction_id, user, 'Transaction', 'DELETE_TRANSACTION')
 
 
 @admin_bp.delete('/logs/{log_id}')
-async def delete_admin_log(log_id: int, user: User = Depends(admin_required)):
+def delete_admin_log(log_id: int, user: User = Depends(admin_required)):
     return _delete_record(AdminLog, log_id, user, 'Audit log', 'DELETE_ADMIN_LOG')
 
 
 @admin_bp.delete('/email-logs/{log_id}')
-async def delete_email_log(log_id: int, user: User = Depends(admin_required)):
+def delete_email_log(log_id: int, user: User = Depends(admin_required)):
     return _delete_record(EmailLog, log_id, user, 'Email log', 'DELETE_EMAIL_LOG')
 
 
 @admin_bp.delete('/recording-logs/{log_id}')
-async def delete_recording_log(log_id: int, user: User = Depends(admin_required)):
+def delete_recording_log(log_id: int, user: User = Depends(admin_required)):
     return _delete_record(RecordingLog, log_id, user, 'Recording log', 'DELETE_RECORDING_LOG')
 
 
 @admin_bp.delete('/reinterview-requests/{request_id}')
-async def delete_reinterview_request(request_id: int, user: User = Depends(admin_required)):
+def delete_reinterview_request(request_id: int, user: User = Depends(admin_required)):
     return _delete_record(SecondInterviewRequest, request_id, user, 'Second-interview request', 'DELETE_REINTERVIEW_REQUEST')
 
 
 @admin_bp.get('/proctor-snapshots')
-async def list_proctor_snapshots(
+def list_proctor_snapshots(
     interview_id: Optional[int] = None,
     user_id: Optional[int] = None,
     user: User = Depends(admin_required)
@@ -952,7 +952,7 @@ async def list_proctor_snapshots(
 
 
 @admin_bp.get('/proctor-snapshots/{snapshot_id}/url')
-async def get_proctor_snapshot_url(snapshot_id: int, user: User = Depends(admin_required)):
+def get_proctor_snapshot_url(snapshot_id: int, user: User = Depends(admin_required)):
     """Short-lived signed URL to view one archived proctoring image. These are sensitive
     (a candidate's camera/screen), so they are never public — this is the only way in."""
     from app.utils.supabase_service import SupabaseService
@@ -966,7 +966,7 @@ async def get_proctor_snapshot_url(snapshot_id: int, user: User = Depends(admin_
 
 
 @admin_bp.delete('/proctor-snapshots/{snapshot_id}')
-async def delete_proctor_snapshot(snapshot_id: int, user: User = Depends(admin_required)):
+def delete_proctor_snapshot(snapshot_id: int, user: User = Depends(admin_required)):
     """Permanently remove one archived proctoring image — both the stored file and its
     index row (Cascade §4: a DB delete can't reach Supabase Storage, so do it here)."""
     from app.utils.supabase_service import SupabaseService
@@ -987,7 +987,7 @@ async def delete_proctor_snapshot(snapshot_id: int, user: User = Depends(admin_r
 
 
 @admin_bp.post('/interviews/{interview_id}/assemble-recording')
-async def assemble_interview_recording(interview_id: int, user: User = Depends(admin_required)):
+def assemble_interview_recording(interview_id: int, user: User = Depends(admin_required)):
     """Rebuild a session recording from the slices the candidate's browser uploaded.
 
     The candidate's own finalize call is the normal path, but it runs at the moment they are
@@ -1032,7 +1032,7 @@ async def assemble_interview_recording(interview_id: int, user: User = Depends(a
 
 
 @admin_bp.get('/interviews/{interview_id}/video-url')
-async def get_interview_video_url(interview_id: int, user: User = Depends(admin_required)):
+def get_interview_video_url(interview_id: int, user: User = Depends(admin_required)):
     """Admin-only playback of a session recording (DB Integration §2.2): returns a
     short-lived signed URL into the PRIVATE interview-recordings bucket. Recordings are
     never publicly reachable — this is the only way they're served."""
@@ -1049,7 +1049,7 @@ async def get_interview_video_url(interview_id: int, user: User = Depends(admin_
 
 
 @admin_bp.get('/interviews')
-async def list_interviews(user_id: Optional[int] = None, user: User = Depends(admin_required)):
+def list_interviews(user_id: Optional[int] = None, user: User = Depends(admin_required)):
     query = Interview.query
     if user_id is not None:
         query = query.filter_by(user_id=user_id)
@@ -1065,7 +1065,7 @@ async def list_interviews(user_id: Optional[int] = None, user: User = Depends(ad
     return interviews_list
 
 @admin_bp.get('/transactions')
-async def list_transactions(user: User = Depends(admin_required)):
+def list_transactions(user: User = Depends(admin_required)):
     transactions = Transaction.query.order_by(Transaction.created_at.desc()).all()
     users = _user_directory(t.user_id for t in transactions)
     tx_list = []
@@ -1078,7 +1078,7 @@ async def list_transactions(user: User = Depends(admin_required)):
     return tx_list
 
 @admin_bp.get('/feedback')
-async def list_feedbacks(user: User = Depends(admin_required)):
+def list_feedbacks(user: User = Depends(admin_required)):
     feedbacks = Feedback.query.order_by(Feedback.created_at.desc()).all()
     users = _user_directory(f.user_id for f in feedbacks)
     interview_ids = {f.interview_id for f in feedbacks if f.interview_id}
@@ -1103,7 +1103,7 @@ async def list_feedbacks(user: User = Depends(admin_required)):
     return feedbacks_list
 
 @admin_bp.get('/logs')
-async def list_logs(user: User = Depends(admin_required)):
+def list_logs(user: User = Depends(admin_required)):
     logs = AdminLog.query.order_by(AdminLog.created_at.desc()).all()
     admins = _user_directory(l.admin_id for l in logs)
     logs_list = []
@@ -1125,7 +1125,7 @@ def _is_flagged(response):
 
 
 @admin_bp.get('/scoring/analytics')
-async def scoring_analytics(user: User = Depends(admin_required)):
+def scoring_analytics(user: User = Depends(admin_required)):
     """Aggregate view of how the LLM has been scoring interviews (§7).
 
     Built entirely from the persisted per-question evaluation data (score, confidence,
@@ -1200,7 +1200,7 @@ async def scoring_analytics(user: User = Depends(admin_required)):
 
 
 @admin_bp.get('/scoring/interviews/{interview_id}')
-async def scoring_interview_detail(interview_id: int, user: User = Depends(admin_required)):
+def scoring_interview_detail(interview_id: int, user: User = Depends(admin_required)):
     """Per-question breakdown for one interview: question, transcript, score, rationale (§7)."""
     itv = Interview.query.get(interview_id)
     if not itv:

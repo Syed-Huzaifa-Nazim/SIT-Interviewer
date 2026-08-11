@@ -2,7 +2,7 @@ import os
 import datetime
 import json
 import re
-from fastapi import APIRouter, Request, HTTPException, status, Depends, UploadFile, File
+from fastapi import APIRouter, Body, HTTPException, status, Depends, UploadFile, File
 from app.database.db import db
 from app.models import ResumeAnalysis, JdAnalysis, User, Notification
 from app.ai.mixtral.mixtral_service import MixtralService
@@ -17,7 +17,7 @@ def clean_filename(filename: str) -> str:
     return re.sub(r'[^a-zA-Z0-9_.-]', '_', filename)
 
 @resume_jd_bp.post('/analyze-resume')
-async def analyze_resume(resume: UploadFile = File(...), user_id: int = Depends(get_current_user_id)):
+def analyze_resume(resume: UploadFile = File(...), user_id: int = Depends(get_current_user_id)):
     filename = resume.filename
     if not filename:
         raise HTTPException(status_code=400, detail="No file uploaded")
@@ -33,7 +33,7 @@ async def analyze_resume(resume: UploadFile = File(...), user_id: int = Depends(
 
     try:
         # Save file to disk
-        contents = await resume.read()
+        contents = resume.file.read()
         with open(file_path, "wb") as f:
             f.write(contents)
 
@@ -106,8 +106,8 @@ async def analyze_resume(resume: UploadFile = File(...), user_id: int = Depends(
         raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
 
 @resume_jd_bp.post('/analyze-jd')
-async def analyze_jd(request: Request, user_id: int = Depends(get_current_user_id)):
-    data = await request.json() or {}
+def analyze_jd(payload: dict = Body(default=None), user_id: int = Depends(get_current_user_id)):
+    data = payload or {}
     jd_text = data.get('jd_text', '')
 
     if not jd_text or len(jd_text.strip()) < 30:
@@ -135,8 +135,8 @@ async def analyze_jd(request: Request, user_id: int = Depends(get_current_user_i
         raise HTTPException(status_code=500, detail=f"JD analysis failed: {str(e)}")
 
 @resume_jd_bp.post('/match')
-async def match_resume_jd(request: Request, user_id: int = Depends(get_current_user_id)):
-    data = await request.json() or {}
+def match_resume_jd(payload: dict = Body(default=None), user_id: int = Depends(get_current_user_id)):
+    data = payload or {}
     resume_text = data.get('resume_text', '')
     jd_text = data.get('jd_text', '')
 
@@ -187,7 +187,7 @@ async def match_resume_jd(request: Request, user_id: int = Depends(get_current_u
     return match_result
 
 @resume_jd_bp.post('/extract-file-text')
-async def extract_file_text(file: UploadFile = File(...), user_id: int = Depends(get_current_user_id)):
+def extract_file_text(file: UploadFile = File(...), user_id: int = Depends(get_current_user_id)):
     filename = file.filename
     if not filename:
         raise HTTPException(status_code=400, detail="No file uploaded")
@@ -201,7 +201,7 @@ async def extract_file_text(file: UploadFile = File(...), user_id: int = Depends
     file_path = os.path.join(Config.UPLOAD_FOLDER, safe_name)
 
     try:
-        contents = await file.read()
+        contents = file.file.read()
         with open(file_path, "wb") as f:
             f.write(contents)
 

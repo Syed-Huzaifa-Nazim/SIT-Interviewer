@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request, HTTPException, status, Depends
+from fastapi import APIRouter, Body, HTTPException, status, Depends
 from app.database.db import db
 from app.models import Feedback
 from app.utils.security import get_current_user_id
@@ -6,8 +6,8 @@ from app.utils.security import get_current_user_id
 feedback_bp = APIRouter()
 
 @feedback_bp.post('')
-async def submit_feedback(request: Request, user_id: int = Depends(get_current_user_id)):
-    data = await request.json() or {}
+def submit_feedback(payload: dict = Body(default=None), user_id: int = Depends(get_current_user_id)):
+    data = payload or {}
 
     rating = data.get('rating')
     feedback_text = data.get('feedback_text')

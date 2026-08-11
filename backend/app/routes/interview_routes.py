@@ -860,11 +860,41 @@ def _run_answer_scoring(interview_id, question_id, response_id, user_id,
         db.session.remove()
 
 
+def _finalize_report_in_background(interview_id):
+    """Run report finalization off the request thread.
+
+    Scoring an MCQ is instant, but finalizing is not: the last scored answer in an
+    interview triggers _finalize_report_if_ready, which calls the LLM to write the report.
+    MCQs are always the closing round, so that landed on the candidate's very last
+    submit-answer and held the response open for the full generation — the one moment they
+    are most eager to be done. Verbal answers never had this problem because their whole
+    scoring path, finalization included, already runs in a thread.
+
+    Nothing waits on the report here: submit-answer replies scoring_status 'processing' and
+    the report page polls until it exists, which is the same contract the verbal path has
+    always used.
+    """
+    def _worker():
+        try:
+            _finalize_report_if_ready(interview_id)
+        except Exception as e:
+            print(f"[scoring] Report finalization failed for interview {interview_id}: {e}")
+        finally:
+            # Outside the request middleware, so this thread owns its session and must
+            # return the connection itself or it leaks and holds locks (see app/__init__).
+            db.session.remove()
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+
 def _score_mcq_response(response, question):
-    """Grade an MCQ response instantly and deterministically — no LLM call, no background
-    thread, since correctness is just a string comparison against the answer key
+    """Grade an MCQ response instantly and deterministically — no LLM call needed, since
+    correctness is just a string comparison against the answer key
     (question.mcq_correct_index), never exposed to the candidate (see InterviewQuestion.
-    to_dict). A skipped/timed-out MCQ (empty response_text) is simply incorrect."""
+    to_dict). A skipped/timed-out MCQ (empty response_text) is simply incorrect.
+
+    The grade is written synchronously because it is free; only the report generation it
+    may trigger is deferred (see _finalize_report_in_background)."""
     correct_text = None
     try:
         options = json.loads(question.mcq_options or '[]')
@@ -883,7 +913,7 @@ def _score_mcq_response(response, question):
     response.feedback = 'Correct.' if is_correct else 'Incorrect.'
     response.scoring_status = 'scored'
     db.session.commit()
-    _finalize_report_if_ready(question.interview_id)
+    _finalize_report_in_background(question.interview_id)
 
 
 def _finalize_report_if_ready(interview_id):

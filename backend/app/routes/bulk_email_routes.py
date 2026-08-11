@@ -18,7 +18,7 @@ import secrets
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from fastapi import APIRouter, Request, HTTPException, Depends
+from fastapi import APIRouter, Body, HTTPException, Depends
 from fastapi.responses import StreamingResponse
 
 from app.database.db import db
@@ -156,7 +156,7 @@ def _validate_rows(rows):
 # --------------------------------------------------------------------------- endpoints
 
 @bulk_email_bp.get('/config')
-async def bulk_config(user: User = Depends(admin_required)):
+def bulk_config(user: User = Depends(admin_required)):
     """Everything the modal needs to render and validate client-side, straight from the
     server's own constants so the two can never drift apart."""
     return {
@@ -171,7 +171,7 @@ async def bulk_config(user: User = Depends(admin_required)):
 
 
 @bulk_email_bp.get('/template')
-async def download_template(user: User = Depends(admin_required)):
+def download_template(user: User = Depends(admin_required)):
     """A ready-made CSV with the correct headers (and one example row), so the admin never
     has to guess the column names or their order."""
     buf = io.StringIO()
@@ -188,14 +188,14 @@ async def download_template(user: User = Depends(admin_required)):
 
 
 @bulk_email_bp.post('/validate')
-async def validate_batch(request: Request, user: User = Depends(admin_required)):
+def validate_batch(payload: dict = Body(default=None), user: User = Depends(admin_required)):
     """Server-side validation of the parsed rows.
 
     The modal parses the file in the browser for an instant preview, but correctness is
     decided here — the client's verdict is never trusted, and ``/send`` re-runs exactly this
     same check before creating anything.
     """
-    data = await request.json() or {}
+    data = payload or {}
     rows = data.get('rows') or []
     if not isinstance(rows, list):
         raise HTTPException(status_code=400, detail="'rows' must be a list")
@@ -214,13 +214,13 @@ async def validate_batch(request: Request, user: User = Depends(admin_required))
 
 
 @bulk_email_bp.post('/send')
-async def send_batch(request: Request, user: User = Depends(admin_required)):
+def send_batch(payload: dict = Body(default=None), user: User = Depends(admin_required)):
     """Create accounts and queue the invitations, then return immediately.
 
     The actual work runs on a daemon thread so a large batch never blocks the admin's
     request; the modal polls ``/batches/{id}`` for progress.
     """
-    data = await request.json() or {}
+    data = payload or {}
     rows = data.get('rows') or []
     subject = (data.get('subject') or '').strip()
     personalize = bool(data.get('personalize', True))
@@ -278,13 +278,13 @@ async def send_batch(request: Request, user: User = Depends(admin_required)):
 
 
 @bulk_email_bp.get('/batches')
-async def list_batches(user: User = Depends(admin_required)):
+def list_batches(user: User = Depends(admin_required)):
     batches = BulkEmailBatch.query.order_by(BulkEmailBatch.created_at.desc()).limit(50).all()
     return {'batches': [b.to_dict() for b in batches]}
 
 
 @bulk_email_bp.get('/batches/{batch_id}')
-async def get_batch(batch_id: int, user: User = Depends(admin_required)):
+def get_batch(batch_id: int, user: User = Depends(admin_required)):
     """Progress endpoint the modal polls while a batch is sending."""
     batch = BulkEmailBatch.query.get(batch_id)
     if not batch:
