@@ -1147,7 +1147,7 @@ const InterviewSession = () => {
                 if (handsModel && frameTick % 2 === 0) {
                   await handsModel.send({ image: videoRef.current });
                 }
-              } catch (e) {
+              } catch {
                 // Ignore transient frame send failures
               }
             }
@@ -1243,7 +1243,7 @@ const InterviewSession = () => {
           streamRef.current = fresh;
           if (videoRef.current) {
             videoRef.current.srcObject = fresh;
-            try { await videoRef.current.play(); } catch (_) {}
+            try { await videoRef.current.play(); } catch {}
           }
           attachTrackWatch(fresh);
           // The frame loop reads videoRef.current every cycle, so detection resumes on the
@@ -1270,7 +1270,7 @@ const InterviewSession = () => {
           cameraStalledRef.current = false;
           setCameraReconnecting(false);
           return;
-        } catch (e) {
+        } catch {
           await new Promise((r) => setTimeout(r, 1500));
         }
       }
@@ -1555,7 +1555,7 @@ const InterviewSession = () => {
         handleAutoSubmit();
         return;
       }
-    } catch (err) {
+    } catch {
       // If anchoring fails, fall back to the client-provided limit so the interview still runs.
       setRemaining(question.time_limit_seconds || 120);
     }
@@ -1637,7 +1637,7 @@ const InterviewSession = () => {
     recognition.onend = () => {
       // Chrome stops recognition periodically; restart while the mic is still active.
       if (micActiveRef.current) {
-        try { recognition.start(); } catch (e) { /* already started */ }
+        try { recognition.start(); } catch { /* already started */ }
       }
     };
 
@@ -1687,7 +1687,7 @@ const InterviewSession = () => {
     // Live captions via the browser Web Speech API (best-effort; Whisper stays authoritative).
     if (sttSupported) {
       if (!recognitionRef.current) recognitionRef.current = getSpeechRecognition();
-      try { if (recognitionRef.current) recognitionRef.current.start(); } catch (e) { /* already running */ }
+      try { if (recognitionRef.current) recognitionRef.current.start(); } catch { /* already running */ }
     }
 
     micActiveRef.current = true;
@@ -1705,8 +1705,8 @@ const InterviewSession = () => {
       if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
         mediaRecorderRef.current.pause();
       }
-    } catch (e) { /* ignore */ }
-    try { if (recognitionRef.current) recognitionRef.current.stop(); } catch (e) { /* ignore */ }
+    } catch { /* ignore */ }
+    try { if (recognitionRef.current) recognitionRef.current.stop(); } catch { /* ignore */ }
     setInterimText('');
   };
 
@@ -1718,13 +1718,13 @@ const InterviewSession = () => {
   // Fully stop + release the audio pipeline (on submit / unmount).
   const teardownAudio = () => {
     micActiveRef.current = false;
-    try { if (recognitionRef.current) recognitionRef.current.stop(); } catch (e) { /* ignore */ }
+    try { if (recognitionRef.current) recognitionRef.current.stop(); } catch { /* ignore */ }
     recognitionRef.current = null;
     try {
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
         mediaRecorderRef.current.stop();
       }
-    } catch (e) { /* ignore */ }
+    } catch { /* ignore */ }
     if (audioStreamRef.current) {
       audioStreamRef.current.getTracks().forEach(t => t.stop());
       audioStreamRef.current = null;
@@ -1747,7 +1747,7 @@ const InterviewSession = () => {
       mr.onstop = () => {
         resolve(audioChunksRef.current.length ? new Blob(audioChunksRef.current, { type: blobType }) : null);
       };
-      try { mr.stop(); } catch (e) {
+      try { mr.stop(); } catch {
         resolve(audioChunksRef.current.length ? new Blob(audioChunksRef.current, { type: blobType }) : null);
       }
     });
@@ -1806,7 +1806,7 @@ const InterviewSession = () => {
         return;
       }
       rec.onstop = assemble;
-      try { rec.stop(); } catch (e) { assemble(); }
+      try { rec.stop(); } catch { assemble(); }
     });
   };
 
