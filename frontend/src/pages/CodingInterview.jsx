@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../services/api';
 import Card, { CardHeader, CardTitle } from '../components/ui/Card';
@@ -6,6 +6,7 @@ import Alert from '../components/ui/Alert';
 import Badge from '../components/ui/Badge';
 import Button from '../components/ui/Button';
 import Spinner from '../components/ui/Spinner';
+import CodeEditor from '../components/ui/CodeEditor';
 import { useAuth } from '../context/AuthContext';
 import {
   Play, Send, RotateCcw, Terminal, Code2, CheckCircle2, XCircle,
@@ -27,64 +28,9 @@ const DIFFICULTY_STYLES = {
   Hard: 'error',
 };
 
-// --- Dependency-free line-numbered code editor ---------------------------------
-const CodeEditor = ({ value, onChange, onRun, disabled }) => {
-  const textareaRef = useRef(null);
-  const gutterRef = useRef(null);
-  const lineCount = value.split('\n').length;
-
-  const syncScroll = () => {
-    if (gutterRef.current && textareaRef.current) {
-      gutterRef.current.scrollTop = textareaRef.current.scrollTop;
-    }
-  };
-
-  const handleKeyDown = (e) => {
-    // Ctrl/Cmd+Enter runs the sample tests (§12 IDE convenience).
-    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-      e.preventDefault();
-      if (!disabled && onRun) onRun();
-      return;
-    }
-    // Insert 4 spaces on Tab instead of moving focus.
-    if (e.key === 'Tab') {
-      e.preventDefault();
-      const { selectionStart, selectionEnd } = e.target;
-      const next = value.substring(0, selectionStart) + '    ' + value.substring(selectionEnd);
-      onChange(next);
-      requestAnimationFrame(() => {
-        if (textareaRef.current) {
-          textareaRef.current.selectionStart = textareaRef.current.selectionEnd = selectionStart + 4;
-        }
-      });
-    }
-  };
-
-  return (
-    <div className="flex flex-1 min-h-[340px] bg-slate-950 overflow-hidden">
-      <div
-        ref={gutterRef}
-        className="select-none overflow-hidden py-4 px-3 text-right font-mono text-xs leading-relaxed text-slate-600 bg-slate-900/60 border-r border-slate-800"
-        aria-hidden="true"
-      >
-        {Array.from({ length: lineCount }, (_, i) => (
-          <div key={i}>{i + 1}</div>
-        ))}
-      </div>
-      <textarea
-        ref={textareaRef}
-        className="flex-1 w-full bg-slate-950 p-4 font-mono text-sm text-slate-100 border-none outline-none focus:ring-0 resize-none leading-relaxed"
-        style={{ tabSize: 4 }}
-        spellCheck={false}
-        value={value}
-        disabled={disabled}
-        onChange={(e) => onChange(e.target.value)}
-        onKeyDown={handleKeyDown}
-        onScroll={syncScroll}
-      />
-    </div>
-  );
-};
+// The line-numbered textarea that used to live here has been replaced by the shared
+// CodeEditor (components/ui/CodeEditor.jsx), so this page and the interview sandbox now
+// offer the same syntax-highlighted editor rather than two copies of a plainer one.
 
 // --- SQL schema + seed data panel ----------------------------------------------
 // A SQL question is unanswerable without seeing what you are querying, so the table
@@ -217,6 +163,16 @@ const TestResultRow = ({ result }) => {
               <span className="text-slate-400 dark:text-slate-500">Got:</span> {JSON.stringify(result.actual)}
             </div>
           )}
+        </div>
+      )}
+      {/* Anything the solution printed itself. The runner has always returned this per test
+          and it was being dropped, which hid the only debugging tool available in here. */}
+      {!result.hidden && result.stdout && (
+        <div className="mt-2 space-y-1">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">Output</p>
+          <pre className="whitespace-pre-wrap font-mono text-[11px] text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-md p-2 max-h-32 overflow-y-auto">
+            {result.stdout}
+          </pre>
         </div>
       )}
       {result.error && (
@@ -478,7 +434,14 @@ const CodingInterview = () => {
               </div>
             </div>
 
-            <CodeEditor value={code} onChange={setCode} onRun={() => !busy && problem && execute('run')} disabled={!!busy} />
+            <CodeEditor
+              className="flex-1 min-h-[340px]"
+              value={code}
+              onChange={setCode}
+              language={language === 'sql' ? 'sql' : language}
+              onRun={() => !busy && problem && execute('run')}
+              disabled={!!busy}
+            />
 
             {/* Console / results */}
             <div className="bg-slate-100 dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800">

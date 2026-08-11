@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import api from '../../services/api';
 import Alert from '../ui/Alert';
 import Badge from '../ui/Badge';
 import Button from '../ui/Button';
 import Spinner from '../ui/Spinner';
-import { Play, Send, Terminal, Database, CheckCircle2, XCircle, Clock3, AlertTriangle, Loader2 } from 'lucide-react';
+import CodeEditor from '../ui/CodeEditor';
+import { Play, Send, Terminal, Database, CheckCircle2, XCircle, Clock3, AlertTriangle, Loader2, RotateCcw, Timer } from 'lucide-react';
 
 /**
  * The hands-on coding exercise a Completed-course interview opens with.
@@ -70,8 +71,6 @@ const InterviewCodingSandbox = ({ problemId, interviewId, onSubmitAnswer, disabl
   const [busy, setBusy] = useState(null);
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
-  const textareaRef = useRef(null);
-  const gutterRef = useRef(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -93,12 +92,6 @@ const InterviewCodingSandbox = ({ problemId, interviewId, onSubmitAnswer, disabl
     return () => { cancelled = true; };
   }, [problemId]);
 
-  const syncScroll = () => {
-    if (gutterRef.current && textareaRef.current) {
-      gutterRef.current.scrollTop = textareaRef.current.scrollTop;
-    }
-  };
-
   const handleLanguageChange = (lang) => {
     setLanguage(lang);
     setCode(problem?.starters?.[lang] ?? '');
@@ -106,18 +99,13 @@ const InterviewCodingSandbox = ({ problemId, interviewId, onSubmitAnswer, disabl
     setError('');
   };
 
-  const handleKeyDown = (e) => {
-    if (e.key === 'Tab') {
-      e.preventDefault();
-      const { selectionStart, selectionEnd } = e.target;
-      const next = code.substring(0, selectionStart) + '    ' + code.substring(selectionEnd);
-      setCode(next);
-      requestAnimationFrame(() => {
-        if (textareaRef.current) {
-          textareaRef.current.selectionStart = textareaRef.current.selectionEnd = selectionStart + 4;
-        }
-      });
-    }
+  // Restores the starter code. Confirmed because it discards everything the candidate has
+  // written, and they are under a timer with no undo across a remount.
+  const resetCode = () => {
+    if (!window.confirm('Reset the editor back to the starter code? Your current work will be lost.')) return;
+    setCode(problem?.starters?.[language] ?? '');
+    setResult(null);
+    setError('');
   };
 
   const runTests = useCallback(async () => {
@@ -171,8 +159,10 @@ const InterviewCodingSandbox = ({ problemId, interviewId, onSubmitAnswer, disabl
     return <Alert variant="error">{error || 'Coding question unavailable.'}</Alert>;
   }
 
-  const lineCount = code.split('\n').length;
   const isSql = problem.language === 'sql';
+  // The runner times every test; surfacing the total is what a compiler's output panel
+  // does and it tells the candidate whether a failure was slowness or logic.
+  const totalRuntimeMs = result?.results?.reduce((sum, r) => sum + (r.runtime_ms || 0), 0);
 
   const hasDetails =
     (isSql && (problem.schema_display?.length > 0 || problem.sample_datasets?.length > 0)) ||
@@ -286,22 +276,39 @@ const InterviewCodingSandbox = ({ problemId, interviewId, onSubmitAnswer, disabl
         <div className="flex flex-col h-full min-h-0 gap-2">
           {error && <Alert variant="error" className="text-xs">{error}</Alert>}
           <div className="rounded-xl overflow-hidden border border-slate-700 flex flex-col flex-1 min-h-0">
-            <div className="px-3 py-2 bg-slate-800 flex items-center justify-between shrink-0">
-              {isSql ? (
-                <span className="text-[11px] font-mono text-slate-300">SQL (SQLite)</span>
-              ) : (
-                <select
-                  className="text-[11px] font-mono bg-slate-900 text-slate-200 border border-slate-700 rounded-md py-1 px-2 cursor-pointer"
-                  value={language}
-                  onChange={(e) => handleLanguageChange(e.target.value)}
+            <div className="px-3 py-2 bg-slate-800 flex items-center justify-between gap-2 shrink-0">
+              <div className="flex items-center gap-2 min-w-0">
+                {isSql ? (
+                  <span className="text-[11px] font-mono text-slate-300">SQL (SQLite)</span>
+                ) : (
+                  <select
+                    className="text-[11px] font-mono bg-slate-900 text-slate-200 border border-slate-700 rounded-md py-1 px-2 cursor-pointer"
+                    value={language}
+                    onChange={(e) => handleLanguageChange(e.target.value)}
+                    disabled={!!busy || disabled}
+                    aria-label="Language"
+                  >
+                    {LANGUAGES.map((l) => (
+                      <option key={l.id} value={l.id}>{l.label}</option>
+                    ))}
+                  </select>
+                )}
+                <button
+                  type="button"
+                  onClick={resetCode}
                   disabled={!!busy || disabled}
+                  title="Reset to starter code"
+                  aria-label="Reset to starter code"
+                  className="p-1.5 rounded-md text-slate-400 hover:text-slate-100 hover:bg-slate-700 disabled:opacity-40 transition"
                 >
-                  {LANGUAGES.map((l) => (
-                    <option key={l.id} value={l.id}>{l.label}</option>
-                  ))}
-                </select>
-              )}
-              <div className="flex gap-2">
+                  <RotateCcw size={13} />
+                </button>
+              </div>
+              <div className="flex items-center gap-2">
+                {/* The shortcut is only discoverable if it is written down somewhere. */}
+                <kbd className="hidden xl:inline text-[9px] font-mono text-slate-500 border border-slate-700 rounded px-1.5 py-0.5">
+                  Ctrl+↵
+                </kbd>
                 <Button variant="secondary" size="sm" icon={Play} onClick={runTests} disabled={!!busy || disabled}>
                   {busy === 'run' ? 'Running…' : 'Run'}
                 </Button>
@@ -310,22 +317,14 @@ const InterviewCodingSandbox = ({ problemId, interviewId, onSubmitAnswer, disabl
                 </Button>
               </div>
             </div>
-            <div className="flex bg-slate-950 flex-1 min-h-[120px]">
-              <div ref={gutterRef} className="select-none overflow-hidden py-3 px-2.5 text-right font-mono text-[11px] leading-relaxed text-slate-600 bg-slate-900/60 border-r border-slate-800" aria-hidden="true">
-                {Array.from({ length: lineCount }, (_, i) => <div key={i}>{i + 1}</div>)}
-              </div>
-              <textarea
-                ref={textareaRef}
-                className="flex-1 w-full h-full bg-slate-950 p-3 font-mono text-[13px] text-slate-100 border-none outline-none focus:ring-0 resize-none leading-relaxed overflow-y-auto"
-                style={{ tabSize: 4 }}
-                spellCheck={false}
-                value={code}
-                disabled={!!busy || disabled}
-                onChange={(e) => setCode(e.target.value)}
-                onKeyDown={handleKeyDown}
-                onScroll={syncScroll}
-              />
-            </div>
+            <CodeEditor
+              className="flex-1 min-h-[120px]"
+              value={code}
+              onChange={setCode}
+              language={isSql ? 'sql' : language}
+              onRun={runTests}
+              disabled={!!busy || disabled}
+            />
 
             {/* Console — capped shorter than before so the editor above keeps most of the
                 right column's height. */}
@@ -334,11 +333,18 @@ const InterviewCodingSandbox = ({ problemId, interviewId, onSubmitAnswer, disabl
                 <span className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-400">
                   <Terminal size={12} /> Console
                 </span>
-                {result?.total > 0 && (
-                  <span className={`text-[11px] font-bold ${result.passed === result.total ? 'text-emerald-400' : 'text-amber-400'}`}>
-                    {result.passed}/{result.total} passed
-                  </span>
-                )}
+                <div className="flex items-center gap-2.5">
+                  {totalRuntimeMs > 0 && (
+                    <span className="flex items-center gap-1 text-[10px] font-mono text-slate-500 tabular-nums">
+                      <Timer size={10} /> {totalRuntimeMs} ms
+                    </span>
+                  )}
+                  {result?.total > 0 && (
+                    <span className={`text-[11px] font-bold ${result.passed === result.total ? 'text-emerald-400' : 'text-amber-400'}`}>
+                      {result.passed}/{result.total} passed
+                    </span>
+                  )}
+                </div>
               </div>
               <div className="p-2.5 max-h-36 overflow-y-auto space-y-2">
                 {busy && (
@@ -349,7 +355,8 @@ const InterviewCodingSandbox = ({ problemId, interviewId, onSubmitAnswer, disabl
                 )}
                 {!busy && !result && (
                   <p className="text-[11px] text-slate-500 font-mono">
-                    Run your code against the sample tests, then Submit Answer to finish this question.
+                    Run your code against the sample tests (Ctrl+Enter), then Submit Answer to finish
+                    this question.
                   </p>
                 )}
                 {!busy && result?.error && <Alert variant="warning" className="text-xs">{result.error}</Alert>}
@@ -364,8 +371,25 @@ const InterviewCodingSandbox = ({ problemId, interviewId, onSubmitAnswer, disabl
                           {r.hidden ? `Hidden test #${r.index}` : `Sample test #${r.index}`}
                           {r.scenario && <span className="font-normal text-slate-500">— {r.scenario}</span>}
                         </span>
-                        <Badge variant={meta.variant} size="sm">{meta.label}</Badge>
+                        <span className="flex items-center gap-2 shrink-0">
+                          {r.runtime_ms > 0 && (
+                            <span className="text-[9px] font-mono text-slate-500 tabular-nums">{r.runtime_ms} ms</span>
+                          )}
+                          <Badge variant={meta.variant} size="sm">{meta.label}</Badge>
+                        </span>
                       </div>
+
+                      {/* The candidate's own print()/console.log output. The runner has always
+                          captured this per test and the UI simply dropped it, which left
+                          print-debugging — the one debugging tool they have in here — invisible. */}
+                      {!r.hidden && r.stdout && (
+                        <div className="mt-1.5">
+                          <p className="text-[9px] uppercase tracking-wide text-slate-500 mb-0.5">Output</p>
+                          <pre className="whitespace-pre-wrap font-mono text-[10px] text-slate-300 bg-slate-950 border border-slate-800 rounded-md p-2 max-h-24 overflow-y-auto">
+                            {r.stdout}
+                          </pre>
+                        </div>
+                      )}
                       {!r.hidden && r.rows !== undefined && (
                         <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2">
                           <div>
