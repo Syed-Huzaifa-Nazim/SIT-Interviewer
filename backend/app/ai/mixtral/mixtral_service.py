@@ -396,8 +396,14 @@ class MixtralService:
         API never blocks the interview — it just falls back to a small generic bank.
         """
         import uuid
+        # MCQs are always generated at HARD difficulty, regardless of whatever difficulty the
+        # main interview questions were created at (the `difficulty` argument is still accepted
+        # for the caller's convenience, but deliberately not used below) — a direct product
+        # decision that the quiz round should stay genuinely challenging for every candidate,
+        # not scale down to "easy"/beginner-style questions.
         system_prompt = (
-            "You are an expert technical interviewer writing a multiple-choice quiz round. "
+            "You are an expert technical interviewer writing a HARD, challenging multiple-choice "
+            "quiz round for experienced engineers — not an introductory or beginner-friendly quiz. "
             "Return ONLY a JSON object of the form "
             '{"questions": [{"question_text": string, "options": [string, string, string, string], '
             '"correct_index": integer}]} '
@@ -407,11 +413,19 @@ class MixtralService:
             "STRICT DOMAIN LOCK: every question MUST be directly relevant to the specified role/domain. "
             "Keep questions and options short — this is read on screen with a 1-minute timer per question, "
             "not spoken aloud. Favour concrete technical recall (syntax, definitions, behavior, complexity) "
-            "over open-ended judgment calls, since MCQs need one unambiguous correct answer."
+            "over open-ended judgment calls, since MCQs need one unambiguous correct answer. "
+            "DIFFICULTY BAR: every question must be genuinely hard — edge cases, subtle behavior "
+            "differences, tricky gotchas, advanced language/framework internals, or non-obvious "
+            "complexity/performance tradeoffs. Do NOT write basic definitional or 'textbook glossary' "
+            "questions (e.g. plain 'what does X stand for' or 'what is a variable') — assume the "
+            "candidate already knows the fundamentals, and test what separates a strong senior "
+            "engineer from an average one. At least one plausible-looking wrong option per question "
+            "should require real understanding to rule out, not just careless elimination."
         )
         user_prompt = (
-            f"Generate exactly {num_mcqs} multiple-choice questions for a {difficulty} difficulty, "
-            f"{experience_level} level technical assessment for the role: {job_role}. "
+            f"Generate exactly {num_mcqs} HARD, advanced-level multiple-choice questions for a "
+            f"technical assessment for the role: {job_role} ({experience_level} level candidate, "
+            "but the quiz itself must stay hard regardless of that level). "
             f"Make the set fresh and non-repetitive (variation id: {str(uuid.uuid4())[:8]})."
         )
 
