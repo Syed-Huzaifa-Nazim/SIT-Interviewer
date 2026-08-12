@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
@@ -20,6 +20,7 @@ import {
   Info,
   ListChecks,
   MessageSquare,
+  PlayCircle,
   Printer,
   ShieldAlert,
   ThumbsDown,
@@ -43,6 +44,13 @@ const asList = (value) => {
   } catch {
     return [];
   }
+};
+
+// mm:ss for the intro-segment bookmark label (Jump to Introduction) — recordings run well
+// under an hour, so hours are deliberately not handled.
+const formatClockTime = (totalSeconds) => {
+  const s = Math.max(0, Math.round(totalSeconds || 0));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 };
 
 const TECHNICAL_NOTE_TYPES = [
@@ -78,6 +86,10 @@ const ReportDetailPage = () => {
   const [videoLoading, setVideoLoading] = useState(false);
   const [videoError, setVideoError] = useState('');
   const [videoPlaybackError, setVideoPlaybackError] = useState('');
+  const videoRef = useRef(null);
+  // Set when "Jump to Introduction" is clicked before the signed video URL has loaded yet —
+  // the seek itself happens in onLoadedMetadata once the element actually has a duration.
+  const pendingIntroSeekRef = useRef(false);
 
   const loadSessionVideo = useCallback(async () => {
     setVideoLoading(true);
@@ -245,6 +257,24 @@ const ReportDetailPage = () => {
         : { label: 'Review Required', variant: 'warning' };
 
   const showVideo = isAdmin && interview.has_video;
+  const hasIntroBookmark = showVideo && interview.intro_video_start_seconds != null;
+
+  // Seeks the player to the welcome/rules screen the candidate saw before Question 1 (see
+  // backend's mark-intro-segment) — not a separate clip, just a timestamp inside the one
+  // session recording. If the signed URL hasn't loaded yet, kick that off and defer the
+  // seek to onLoadedMetadata below, since a <video> has no duration to seek into before then.
+  const jumpToIntro = () => {
+    if (!hasIntroBookmark) return;
+    const video = videoRef.current;
+    if (videoUrl && video) {
+      video.currentTime = interview.intro_video_start_seconds;
+      video.play().catch(() => {});
+    } else {
+      pendingIntroSeekRef.current = true;
+      loadSessionVideo();
+    }
+  };
+
   const answeredCount = qna.filter((q) => q.response).length;
 
   const competencies = [
@@ -603,16 +633,37 @@ const ReportDetailPage = () => {
             {showVideo && (
               <Panel show={activeTab === 'recording'} className="no-print print:hidden">
                 {videoUrl && !videoPlaybackError ? (
-                  <video
-                    controls
-                    src={videoUrl}
-                    className="max-h-[30rem] w-full rounded-xl bg-black"
-                    // Playback can fail after load (expired signed URL, codec, dropped
-                    // network). Surface it with a retry rather than a frozen player.
-                    onError={() =>
-                      setVideoPlaybackError('The recording could not be played — the secure link may have expired.')
-                    }
-                  />
+                  <>
+                    <video
+                      ref={videoRef}
+                      controls
+                      src={videoUrl}
+                      className="max-h-[30rem] w-full rounded-xl bg-black"
+                      // Playback can fail after load (expired signed URL, codec, dropped
+                      // network). Surface it with a retry rather than a frozen player.
+                      onError={() =>
+                        setVideoPlaybackError('The recording could not be played — the secure link may have expired.')
+                      }
+                      onLoadedMetadata={() => {
+                        if (!pendingIntroSeekRef.current) return;
+                        pendingIntroSeekRef.current = false;
+                        const video = videoRef.current;
+                        if (video) {
+                          video.currentTime = interview.intro_video_start_seconds;
+                          video.play().catch(() => {});
+                        }
+                      }}
+                    />
+                    {hasIntroBookmark && (
+                      <Button size="sm" variant="outline" onClick={jumpToIntro} className="gap-1.5">
+                        <PlayCircle className="size-3.5" />
+                        Jump to Introduction
+                        <span className="text-muted-foreground">
+                          ({formatClockTime(interview.intro_video_start_seconds)}–{formatClockTime(interview.intro_video_end_seconds)})
+                        </span>
+                      </Button>
+                    )}
+                  </>
                 ) : (
                   <div className="space-y-3 rounded-xl border-2 border-dashed border-border p-10 text-center">
                     <Video className="mx-auto size-8 text-muted-foreground/40" />
@@ -624,21 +675,29 @@ const ReportDetailPage = () => {
                         {videoError || videoPlaybackError}
                       </Alert>
                     )}
-                    <Button
-                      size="sm"
-                      disabled={videoLoading}
-                      onClick={() => {
-                        setVideoUrl('');
-                        setVideoPlaybackError('');
-                        loadSessionVideo();
-                      }}
-                    >
-                      {videoLoading
-                        ? 'Preparing secure link…'
-                        : videoPlaybackError
-                          ? 'Retry Playback'
-                          : 'Play Session Recording'}
-                    </Button>
+                    <div className="flex flex-wrap items-center justify-center gap-2">
+                      <Button
+                        size="sm"
+                        disabled={videoLoading}
+                        onClick={() => {
+                          setVideoUrl('');
+                          setVideoPlaybackError('');
+                          loadSessionVideo();
+                        }}
+                      >
+                        {videoLoading
+                          ? 'Preparing secure link…'
+                          : videoPlaybackError
+                            ? 'Retry Playback'
+                            : 'Play Session Recording'}
+                      </Button>
+                      {hasIntroBookmark && (
+                        <Button size="sm" variant="outline" disabled={videoLoading} onClick={jumpToIntro} className="gap-1.5">
+                          <PlayCircle className="size-3.5" />
+                          Jump to Introduction
+                        </Button>
+                      )}
+                    </div>
                   </div>
                 )}
               </Panel>
