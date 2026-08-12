@@ -90,6 +90,11 @@ const ReportDetailPage = () => {
   // Set when "Jump to Introduction" is clicked before the signed video URL has loaded yet —
   // the seek itself happens in onLoadedMetadata once the element actually has a duration.
   const pendingIntroSeekRef = useRef(false);
+  // Loading feedback for the Jump button (URL fetch and/or waiting on metadata) and whether
+  // playback is currently inside the bookmarked intro range — drives the auto-pause at its
+  // end and the "Introduction" badge overlay, both purely cosmetic/UI state.
+  const [introSeekPending, setIntroSeekPending] = useState(false);
+  const [introPlaybackActive, setIntroPlaybackActive] = useState(false);
 
   const loadSessionVideo = useCallback(async () => {
     setVideoLoading(true);
@@ -261,17 +266,21 @@ const ReportDetailPage = () => {
 
   // Seeks the player to the welcome/rules screen the candidate saw before Question 1 (see
   // backend's mark-intro-segment) — not a separate clip, just a timestamp inside the one
-  // session recording. If the signed URL hasn't loaded yet, kick that off and defer the
-  // seek to onLoadedMetadata below, since a <video> has no duration to seek into before then.
+  // session recording. Checking readyState matters: a <video> ignores/resets a currentTime
+  // set before its metadata has loaded, so seeking immediately on a freshly-mounted element
+  // silently failed and the video just played from 0 — the "takes forever to get there" bug.
+  // Deferring to onLoadedMetadata (below) whenever metadata isn't ready yet is what fixes it.
   const jumpToIntro = () => {
     if (!hasIntroBookmark) return;
     const video = videoRef.current;
-    if (videoUrl && video) {
+    if (videoUrl && video && video.readyState >= 1) {
       video.currentTime = interview.intro_video_start_seconds;
       video.play().catch(() => {});
+      setIntroPlaybackActive(true);
     } else {
       pendingIntroSeekRef.current = true;
-      loadSessionVideo();
+      setIntroSeekPending(true);
+      if (!videoUrl) loadSessionVideo();
     }
   };
 
@@ -634,33 +643,62 @@ const ReportDetailPage = () => {
               <Panel show={activeTab === 'recording'} className="no-print print:hidden">
                 {videoUrl && !videoPlaybackError ? (
                   <>
-                    <video
-                      ref={videoRef}
-                      controls
-                      src={videoUrl}
-                      className="max-h-[30rem] w-full rounded-xl bg-black"
-                      // Playback can fail after load (expired signed URL, codec, dropped
-                      // network). Surface it with a retry rather than a frozen player.
-                      onError={() =>
-                        setVideoPlaybackError('The recording could not be played — the secure link may have expired.')
-                      }
-                      onLoadedMetadata={() => {
-                        if (!pendingIntroSeekRef.current) return;
-                        pendingIntroSeekRef.current = false;
-                        const video = videoRef.current;
-                        if (video) {
-                          video.currentTime = interview.intro_video_start_seconds;
-                          video.play().catch(() => {});
-                        }
-                      }}
-                    />
-                    {hasIntroBookmark && (
-                      <Button size="sm" variant="outline" onClick={jumpToIntro} className="gap-1.5">
-                        <PlayCircle className="size-3.5" />
-                        Jump to Introduction
-                        <span className="text-muted-foreground">
-                          ({formatClockTime(interview.intro_video_start_seconds)}–{formatClockTime(interview.intro_video_end_seconds)})
+                    <div className="relative">
+                      <video
+                        ref={videoRef}
+                        controls
+                        src={videoUrl}
+                        className="max-h-[30rem] w-full rounded-xl bg-black"
+                        // Playback can fail after load (expired signed URL, codec, dropped
+                        // network). Surface it with a retry rather than a frozen player.
+                        onError={() => {
+                          pendingIntroSeekRef.current = false;
+                          setIntroSeekPending(false);
+                          setVideoPlaybackError('The recording could not be played — the secure link may have expired.');
+                        }}
+                        onLoadedMetadata={() => {
+                          if (!pendingIntroSeekRef.current) return;
+                          pendingIntroSeekRef.current = false;
+                          setIntroSeekPending(false);
+                          const video = videoRef.current;
+                          if (video) {
+                            video.currentTime = interview.intro_video_start_seconds;
+                            video.play().catch(() => {});
+                            setIntroPlaybackActive(true);
+                          }
+                        }}
+                        // Auto-stop at the end of the bookmarked range so "Jump to
+                        // Introduction" plays just that screen instead of running on into
+                        // the rest of the interview. Only active right after a jump — once
+                        // it fires once it clears itself, so normal playback/scrubbing
+                        // afterwards is never held back by it.
+                        onTimeUpdate={() => {
+                          if (!introPlaybackActive) return;
+                          const video = videoRef.current;
+                          if (video && video.currentTime >= interview.intro_video_end_seconds) {
+                            video.pause();
+                            setIntroPlaybackActive(false);
+                          }
+                        }}
+                      />
+                      {introPlaybackActive && (
+                        <span className="absolute top-3 left-3 inline-flex items-center gap-1 rounded-full bg-primary px-2.5 py-1 text-[11px] font-bold text-primary-foreground shadow-lg">
+                          <PlayCircle className="size-3" />
+                          Introduction
                         </span>
+                      )}
+                    </div>
+                    {hasIntroBookmark && (
+                      <Button size="sm" variant="outline" disabled={introSeekPending} onClick={jumpToIntro} className="gap-1.5">
+                        <PlayCircle className="size-3.5" />
+                        {introSeekPending ? 'Loading Introduction…' : (
+                          <>
+                            Jump to Introduction
+                            <span className="text-muted-foreground">
+                              ({formatClockTime(interview.intro_video_start_seconds)}–{formatClockTime(interview.intro_video_end_seconds)})
+                            </span>
+                          </>
+                        )}
                       </Button>
                     )}
                   </>
@@ -692,9 +730,9 @@ const ReportDetailPage = () => {
                             : 'Play Session Recording'}
                       </Button>
                       {hasIntroBookmark && (
-                        <Button size="sm" variant="outline" disabled={videoLoading} onClick={jumpToIntro} className="gap-1.5">
+                        <Button size="sm" variant="outline" disabled={videoLoading || introSeekPending} onClick={jumpToIntro} className="gap-1.5">
                           <PlayCircle className="size-3.5" />
-                          Jump to Introduction
+                          {videoLoading || introSeekPending ? 'Loading Introduction…' : 'Jump to Introduction'}
                         </Button>
                       )}
                     </div>
