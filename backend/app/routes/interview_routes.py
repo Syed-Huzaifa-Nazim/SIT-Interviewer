@@ -540,6 +540,30 @@ def start_question(interview_id: int, payload: dict = Body(default=None),
     }
 
 
+@interview_bp.post('/{interview_id}/mark-intro-segment')
+def mark_intro_segment(interview_id: int, payload: dict = Body(default=None),
+                       user_id: int = Depends(get_current_user_id)):
+    """Bookmark, not a second recording (see Interview.intro_video_start_seconds): the
+    candidate's welcome/rules screen is already part of the one continuous session
+    recording — this just records where in it that screen started and ended, in seconds
+    from the recording's own start, so the admin player can jump straight there."""
+    data = payload or {}
+    start_seconds = data.get('start_seconds')
+    end_seconds = data.get('end_seconds')
+    if start_seconds is None or end_seconds is None:
+        raise HTTPException(status_code=400, detail="start_seconds and end_seconds are required")
+
+    interview = Interview.query.filter_by(id=interview_id, user_id=user_id).first()
+    if not interview:
+        raise HTTPException(status_code=404, detail="Interview session not found")
+
+    interview.intro_video_start_seconds = max(0.0, float(start_seconds))
+    interview.intro_video_end_seconds = max(interview.intro_video_start_seconds, float(end_seconds))
+    db.session.commit()
+
+    return {'message': 'Intro segment marked'}
+
+
 @interview_bp.get('/{interview_id}/timer')
 def get_timer(interview_id: int, question_id: int, user_id: int = Depends(get_current_user_id)):
     """Lightweight resync endpoint: returns the authoritative remaining time for a
