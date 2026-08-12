@@ -1945,6 +1945,18 @@ const InterviewSession = () => {
         uploadSessionVideo();
         navigate(`/interview/report/${id}`, { replace: true });
       } else {
+        // The MCQ round is generated in the background while the candidate works through
+        // the main questions (see /interviews/start) and isn't in `questions` yet — refetch
+        // once we've run off the end of what we loaded at start, so the newly-available rows
+        // are in state before advancing into them. Every other advance is a plain index bump.
+        if (currentIdx + 1 >= questions.length) {
+          try {
+            const detailsRes = await api.get(`/interviews/${id}/details`);
+            setQuestions(detailsRes.data.questions);
+          } catch (err) {
+            console.error('Failed to refetch questions for the MCQ round:', err);
+          }
+        }
         setCurrentIdx(prev => prev + 1);
       }
       return true;

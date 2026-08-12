@@ -6,7 +6,6 @@ import base64
 import tempfile
 import subprocess
 import threading
-import concurrent.futures
 from fastapi import APIRouter, Body, HTTPException, status, Depends, UploadFile, File, Form
 from sqlalchemy import text
 from app.database.db import db
@@ -233,6 +232,57 @@ def start_recording_cleanup_worker():
 def allowed_file(filename: str) -> bool:
     return '.' in filename and filename.rsplit('.', 1)[-1].lower() in Config.ALLOWED_EXTENSIONS
 
+
+def _generate_and_save_mcqs(interview_id, job_role, experience_level, difficulty):
+    """Generate the 10-question MCQ round and save it — unless it's already there.
+
+    Called from two places (_generate_mcqs_in_background's worker, and submit_answer's
+    last-main-question fallback) that can race in principle, so this checks for existing
+    mcq rows first and no-ops if it finds any: whichever call actually generates wins, the
+    other is a no-op.
+    """
+    already = InterviewQuestion.query.filter_by(interview_id=interview_id, question_type='mcq').count()
+    if already > 0:
+        return
+
+    mcqs_list = MixtralService.generate_mcqs(
+        job_role=job_role,
+        experience_level=experience_level,
+        difficulty=difficulty,
+    )
+
+    num_main_questions = InterviewQuestion.query.filter_by(interview_id=interview_id).count()
+    for m_idx, m_data in enumerate(mcqs_list):
+        db.session.add(InterviewQuestion(
+            interview_id=interview_id,
+            question_text=m_data['question_text'],
+            question_type='mcq',
+            mcq_options=json.dumps(m_data['options']),
+            mcq_correct_index=m_data['correct_index'],
+            order_num=num_main_questions + m_idx + 1,
+            time_limit_seconds=question_time_limit('mcq'),
+        ))
+    db.session.commit()
+
+
+def _generate_mcqs_in_background(interview_id, job_role, experience_level, difficulty):
+    """Kick off MCQ-round generation off the request thread (Perf): 'Start Interview' no
+    longer waits on it. By design the candidate has several minutes (the intro screen plus
+    every main question) before reaching the MCQ round, so this is normally long done by
+    then — the fallback in submit_answer covers the rare case it isn't."""
+    def _worker():
+        try:
+            _generate_and_save_mcqs(interview_id, job_role, experience_level, difficulty)
+        except Exception as e:
+            print(f"[mcq-gen] Background MCQ generation failed for interview {interview_id}: {e}")
+        finally:
+            # Outside the request middleware, so this thread owns its session and must
+            # return the connection itself or it leaks and holds locks (see app/__init__).
+            db.session.remove()
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+
 @interview_bp.post('/start')
 def start_interview(payload: dict = Body(default=None), user_id: int = Depends(get_current_user_id)):
     data = payload or {}
@@ -346,39 +396,21 @@ def start_interview(payload: dict = Body(default=None), user_id: int = Depends(g
         db.session.add(interview)
         db.session.flush()
 
-        # The 5 main questions and the 10 MCQs are two independent LLM calls with no shared
-        # state — run them CONCURRENTLY (not one after the other) so interview creation takes
-        # as long as the slower of the two, not their sum. Sequential generation was adding
-        # the full MCQ-generation latency on top of the existing question latency, making
-        # "Start Interview" noticeably slower than before the MCQ round existed.
-        #
-        # NOTE: this was briefly reverted to sequential on saqib-colab after concurrent calls
-        # measured ~3 minutes instead of the ~30s sequential baseline — but that testing predated
-        # the interview_routes.py event-loop fix merged in from huzaifa (this route used to be
-        # `async def` running fully synchronous work directly on the event loop, which one theory
-        # says was the actual source of that slowdown: two ThreadPoolExecutor calls contending
-        # with an already-blocked loop, not the LLM provider itself). Restored to concurrent now
-        # that the route is a plain `def` (Starlette runs it in its own worker thread) — re-revert
-        # to sequential if it's still measured slow under the real deployment.
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-            questions_future = pool.submit(
-                MixtralService.generate_questions,
-                interview_type=interview_type,
-                job_role=job_role,
-                experience_level=experience_level,
-                difficulty=difficulty,
-                num_questions=num_questions,
-                custom_jd=custom_jd,
-                custom_skills=custom_skills
-            )
-            mcqs_future = pool.submit(
-                MixtralService.generate_mcqs,
-                job_role=job_role,
-                experience_level=experience_level,
-                difficulty=difficulty,
-            )
-            questions_list = questions_future.result()
-            mcqs_list = mcqs_future.result()
+        # Only the 5 main questions are generated on the request path now — the candidate's
+        # "Start Interview" response no longer waits on the MCQ round at all (see
+        # _generate_mcqs_in_background below), so this is a single LLM call, not two run
+        # concurrently. Splitting it this way (rather than the earlier "generate both, wait
+        # for the slower one" approach) is what actually removes the MCQ round's latency from
+        # interview creation, instead of just parallelizing it.
+        questions_list = MixtralService.generate_questions(
+            interview_type=interview_type,
+            job_role=job_role,
+            experience_level=experience_level,
+            difficulty=difficulty,
+            num_questions=num_questions,
+            custom_jd=custom_jd,
+            custom_skills=custom_skills
+        )
 
         # Completed-course candidates open on a hands-on coding-sandbox exercise instead of
         # a verbal question. It REPLACES the generated first question rather than being added
@@ -423,24 +455,17 @@ def start_interview(payload: dict = Body(default=None), user_id: int = Depends(g
             )
             db.session.add(question)
 
-        # MCQ round (§ MCQ round): 10 single-select questions appended after the main
-        # questions — generated concurrently with the main questions above, so the whole
-        # interview is ready before the candidate starts with no added latency.
-        for m_idx, m_data in enumerate(mcqs_list):
-            mcq_question = InterviewQuestion(
-                interview_id=interview.id,
-                question_text=m_data['question_text'],
-                question_type='mcq',
-                mcq_options=json.dumps(m_data['options']),
-                mcq_correct_index=m_data['correct_index'],
-                order_num=len(questions_list) + m_idx + 1,
-                time_limit_seconds=question_time_limit('mcq'),
-            )
-            db.session.add(mcq_question)
-
         db.session.commit()
 
         saved_questions = InterviewQuestion.query.filter_by(interview_id=interview.id).order_by(InterviewQuestion.order_num).all()
+
+        # MCQ round (§ MCQ round): 10 single-select questions appended after the main ones.
+        # Generated off the request thread so the candidate's "Start Interview" response
+        # doesn't wait on it — they have the whole intro screen plus every main question
+        # (several minutes) before they'd actually need it. submit_answer has a synchronous
+        # fallback for the rare case a candidate reaches the end of the main round before
+        # this finishes (see _generate_and_save_mcqs).
+        _generate_mcqs_in_background(interview.id, job_role, experience_level, difficulty)
 
         return {
             'message': 'Interview started successfully',
@@ -1143,6 +1168,21 @@ def submit_answer(
             db.session.add(resp_record)
 
         db.session.commit()
+
+        # The MCQ round is generated in the background (see _generate_mcqs_in_background) so
+        # it's normally already saved by now. This is the one place that matters if it isn't:
+        # the completion check right below just counts rows, so an interview finishing its
+        # last main question before the MCQs exist would otherwise end a round early. Generate
+        # synchronously here as a fallback — _generate_and_save_mcqs no-ops if the background
+        # thread already won.
+        if question.question_type != 'mcq':
+            has_later_main_question = InterviewQuestion.query.filter(
+                InterviewQuestion.interview_id == interview_id,
+                InterviewQuestion.question_type != 'mcq',
+                InterviewQuestion.order_num > question.order_num,
+            ).first() is not None
+            if not has_later_main_question:
+                _generate_and_save_mcqs(interview_id, interview.job_role, interview.experience_level, interview.difficulty)
 
         total_questions = InterviewQuestion.query.filter_by(interview_id=interview_id).count()
         total_responses = InterviewResponse.query.filter_by(interview_id=interview_id).count()
