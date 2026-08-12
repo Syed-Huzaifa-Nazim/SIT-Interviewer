@@ -5,6 +5,31 @@ change — see git log / commit messages for full detail on any entry.
 
 ---
 
+## 2026-08-11
+- Converted the remaining ~89 route handlers from `async def` to `def` — they were doing entirely synchronous work (DB queries, Supabase uploads, subprocess-run code execution, bcrypt, LLM calls) while declared `async`, which pins that work to the single uvicorn event loop and serializes the whole backend behind whichever request got there first; now dispatched to FastAPI's worker threadpool so requests actually overlap
+- Report generation for the last MCQ answer in an interview moved off the request path into a background thread, matching how verbal-answer scoring has always worked — it was blocking the candidate's final "submit answer" on a live LLM call
+- Replaced the coding sandbox's plain textarea with a syntax-highlighted CodeMirror 6 editor (shared between the interview and admin sandboxes), lazy-loaded so it doesn't add to the main bundle for anyone who never opens a coding question
+- Merged Saqib's MCQ-round and identity-check-speed work into main
+- Reconnected the Vercel project's GitHub integration, which was lost when the project had been deleted and recreated; found that Vercel refuses to build any deployment whose tip commit's author isn't a member of the Vercel team
+
+## 2026-08-10
+- Added the pre-interview MCQ round (10 questions, deterministic scoring) and an intro/rules screen shown before questions begin
+- Enforced answer timers server-side instead of trusting the client's timed-out flag
+- Sped up mid-interview identity re-verification from ~60s to ~4s worst case
+- Restructured the coding sandbox into a compact, no-scroll two-column layout
+- Fixed camera preview, violation banners, intro replaying on reload, and the violation badge cap found while testing the above
+
+## 2026-08-08
+- Migrated the Supabase project from Mumbai to Singapore to cut cross-region query latency
+- Fixed the admin shell's sidebar detaching from the page while scrolling, and consolidated the per-column filter icons into the one search-bar filter
+- Patched a nanoid dependency advisory that was failing CI
+
+## 2026-08-07
+- Closed three admin-account-takeover paths (forgot-password OTP flow, hardcoded JWT fallback secret, seeded admin password left in docs)
+- Fixed a boot-time database session leak that was blocking `ALTER TABLE` migrations on deploy
+- Moved session-recording assembly server-side instead of relying on the candidate's browser finishing the upload before logout
+- Stopped the admin lists issuing one query per row
+
 ## 2026-07-29
 - Fixed the interview camera freezing: removed phone/object detection (TensorFlow.js + COCO-SSD) from the session — it was an entire extra model whose repeated inference blocked the main thread, and since the video feed renders on that same thread the camera visibly froze each time. Face count, look-away, eye/gaze, hands and identity verification all still run
 - Tightened the detection loop and doubled how often hand detection runs, so hand/eye/face warnings fire promptly instead of lagging behind the candidate
