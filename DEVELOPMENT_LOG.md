@@ -5,6 +5,10 @@ change — see git log / commit messages for full detail on any entry.
 
 ---
 
+## 2026-08-12
+- Moved MCQ-round generation off the interview-creation request path: `Start Interview` used to wait on both the 5 main questions and the 10 MCQs before responding, now only the main questions are generated synchronously and the MCQ round generates in a background thread, using the several minutes a candidate spends on the intro screen and main questions as cover. `submit_answer` has a synchronous fallback for the rare case a candidate finishes the main round before the background generation lands
+- Noted for follow-up: that fallback and the background generator both do a plain row-count check before writing MCQ rows, not the atomic claim `_finalize_report_if_ready` already uses in the same file for the identical class of race — if both ever land on the same interview at once it could double the MCQ rows
+
 ## 2026-08-11
 - Converted the remaining ~89 route handlers from `async def` to `def` — they were doing entirely synchronous work (DB queries, Supabase uploads, subprocess-run code execution, bcrypt, LLM calls) while declared `async`, which pins that work to the single uvicorn event loop and serializes the whole backend behind whichever request got there first; now dispatched to FastAPI's worker threadpool so requests actually overlap
 - Report generation for the last MCQ answer in an interview moved off the request path into a background thread, matching how verbal-answer scoring has always worked — it was blocking the candidate's final "submit answer" on a live LLM call
