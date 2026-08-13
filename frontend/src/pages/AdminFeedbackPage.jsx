@@ -14,6 +14,7 @@ import {
   AdminPageSkeleton,
 } from '@/components/shadcn/page';
 import { AdminFilter, facetOptions, applyFacets, hasActiveFilters } from '@/components/shadcn/filter';
+import { FEEDBACK_CATEGORIES } from '../utils/constants';
 import { MessageSquare, Star, Calendar, AlertTriangle, ThumbsUp } from 'lucide-react';
 
 const AdminFeedbackPage = () => {
@@ -196,6 +197,13 @@ const AdminFeedbackPage = () => {
                   &ldquo;{item.feedback_text || 'No review remarks provided.'}&rdquo;
                 </p>
 
+                {/* Per-category scores from the post-interview form. Only the categories the
+                    candidate actually rated appear — an unrated one is "not answered", which
+                    is different from a low score and must not be drawn as one. Absent
+                    entirely for feedback left through the report page, which asks a single
+                    overall question, and for anything submitted before categories existed. */}
+                <CategoryScores ratings={item.category_ratings} />
+
                 <footer className="mt-3 flex items-center justify-between gap-2 pt-2">
                   <Badge variant="secondary" size="sm" className="capitalize">
                     {item.job_role || 'unspecified'}
@@ -224,5 +232,29 @@ const Stars = ({ rating = 0 }) => (
     ))}
   </span>
 );
+
+/**
+ * Per-category star scores from the post-interview feedback form.
+ *
+ * Renders nothing when there are none, so the older single-rating feedback (and anything
+ * left through the report page) keeps the layout it always had rather than gaining an
+ * empty section.
+ */
+const CategoryScores = ({ ratings }) => {
+  const rated = FEEDBACK_CATEGORIES.filter((c) => ratings?.[c.key]);
+  if (rated.length === 0) return null;
+  return (
+    <dl className="mt-3 grid grid-cols-1 gap-x-4 gap-y-1 border-t border-border pt-3 sm:grid-cols-2">
+      {rated.map((c) => (
+        <div key={c.key} className="flex items-center justify-between gap-2">
+          <dt className="truncate text-[10px] font-semibold text-muted-foreground">{c.label}</dt>
+          <dd className="shrink-0">
+            <Stars rating={ratings[c.key]} />
+          </dd>
+        </div>
+      ))}
+    </dl>
+  );
+};
 
 export default AdminFeedbackPage;

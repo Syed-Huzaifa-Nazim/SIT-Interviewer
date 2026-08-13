@@ -42,3 +42,18 @@ export const INTERVIEW_STATUS_LABELS = {
   reinterview_approved: 'Re-Interview Approved',
   reinterview_rejected: 'Re-Interview Rejected',
 };
+
+// The aspects a candidate rates individually on the post-interview feedback form, on top of
+// one overall score. Keys are what get stored in Feedback.category_ratings.
+//
+// These keys MUST stay in step with CATEGORY_KEYS in backend/app/routes/feedback_routes.py,
+// which drops anything it does not recognise — a key renamed here and not there is silently
+// discarded on submit. Labels are frontend-only and safe to reword.
+export const FEEDBACK_CATEGORIES = [
+  { key: 'questions', label: 'Question Quality', hint: 'Were the questions relevant to the role?' },
+  { key: 'ai_interviewer', label: 'AI Interviewer', hint: 'Pacing, clarity and understanding' },
+  { key: 'audio_video', label: 'Audio & Video', hint: 'Microphone, camera and transcription' },
+  { key: 'proctoring', label: 'Proctoring', hint: 'Was the monitoring fair and accurate?' },
+  { key: 'platform', label: 'Platform & Interface', hint: 'Speed and ease of use of the portal' },
+  { key: 'coding_sandbox', label: 'Coding Sandbox', hint: 'Skip if you had no coding exercise' },
+];

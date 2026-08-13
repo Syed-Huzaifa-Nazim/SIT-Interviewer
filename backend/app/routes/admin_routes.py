@@ -1097,6 +1097,11 @@ def list_feedbacks(user: User = Depends(admin_required)):
             'rating': f.rating,
             'feedback_text': f.feedback_text,
             'issues_reported': f.issues_reported,
+            # Per-category scores from the post-interview form; {} for the report-page form
+            # and anything submitted before categories existed. Decoded by Feedback.to_dict,
+            # which is reused here rather than duplicating the JSON parsing and its
+            # malformed-blob guard.
+            'category_ratings': f.to_dict()['category_ratings'],
             'job_role': i.job_role if i else 'N/A',
             'created_at': f.created_at.isoformat()
         })
