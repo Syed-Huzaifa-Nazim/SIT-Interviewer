@@ -480,12 +480,28 @@ class Feedback(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
     interview_id = db.Column(db.Integer, db.ForeignKey('interviews.id', ondelete='SET NULL'), nullable=True)
-    rating = db.Column(db.Integer, nullable=False)  # 1 to 5
+    rating = db.Column(db.Integer, nullable=False)  # 1 to 5, overall
     feedback_text = db.Column(db.Text, nullable=True)
     issues_reported = db.Column(db.Text, nullable=True)
+
+    # Per-category ratings as a JSON object of {category_key: 1-5}, e.g.
+    # {"questions": 4, "ai_interviewer": 5, "audio_video": 3}. Stored as JSON in one column
+    # rather than six columns or a child table: the set of categories is presentation, not
+    # data the database ever queries or joins on, and adding or renaming one should not need
+    # a migration. A candidate may rate any subset, so a missing key means "not answered"
+    # and is distinct from a low score. NULL for every feedback submitted before categories
+    # existed, and for the report-page form which still asks a single overall question.
+    category_ratings = db.Column(db.Text, nullable=True)
+
     created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
 
     def to_dict(self):
+        import json as _json
+        try:
+            categories = _json.loads(self.category_ratings) if self.category_ratings else {}
+        except Exception:
+            # A malformed blob must not take down the whole admin feedback list.
+            categories = {}
         return {
             'id': self.id,
             'user_id': self.user_id,
@@ -493,6 +509,7 @@ class Feedback(db.Model):
             'rating': self.rating,
             'feedback_text': self.feedback_text,
             'issues_reported': self.issues_reported,
+            'category_ratings': categories,
             'created_at': self.created_at.isoformat() if self.created_at else None
         }
 
@@ -705,6 +722,15 @@ class BulkEmailBatch(db.Model):
     subject = db.Column(db.String(255), nullable=False)
     personalize = db.Column(db.Boolean, default=False)
 
+    # Admin-chosen label for the group this batch created, e.g. "Spring 2026 Intake" — what
+    # the Bulk Invited tab shows as a filter chip. Distinct from `subject`, which is the
+    # email's own subject line: that is written for the candidate reading the invitation,
+    # not for the admin picking a cohort out of a list months later, and two intakes sent
+    # with the same template were previously indistinguishable in Batch History.
+    # Nullable, so every batch sent before this existed (and any sent without a name) stays
+    # valid and simply falls back to its subject for display.
+    batch_name = db.Column(db.String(120), nullable=True)
+
     # pending → sending → complete. 'complete' covers partial success too; the counts below
     # say what actually happened, so a single failed recipient never marks the batch failed.
     status = db.Column(db.String(20), default='pending')
@@ -737,6 +763,10 @@ class BulkEmailBatch(db.Model):
             'admin_name': self.admin.name if self.admin else None,
             'file_name': self.file_name,
             'subject': self.subject,
+            'batch_name': self.batch_name,
+            # What to render wherever a batch needs a human label. Falls back to the subject
+            # so pre-existing unnamed batches still read sensibly instead of showing blank.
+            'display_name': self.batch_name or self.subject,
             'personalize': bool(self.personalize),
             'status': self.status,
             'total_count': self.total_count or 0,

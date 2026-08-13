@@ -61,6 +61,8 @@ const toRow = (record, defaultDeadline) => {
 const BulkEmailModal = ({ open, onClose, onSent }) => {
   const [config, setConfig] = useState(null);
   const [subject, setSubject] = useState('');
+  // Optional cohort label for this batch — becomes its filter chip on the Bulk Invited tab.
+  const [batchName, setBatchName] = useState('');
   const [personalize, setPersonalize] = useState(true);
 
   const [rows, setRows] = useState([]);
@@ -116,7 +118,7 @@ const BulkEmailModal = ({ open, onClose, onSent }) => {
 
   const resetAll = useCallback(() => {
     setRows([]); setFileName(''); setParseError(''); setValidation(null);
-    setBatch(null); setSending(false); setError(''); setSubject('');
+    setBatch(null); setSending(false); setError(''); setSubject(''); setBatchName('');
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
   }, []);
 
@@ -260,7 +262,7 @@ const BulkEmailModal = ({ open, onClose, onSent }) => {
     setError(''); setSending(true);
     try {
       const res = await api.post('/admin/bulk-email/send', {
-        rows, subject, personalize, file_name: fileName,
+        rows, subject, personalize, file_name: fileName, batch_name: batchName,
       });
       const started = res.data.batch;
       setBatch(started);
@@ -397,6 +399,25 @@ const BulkEmailModal = ({ open, onClose, onSent }) => {
                       value={subject}
                       onChange={(e) => setSubject(e.target.value)}
                     />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400">
+                      Batch name <span className="font-semibold normal-case tracking-normal text-slate-400">(optional)</span>
+                    </label>
+                    <input
+                      className="w-full glass-input text-sm mt-1.5"
+                      placeholder="e.g. Spring 2026 Intake"
+                      maxLength={120}
+                      value={batchName}
+                      onChange={(e) => setBatchName(e.target.value)}
+                    />
+                    {/* Named batches become filter chips on the Bulk Invited tab. The subject
+                        line is written for the candidate, so two intakes sent from the same
+                        template are indistinguishable there — this is the admin's own label. */}
+                    <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-1">
+                      Groups these recipients under their own chip in Manage Users. Defaults to
+                      the subject line if left blank.
+                    </p>
                   </div>
                   <label className="flex items-center justify-between gap-3 pt-1 cursor-pointer">
                     <span className="text-xs font-semibold text-slate-700 dark:text-slate-200">

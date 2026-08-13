@@ -225,6 +225,11 @@ def send_batch(payload: dict = Body(default=None), user: User = Depends(admin_re
     subject = (data.get('subject') or '').strip()
     personalize = bool(data.get('personalize', True))
     file_name = (data.get('file_name') or '').strip() or None
+    # Optional cohort label ("Spring 2026 Intake") the Bulk Invited tab filters by. Capped to
+    # the column width here rather than relying on the client's maxLength, which a direct API
+    # call bypasses — an over-long value would otherwise fail at INSERT with a database error
+    # after the accounts were already validated.
+    batch_name = (data.get('batch_name') or '').strip()[:120] or None
 
     if not subject:
         raise HTTPException(status_code=400, detail="An email subject/title is required")
@@ -253,6 +258,7 @@ def send_batch(payload: dict = Body(default=None), user: User = Depends(admin_re
         admin_id=user.id,
         file_name=file_name,
         subject=subject,
+        batch_name=batch_name,
         personalize=personalize,
         status='pending',
         total_count=len(payload),
