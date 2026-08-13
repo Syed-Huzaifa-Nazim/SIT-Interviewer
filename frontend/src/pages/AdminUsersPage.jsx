@@ -70,6 +70,51 @@ const applyFilterSet = (list, { course, istatus, access }, search) => {
   });
 };
 
+/**
+ * The candidate's interview deadline — User.otp_expires_at, set from the per-row "Deadline"
+ * in the Bulk Email Module. Past it, their one-time login stops working.
+ *
+ * Renders nothing at all when there is no deadline, which is the normal case for organic
+ * signups, instructor accounts and individual admin invites: those have always had a
+ * non-expiring credential, and showing them an empty "—" would imply a deadline exists and
+ * is merely unset. Only an actual deadline is worth a line.
+ */
+const DeadlineLabel = ({ expiresAt }) => {
+  if (!expiresAt) return null;
+  const due = new Date(expiresAt);
+  if (Number.isNaN(due.getTime())) return null;
+  const expired = due.getTime() < Date.now();
+  return (
+    <span
+      className={`text-[9px] font-semibold ${
+        expired ? 'text-red-500 dark:text-red-400' : 'text-slate-500 dark:text-slate-400'
+      }`}
+      title={`Interview deadline: ${due.toLocaleString()}`}
+    >
+      {expired ? 'Expired ' : 'Due '}
+      {due.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}
+    </span>
+  );
+};
+
+/** One cohort filter chip on the Bulk Invited tab. */
+const BatchChip = ({ label, count, active, onClick }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    aria-pressed={active}
+    title={label}
+    className={`inline-flex max-w-[16rem] items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold transition-colors ${
+      active
+        ? 'border-primary-500 bg-primary-500/10 text-primary-700 dark:text-primary-300'
+        : 'border-border text-muted-foreground hover:bg-accent hover:text-foreground'
+    }`}
+  >
+    <span className="truncate">{label}</span>
+    <span className="shrink-0 tabular-nums opacity-60">{count}</span>
+  </button>
+);
+
 const AdminUsersPage = () => {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -170,14 +215,20 @@ const AdminUsersPage = () => {
 
   // Bulk-email batch history: the backend endpoint already existed, unused by the frontend
   // until now — surfaces it so a batch can be cross-linked to the users it created.
+  //
+  // Fetched for the Bulk Invited tab as well as the history modal, because the cohort chips
+  // under that tab need each batch's name and the users list only carries bulk_batch_id.
+  // Guarded on already having the list so switching tabs back and forth doesn't refetch, and
+  // scoped to the tab that uses it so the Enrolled tab costs nothing.
+  const needsBatches = batchHistoryOpen || activeTab === 'bulk';
   useEffect(() => {
-    if (!batchHistoryOpen) return;
+    if (!needsBatches) return;
     setBatchHistoryLoading(true);
     api.get('/admin/bulk-email/batches')
       .then((res) => setBatchHistory(res.data?.batches || []))
       .catch(() => setBatchHistory([]))
       .finally(() => setBatchHistoryLoading(false));
-  }, [batchHistoryOpen]);
+  }, [needsBatches]);
 
   const handleToggleBan = async (userId) => {
     setActionLoading(true);
@@ -415,6 +466,26 @@ const AdminUsersPage = () => {
   const enrolledCount = useMemo(() => users.filter((u) => u.bulk_batch_id == null).length, [users]);
   const bulkCount = users.length - enrolledCount;
 
+  // One chip per batch that still has accounts, newest first, counted from the users already
+  // in memory rather than asking the server. A batch whose accounts were all since deleted is
+  // dropped: the chip would filter to an empty table and there would be no way to tell why.
+  const batchChips = useMemo(() => {
+    const counts = new Map();
+    users.forEach((u) => {
+      if (u.bulk_batch_id == null) return;
+      counts.set(u.bulk_batch_id, (counts.get(u.bulk_batch_id) || 0) + 1);
+    });
+    return batchHistory
+      .filter((b) => counts.has(b.id))
+      .map((b) => ({
+        id: b.id,
+        // display_name is the admin's batch name, falling back server-side to the subject
+        // line for batches sent before naming existed.
+        label: b.display_name || b.batch_name || b.subject || `Batch #${b.id}`,
+        count: counts.get(b.id),
+      }));
+  }, [users, batchHistory]);
+
   const pagedUsers = filteredUsers.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   if (loading) return <AdminPageSkeleton rows={8} cols={6} />;
@@ -458,17 +529,35 @@ const AdminUsersPage = () => {
         ]}
       />
 
-      {batchFilter != null && (
-        <Alert variant="info">
-          Showing only accounts created by bulk-email batch #{batchFilter}.{' '}
-          <button
-            type="button"
-            className="font-bold underline"
+      {/* Cohort chips — one per bulk-email batch that actually created accounts, so an admin
+          running several intakes can pull up just one ("Spring 2026 Intake") instead of
+          scrolling every bulk-invited user together. This replaced a plain "showing batch #N"
+          banner, which could only ever be reached from the Batch History modal and showed an
+          id rather than a name.
+
+          Only rendered on the Bulk Invited tab: batches are what defines that tab, and an
+          enrolled (organic) account has no batch to belong to. */}
+      {activeTab === 'bulk' && batchChips.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+            Batch
+          </span>
+          <BatchChip
+            label="All"
+            count={bulkCount}
+            active={batchFilter == null}
             onClick={() => patchParams({ batch: null, page: null })}
-          >
-            Clear filter
-          </button>
-        </Alert>
+          />
+          {batchChips.map((b) => (
+            <BatchChip
+              key={b.id}
+              label={b.label}
+              count={b.count}
+              active={batchFilter === b.id}
+              onClick={() => patchParams({ batch: b.id, page: null })}
+            />
+          ))}
+        </div>
       )}
 
       <AdminTableCard>
@@ -574,6 +663,13 @@ const AdminUsersPage = () => {
                             Until {new Date(item.banned_until).toLocaleTimeString()}
                           </span>
                         )}
+                        {/* Interview deadline (User.otp_expires_at) — the per-row "Deadline"
+                            chosen in the Bulk Email Module, after which the candidate's
+                            one-time login stops working. It belongs with Access rather than
+                            in a column of its own: it is precisely a statement about access,
+                            and only bulk-invited rows carry one, so a dedicated column would
+                            be mostly empty while widening the table for every tab. */}
+                        <DeadlineLabel expiresAt={item.otp_expires_at} />
                       </div>
                     </td>
 
@@ -981,7 +1077,17 @@ const AdminUsersPage = () => {
                 batchHistory.map((b) => (
                   <div key={b.id} className="p-3.5 border border-slate-200 dark:border-slate-800 rounded-xl flex items-center justify-between gap-3">
                     <div>
-                      <div className="text-xs font-bold text-slate-900 dark:text-slate-200">{b.subject}</div>
+                      {/* The batch name leads when there is one — it is what the admin chose
+                          to call this cohort. The subject line then drops to the detail row
+                          rather than disappearing, since it is still what recipients saw. */}
+                      <div className="text-xs font-bold text-slate-900 dark:text-slate-200">
+                        {b.display_name || b.subject}
+                      </div>
+                      {b.batch_name && (
+                        <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 truncate">
+                          Subject: {b.subject}
+                        </div>
+                      )}
                       <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
                         {b.file_name || 'manual entry'} · {fmtDate(b.created_at)}
                       </div>
