@@ -223,6 +223,13 @@ class Interview(db.Model):
     # upload failed after retries), so the admin UI never implies a recording it can't play.
     video_path = db.Column(db.String(255), nullable=True)
 
+    # Bookmark into video_path (not a separate file/recording): seconds-from-start of the
+    # welcome/rules screen the candidate saw before Question 1, so the admin player can jump
+    # straight to it instead of scrubbing the whole session. NULL if the candidate opened on
+    # the sandbox-first flow's coding question (no intro screen) or the marker never landed.
+    intro_video_start_seconds = db.Column(db.Float, nullable=True)
+    intro_video_end_seconds = db.Column(db.Float, nullable=True)
+
     # Relationships
     questions = db.relationship('InterviewQuestion', backref='interview', lazy=True, cascade="all, delete-orphan")
     responses = db.relationship('InterviewResponse', backref='interview', lazy=True, cascade="all, delete-orphan")
@@ -246,6 +253,8 @@ class Interview(db.Model):
             'terminated_reason': self.terminated_reason,
             'scoring_status': self.scoring_status,
             'has_video': bool(self.video_path),
+            'intro_video_start_seconds': self.intro_video_start_seconds,
+            'intro_video_end_seconds': self.intro_video_end_seconds,
             'created_at': self.created_at.isoformat() if self.created_at else None
         }
 

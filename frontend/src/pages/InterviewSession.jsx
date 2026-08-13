@@ -134,6 +134,13 @@ const InterviewSession = () => {
   // Guards the intro from showing twice — once up front (normal case) or once right after the
   // opening sandbox (sandbox-first case), but never both, and never again on a later reload.
   const introShownRef = useRef(false);
+  // Bookmark timestamps for the admin video player (see backend's mark-intro-segment): when
+  // the session recording actually started (set once, at rec.start() below) and when the
+  // intro screen was entered — the difference between the two, in seconds, is what gets
+  // sent up. Not a second recording — the intro screen is already inside the one continuous
+  // session video; this just marks where in it.
+  const recordingStartedAtRef = useRef(null);
+  const introSegmentStartRef = useRef(null);
   // One-time "the session has started" cue (voice + banner) the moment the intro screen first
   // appears — see the effect below, near handleStartInterview.
   const [introStartToast, setIntroStartToast] = useState(false);
@@ -307,6 +314,22 @@ const InterviewSession = () => {
   // input, same reasoning as the sandbox suppression above.
   const isMcqQuestion = activeQuestion?.question_type === 'mcq';
 
+  // Sends the admin video-bookmark for the intro screen (see backend's mark-intro-segment) —
+  // fire-and-forget, must never delay the transition into the interview questions themselves.
+  // No-ops if the recording never started or the intro was entered before recordingStartedAtRef
+  // was set (both already-handled edge cases elsewhere; this just skips the bookmark then).
+  const markIntroSegmentEnd = useCallback(() => {
+    const start = introSegmentStartRef.current;
+    const recordingStart = recordingStartedAtRef.current;
+    if (start == null || recordingStart == null) return;
+    const startSeconds = Math.max(0, (start - recordingStart) / 1000);
+    const endSeconds = Math.max(startSeconds, (Date.now() - recordingStart) / 1000);
+    api.post(`/interviews/${id}/mark-intro-segment`, {
+      start_seconds: startSeconds,
+      end_seconds: endSeconds,
+    }).catch(() => {});
+  }, [id]);
+
   // Intro stage countdown — local only (nothing gradeable is at risk here, unlike the
   // per-question timer, so no server anchor is needed). Advances on whichever comes first:
   // this timer reaching 0, or the candidate clicking "Start Interview" (handleStartInterview).
@@ -317,15 +340,17 @@ const InterviewSession = () => {
     if (sessionStage !== 'intro' || introCountdownHeld) return undefined;
     if (introRemaining <= 0) {
       introShownRef.current = true;
+      markIntroSegmentEnd();
       setSessionStage('questions');
       return undefined;
     }
     const t = setTimeout(() => setIntroRemaining((prev) => prev - 1), 1000);
     return () => clearTimeout(t);
-  }, [sessionStage, introRemaining, introCountdownHeld]);
+  }, [sessionStage, introRemaining, introCountdownHeld, markIntroSegmentEnd]);
 
   const handleStartInterview = () => {
     introShownRef.current = true;
+    markIntroSegmentEnd();
     setSessionStage('questions');
   };
 
@@ -344,7 +369,10 @@ const InterviewSession = () => {
   // The 'ready' gate's own button — separate from handleStartInterview below, which starts the
   // INTERVIEW from the intro card. This one only advances from 'ready' into the intro card
   // itself, so the candidate gets a deliberate "about to begin" moment first.
-  const handleReadyContinue = () => setSessionStage('intro');
+  const handleReadyContinue = () => {
+    introSegmentStartRef.current = Date.now();
+    setSessionStage('intro');
+  };
 
   // Announce the welcome/rules screen the moment it first appears — whether that's at the very
   // start of the session or, for a sandbox-first candidate, right after the opening sandbox
@@ -1062,6 +1090,7 @@ const InterviewSession = () => {
                 );
               };
               rec.start(1000);
+              recordingStartedAtRef.current = Date.now();
               sessionRecorderRef.current = rec;
               recorderMimeTypeRef.current = rec.mimeType || mimeType;
               // Ship what has been captured every 30s, so the recording is already almost
