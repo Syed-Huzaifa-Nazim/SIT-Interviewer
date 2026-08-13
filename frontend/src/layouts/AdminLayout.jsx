@@ -36,6 +36,129 @@ import {
 
 const SIDEBAR_PREF_KEY = 'admin.sidebar.collapsed';
 
+// NavItems and SidebarInner are declared at module scope, NOT inside AdminLayout.
+//
+// They used to live in the component body, which meant every AdminLayout render produced
+// brand-new function identities for them. React compares element types by identity, so a
+// new identity is a *different component* — it unmounted the entire sidebar subtree and
+// mounted a fresh one instead of updating in place. The visible symptom was the active-nav
+// pill below (a framer-motion `layoutId` element) being destroyed and recreated, replaying
+// its slide animation from scratch.
+//
+// That fired constantly, because Manage Users keeps its search text and tab in the URL:
+// every keystroke and every tab click rewrites the query string, useLocation() hands back a
+// new location, AdminLayout re-renders, and the sidebar jumped — without the admin ever
+// touching it. Hoisting them out keeps the identity stable across renders, so React
+// reconciles the sidebar normally and the pill only animates on real navigation.
+
+const NavItems = ({ railMode, menu, isPathActive }) => (
+  <nav className={cn('flex-1 space-y-1 overflow-y-auto overflow-x-hidden py-4', railMode ? 'px-2' : 'px-3')}>
+    {!railMode && (
+      <div className="px-3 pb-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground/70">
+        Administration
+      </div>
+    )}
+    {menu.map((item) => {
+      const Icon = item.icon;
+      const active = isPathActive(item.path);
+      const link = (
+        <Link
+          key={item.name}
+          to={item.path}
+          aria-current={active ? 'page' : undefined}
+          className={cn(
+            'group relative flex items-center gap-3 rounded-lg py-2.5 text-sm font-semibold transition-colors',
+            railMode ? 'justify-center px-2' : 'px-3',
+            active
+              ? 'text-sidebar-primary-foreground'
+              : 'text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
+          )}
+        >
+          {/* One shared pill that slides between items rather than two cross-fading
+              backgrounds, so the selection reads as movement instead of a flicker. */}
+          {active && (
+            <motion.span
+              layoutId="admin-nav-active"
+              className="absolute inset-0 rounded-lg bg-sidebar-primary shadow-sm"
+              transition={{ type: 'spring', stiffness: 400, damping: 32 }}
+            />
+          )}
+          <Icon className="relative size-[18px] shrink-0" />
+          {!railMode && <span className="relative min-w-0 flex-1 truncate">{item.name}</span>}
+          {item.badge > 0 && (
+            <span
+              className={cn(
+                'relative inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full px-1.5 text-[10px] font-bold',
+                railMode && 'absolute -top-0.5 -right-0.5 h-4 min-w-4 px-1',
+                active ? 'bg-white text-primary' : 'bg-destructive text-destructive-foreground'
+              )}
+            >
+              {item.badge}
+            </span>
+          )}
+        </Link>
+      );
+
+      // In rail mode the label is gone, so the tooltip is the only way to identify it.
+      return railMode ? (
+        <Tooltip key={item.name} content={item.name} side="right">
+          <div>{link}</div>
+        </Tooltip>
+      ) : (
+        link
+      );
+    })}
+  </nav>
+);
+
+const SidebarInner = ({ railMode = false, onClose, menu, isPathActive }) => (
+  <>
+    <div
+      className={cn(
+        'flex h-16 shrink-0 items-center border-b border-sidebar-border',
+        railMode ? 'justify-center px-2' : 'justify-between px-5'
+      )}
+    >
+      {railMode ? (
+        <Link to="/admin" aria-label="Overview" className="grid size-9 place-items-center rounded-lg bg-primary/10">
+          <ShieldCheck className="size-5 text-primary" />
+        </Link>
+      ) : (
+        <>
+          <BrandLogo variant="" />
+          {onClose && (
+            <Button variant="ghost" size="icon-sm" onClick={onClose} className="lg:hidden" aria-label="Close menu">
+              <X className="size-5" />
+            </Button>
+          )}
+        </>
+      )}
+    </div>
+
+    <NavItems railMode={railMode} menu={menu} isPathActive={isPathActive} />
+
+    <div className={cn('shrink-0 border-t border-sidebar-border py-3', railMode ? 'px-2' : 'px-3')}>
+      {railMode ? (
+        <Tooltip content="Student Dashboard" side="right">
+          <Button variant="ghost" size="icon" asChild className="w-full">
+            <Link to="/dashboard" aria-label="Student Dashboard">
+              <LayoutDashboard className="size-[18px]" />
+            </Link>
+          </Button>
+        </Tooltip>
+      ) : (
+        <Link
+          to="/dashboard"
+          className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-semibold text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+        >
+          <LayoutDashboard className="size-[18px] shrink-0" />
+          <span className="truncate">Student Dashboard</span>
+        </Link>
+      )}
+    </div>
+  </>
+);
+
 const AdminLayout = ({ children }) => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
@@ -131,114 +254,6 @@ const AdminLayout = ({ children }) => {
 
   const activeItem = adminMenu.find((i) => isPathActive(i.path));
 
-  const NavItems = ({ railMode }) => (
-    <nav className={cn('flex-1 space-y-1 overflow-y-auto overflow-x-hidden py-4', railMode ? 'px-2' : 'px-3')}>
-      {!railMode && (
-        <div className="px-3 pb-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground/70">
-          Administration
-        </div>
-      )}
-      {adminMenu.map((item) => {
-        const Icon = item.icon;
-        const active = isPathActive(item.path);
-        const link = (
-          <Link
-            key={item.name}
-            to={item.path}
-            aria-current={active ? 'page' : undefined}
-            className={cn(
-              'group relative flex items-center gap-3 rounded-lg py-2.5 text-sm font-semibold transition-colors',
-              railMode ? 'justify-center px-2' : 'px-3',
-              active
-                ? 'text-sidebar-primary-foreground'
-                : 'text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
-            )}
-          >
-            {/* One shared pill that slides between items rather than two cross-fading
-                backgrounds, so the selection reads as movement instead of a flicker. */}
-            {active && (
-              <motion.span
-                layoutId="admin-nav-active"
-                className="absolute inset-0 rounded-lg bg-sidebar-primary shadow-sm"
-                transition={{ type: 'spring', stiffness: 400, damping: 32 }}
-              />
-            )}
-            <Icon className="relative size-[18px] shrink-0" />
-            {!railMode && <span className="relative min-w-0 flex-1 truncate">{item.name}</span>}
-            {item.badge > 0 && (
-              <span
-                className={cn(
-                  'relative inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full px-1.5 text-[10px] font-bold',
-                  railMode && 'absolute -top-0.5 -right-0.5 h-4 min-w-4 px-1',
-                  active ? 'bg-white text-primary' : 'bg-destructive text-destructive-foreground'
-                )}
-              >
-                {item.badge}
-              </span>
-            )}
-          </Link>
-        );
-
-        // In rail mode the label is gone, so the tooltip is the only way to identify it.
-        return railMode ? (
-          <Tooltip key={item.name} content={item.name} side="right">
-            <div>{link}</div>
-          </Tooltip>
-        ) : (
-          link
-        );
-      })}
-    </nav>
-  );
-
-  const SidebarInner = ({ railMode = false, onClose }) => (
-    <>
-      <div
-        className={cn(
-          'flex h-16 shrink-0 items-center border-b border-sidebar-border',
-          railMode ? 'justify-center px-2' : 'justify-between px-5'
-        )}
-      >
-        {railMode ? (
-          <Link to="/admin" aria-label="Overview" className="grid size-9 place-items-center rounded-lg bg-primary/10">
-            <ShieldCheck className="size-5 text-primary" />
-          </Link>
-        ) : (
-          <>
-            <BrandLogo variant="" />
-            {onClose && (
-              <Button variant="ghost" size="icon-sm" onClick={onClose} className="lg:hidden" aria-label="Close menu">
-                <X className="size-5" />
-              </Button>
-            )}
-          </>
-        )}
-      </div>
-
-      <NavItems railMode={railMode} />
-
-      <div className={cn('shrink-0 border-t border-sidebar-border py-3', railMode ? 'px-2' : 'px-3')}>
-        {railMode ? (
-          <Tooltip content="Student Dashboard" side="right">
-            <Button variant="ghost" size="icon" asChild className="w-full">
-              <Link to="/dashboard" aria-label="Student Dashboard">
-                <LayoutDashboard className="size-[18px]" />
-              </Link>
-            </Button>
-          </Tooltip>
-        ) : (
-          <Link
-            to="/dashboard"
-            className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-semibold text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-          >
-            <LayoutDashboard className="size-[18px] shrink-0" />
-            <span className="truncate">Student Dashboard</span>
-          </Link>
-        )}
-      </div>
-    </>
-  );
-
   return (
     // The shell is locked to the viewport and ONLY <main> scrolls. Previously the outer box
     // was min-h-screen, so the whole page scrolled and main's overflow-y-auto never
@@ -254,7 +269,7 @@ const AdminLayout = ({ children }) => {
           collapsed ? 'w-16' : 'w-64'
         )}
       >
-        <SidebarInner railMode={collapsed} />
+        <SidebarInner railMode={collapsed} menu={adminMenu} isPathActive={isPathActive} />
       </aside>
 
       {/* ----------------------------------------------------------- mobile drawer */}
@@ -278,7 +293,7 @@ const AdminLayout = ({ children }) => {
               transition={{ type: 'spring', stiffness: 380, damping: 38 }}
               className="fixed inset-y-0 left-0 z-50 flex w-72 flex-col border-r border-sidebar-border bg-sidebar lg:hidden"
             >
-              <SidebarInner onClose={() => setSidebarOpen(false)} />
+              <SidebarInner onClose={() => setSidebarOpen(false)} menu={adminMenu} isPathActive={isPathActive} />
             </motion.aside>
           </>
         )}
