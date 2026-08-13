@@ -3,8 +3,8 @@ import { useParams } from 'react-router-dom';
 import axios from 'axios';
 import api from '../services/api';
 import BrandLogo from '../components/layout/BrandLogo';
-import { FEEDBACK_CATEGORIES } from '../utils/constants';
-import { CheckCircle2, Star } from 'lucide-react';
+import InterviewFeedbackForm from '../components/feedback/InterviewFeedbackForm';
+import { CheckCircle2 } from 'lucide-react';
 
 /**
  * Post-interview screen for one-time candidates — §3.3 steps 7–8.
@@ -30,41 +30,15 @@ import { CheckCircle2, Star } from 'lucide-react';
 // Long enough to actually write something, short enough that walking away still ends it.
 const AUTO_CLOSE_MS = 5 * 60 * 1000;
 
-const RATING_HINTS = ['', 'Very poor', 'Poor', 'Okay', 'Good', 'Excellent'];
-
-const StarRating = ({ value, onChange, label, size = 22 }) => (
-  <div className="flex items-center gap-1" role="radiogroup" aria-label={label}>
-    {[1, 2, 3, 4, 5].map((n) => (
-      <button
-        key={n}
-        type="button"
-        role="radio"
-        aria-checked={value === n}
-        aria-label={`${n} out of 5 — ${RATING_HINTS[n]}`}
-        onClick={() => onChange(value === n ? 0 : n)}
-        className="rounded p-0.5 text-slate-300 transition-colors hover:scale-110 dark:text-slate-600"
-      >
-        <Star
-          size={size}
-          className={n <= value ? 'fill-amber-400 text-amber-400' : ''}
-        />
-      </button>
-    ))}
-  </div>
-);
-
 const OfficialThankYou = () => {
   const { id: interviewId } = useParams();
   const tokenRef = useRef(null);
   const capturedRef = useRef(false);
   const closedRef = useRef(false);
 
-  const [overall, setOverall] = useState(0);
-  const [categories, setCategories] = useState({});
-  const [remarks, setRemarks] = useState('');
-  const [issues, setIssues] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState(false);
+  const [gaveFeedback, setGaveFeedback] = useState(false);
 
   // Close the session server-side. Idempotent — the first caller wins.
   // `viaBeacon` uses fetch with keepalive because the page is being torn down at that point
@@ -138,8 +112,7 @@ const OfficialThankYou = () => {
     closeSession();
   }, [closeSession]);
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  const handleSubmit = async (values) => {
     if (submitting) return;
     setSubmitting(true);
 
@@ -148,16 +121,7 @@ const OfficialThankYou = () => {
       try {
         await axios.post(
           `${api.defaults.baseURL}/feedback`,
-          {
-            // The backend requires an overall rating. A candidate who rated only categories
-            // still deserves to have that saved, so fall back to their category average
-            // rather than rejecting the submission or silently dropping it.
-            rating: overall || averageOf(categories) || 5,
-            feedback_text: remarks.trim() || null,
-            issues_reported: issues.trim() || null,
-            category_ratings: categories,
-            interview_id: interviewId ? Number(interviewId) : null,
-          },
+          { ...values, interview_id: interviewId ? Number(interviewId) : null },
           { headers: { Authorization: `Bearer ${token}` } }
         );
       } catch {
@@ -166,18 +130,9 @@ const OfficialThankYou = () => {
       }
     }
     setSubmitting(false);
+    setGaveFeedback(true);
     finish();
   };
-
-  const setCategory = (key, value) =>
-    setCategories((prev) => {
-      const next = { ...prev };
-      if (value) next[key] = value;
-      else delete next[key];
-      return next;
-    });
-
-  const hasAnything = overall > 0 || Object.keys(categories).length > 0 || remarks.trim() || issues.trim();
 
   return (
     <div className="min-h-screen bg-slate-100 dark:bg-slate-950 flex flex-col font-sans">
@@ -202,17 +157,14 @@ const OfficialThankYou = () => {
           {done ? (
             <div className="glass-panel border border-slate-200 dark:border-slate-800 rounded-2xl p-8 text-center space-y-3">
               <p className="text-sm font-bold text-slate-900 dark:text-white">
-                {hasAnything ? 'Thank you — your feedback has been recorded.' : 'You can close this tab now.'}
+                {gaveFeedback ? 'Thank you — your feedback has been recorded.' : 'You can close this tab now.'}
               </p>
               <p className="text-[11px] text-slate-400 dark:text-slate-500 pt-2 border-t border-slate-200 dark:border-slate-800">
                 You have been securely signed out. Your one-time credentials are no longer valid.
               </p>
             </div>
           ) : (
-            <form
-              onSubmit={handleSubmit}
-              className="glass-panel border border-slate-200 dark:border-slate-800 rounded-2xl p-6 space-y-5"
-            >
+            <div className="glass-panel border border-slate-200 dark:border-slate-800 rounded-2xl p-6 space-y-5">
               <div className="text-center space-y-1">
                 <h2 className="text-base font-extrabold text-slate-900 dark:text-white">
                   How was your experience?
@@ -223,92 +175,26 @@ const OfficialThankYou = () => {
                 </p>
               </div>
 
-              <div className="flex flex-col items-center gap-1.5 py-1">
-                <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400">
-                  Overall
-                </span>
-                <StarRating value={overall} onChange={setOverall} label="Overall rating" size={28} />
-                <span className="h-4 text-[11px] font-semibold text-slate-500 dark:text-slate-400">
-                  {RATING_HINTS[overall] || ''}
-                </span>
-              </div>
-
-              <div className="space-y-2 border-t border-slate-200 dark:border-slate-800 pt-4">
-                {FEEDBACK_CATEGORIES.map((c) => (
-                  <div key={c.key} className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="text-xs font-bold text-slate-800 dark:text-slate-200">{c.label}</div>
-                      <div className="text-[10px] text-slate-500 dark:text-slate-400">{c.hint}</div>
-                    </div>
-                    <StarRating
-                      value={categories[c.key] || 0}
-                      onChange={(v) => setCategory(c.key, v)}
-                      label={c.label}
-                      size={17}
-                    />
-                  </div>
-                ))}
-              </div>
-
-              <div className="space-y-3 border-t border-slate-200 dark:border-slate-800 pt-4">
-                <div>
-                  <label htmlFor="tky-remarks" className="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400">
-                    Anything you'd like to add
-                  </label>
-                  <textarea
-                    id="tky-remarks"
-                    rows={3}
-                    className="w-full glass-input text-sm mt-1.5 resize-none"
-                    placeholder="What went well, what could be better…"
-                    value={remarks}
-                    onChange={(e) => setRemarks(e.target.value)}
-                  />
-                </div>
-                <div>
-                  <label htmlFor="tky-issues" className="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400">
-                    Any technical problems?
-                  </label>
-                  <input
-                    id="tky-issues"
-                    className="w-full glass-input text-sm mt-1.5"
-                    placeholder="e.g. the microphone cut out on question 3"
-                    value={issues}
-                    onChange={(e) => setIssues(e.target.value)}
-                  />
-                </div>
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-1">
-                <button
-                  type="button"
-                  onClick={finish}
-                  disabled={submitting}
-                  className="rounded-lg px-4 py-2 text-xs font-bold text-slate-500 transition-colors hover:text-slate-800 disabled:opacity-50 dark:hover:text-slate-200"
-                >
-                  Skip &amp; finish
-                </button>
-                <button
-                  type="submit"
-                  disabled={submitting || !hasAnything}
-                  className="rounded-lg bg-primary-600 px-5 py-2 text-xs font-bold text-white transition-colors hover:bg-primary-700 disabled:opacity-40"
-                >
-                  {submitting ? 'Sending…' : 'Submit feedback'}
-                </button>
-              </div>
-            </form>
+              <InterviewFeedbackForm
+                onSubmit={handleSubmit}
+                submitting={submitting}
+                secondaryAction={
+                  <button
+                    type="button"
+                    onClick={finish}
+                    disabled={submitting}
+                    className="rounded-lg px-4 py-2 text-xs font-bold text-slate-500 transition-colors hover:text-slate-800 disabled:opacity-50 dark:hover:text-slate-200"
+                  >
+                    Skip &amp; finish
+                  </button>
+                }
+              />
+            </div>
           )}
         </div>
       </main>
     </div>
   );
 };
-
-// Mean of whatever categories were rated, rounded — used only as the overall score when a
-// candidate rated categories but skipped the overall star row.
-function averageOf(categories) {
-  const values = Object.values(categories);
-  if (!values.length) return 0;
-  return Math.round(values.reduce((a, b) => a + b, 0) / values.length);
-}
 
 export default OfficialThankYou;

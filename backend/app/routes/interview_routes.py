@@ -12,7 +12,7 @@ from app.database.db import db
 from app.models import (
     User, Token, Transaction, Interview, InterviewQuestion,
     InterviewResponse, InterviewReport, Notification, AdminLog, RecordingLog,
-    ProctorSnapshot
+    ProctorSnapshot, Feedback
 )
 from app.ai.mixtral.mixtral_service import MixtralService
 from app.ai.whisper.whisper_service import WhisperService, TranscriptionError
@@ -1289,6 +1289,15 @@ def get_report(interview_id: int, user_id: int = Depends(get_current_user_id)):
             'response': responses_map.get(q.id, None)
         })
 
+    # Whether the person viewing this has already rated the interview. Drives the feedback
+    # prompt the report page shows a candidate who hasn't: asked of the server rather than
+    # remembered in the browser, so it stays right across devices, a re-login or a cleared
+    # cache, and one interview can't collect two ratings from the same person. Scoped to
+    # the viewer — an admin reviewing a candidate's report is answering for themselves.
+    feedback_submitted = db.session.query(
+        Feedback.query.filter_by(interview_id=interview_id, user_id=user_id).exists()
+    ).scalar()
+
     if not report:
         # Perf §1.6: distinguish "background scoring still running" from a genuine error so
         # the UI can show a 'Scoring in progress' state and poll, instead of erroring. A
@@ -1299,7 +1308,8 @@ def get_report(interview_id: int, user_id: int = Depends(get_current_user_id)):
                 'interview': interview.to_dict(),
                 'report': None,
                 'qna': qna_list,
-                'scoring_status': 'in_progress'
+                'scoring_status': 'in_progress',
+                'feedback_submitted': feedback_submitted,
             }
         raise HTTPException(status_code=404, detail="Report not generated yet")
 
@@ -1307,7 +1317,8 @@ def get_report(interview_id: int, user_id: int = Depends(get_current_user_id)):
         'interview': interview.to_dict(),
         'report': report.to_dict(),
         'qna': qna_list,
-        'scoring_status': 'complete'
+        'scoring_status': 'complete',
+        'feedback_submitted': feedback_submitted,
     }
 
 @interview_bp.post('/evaluate-code')

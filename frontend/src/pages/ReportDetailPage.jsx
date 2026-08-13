@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
+import InterviewFeedbackForm from '../components/feedback/InterviewFeedbackForm';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import Alert from '../components/ui/Alert';
@@ -8,7 +9,6 @@ import SnapshotGallery from '../components/report/SnapshotGallery';
 import { cn, formatScore } from '@/lib/utils';
 import { Button } from '@/components/shadcn/button';
 import { Badge } from '@/components/shadcn/badge';
-import { Input, Textarea, Label, NativeSelect } from '@/components/shadcn/input';
 import { scoreColor } from '@/components/shadcn/chart';
 import {
   Activity,
@@ -127,25 +127,24 @@ const ReportDetailPage = () => {
   }, [isAdmin, data?.interview?.id]);
 
   /* ------------------------------------------------------------------ feedback */
-  const [rating, setRating] = useState(5);
-  const [feedbackText, setFeedbackText] = useState('');
-  const [issuesReported, setIssuesReported] = useState('');
   const [feedbackSubmitted, setFeedbackSubmitted] = useState(false);
   const [feedbackLoading, setFeedbackLoading] = useState(false);
+  const [feedbackError, setFeedbackError] = useState('');
 
-  const handleSubmitFeedback = async (e) => {
-    e.preventDefault();
+  const handleSubmitFeedback = async (values) => {
     setFeedbackLoading(true);
+    setFeedbackError('');
     try {
-      await api.post('/feedback', {
-        rating,
-        feedback_text: feedbackText,
-        issues_reported: issuesReported,
-        interview_id: parseInt(id, 10),
-      });
+      await api.post('/feedback', { ...values, interview_id: parseInt(id, 10) });
       setFeedbackSubmitted(true);
     } catch (err) {
+      // Surfaced rather than only logged: unlike the thank-you screen, nothing else is
+      // happening here for the candidate to move on to, so a silent failure would look
+      // like the button simply not working.
       console.error('Failed to submit user feedback:', err);
+      setFeedbackError(
+        err.response?.data?.message || 'Could not send your feedback. Please try again.'
+      );
     } finally {
       setFeedbackLoading(false);
     }
@@ -162,6 +161,12 @@ const ReportDetailPage = () => {
         if (cancelled) return;
         setData(res.data);
         setError('');
+        // Seed from the server so the prompt stays hidden on a device or session where this
+        // person already rated the interview. Latched with `prev ||` rather than assigned:
+        // while scoring is still running this refetches every 3s, and a poll that left
+        // before a submission would otherwise land after it and reopen the form. Feedback
+        // is never un-submitted, so true is permanent.
+        setFeedbackSubmitted((prev) => prev || Boolean(res.data.feedback_submitted));
         // Scoring runs in the background: poll until the report lands, then stop.
         if (!res.data.report && res.data.scoring_status === 'in_progress') {
           if (!pollId) pollId = setInterval(fetchReport, 3000);
@@ -293,6 +298,9 @@ const ReportDetailPage = () => {
     { name: 'Problem Solving', score: report.problem_solving_score },
   ].map((c) => ({ ...c, fill: scoreColor(c.score) }));
 
+  // The candidate whose interview this is, and who hasn't rated it yet.
+  const showFeedbackPrompt = !isAdmin && !feedbackSubmitted;
+
   const tabs = [
     { id: 'overview', label: 'Analysis', icon: Activity },
     { id: 'transcript', label: 'Transcript', icon: BookOpen, badge: qna.length },
@@ -410,6 +418,40 @@ const ReportDetailPage = () => {
 
         {/* ------------------------------------------------------- evidence pane */}
         <section className="flex min-h-0 flex-col print:block">
+          {/* Post-interview feedback, asked up front rather than left in the Remarks tab.
+              One-time candidates get this on their thank-you screen, but enrolled candidates
+              never see that screen — they land here, and a form buried behind one of six tabs
+              meant that half of the intake was effectively never asked.
+
+              Only for the candidate whose interview this is, and only until they answer:
+              feedback_submitted comes from the server, so it stays answered across devices
+              and re-logins. An admin reviewing someone else's report is not the person being
+              asked, and the Remarks tab is still there for them. */}
+          {showFeedbackPrompt && (
+            <div className="no-print mb-3 shrink-0 rounded-xl border border-primary/30 bg-primary/5 p-4 print:hidden">
+              <div className="mb-3 flex items-start gap-2.5">
+                <MessageSquare className="mt-0.5 size-4 shrink-0 text-primary" />
+                <div className="min-w-0">
+                  <h3 className="text-sm font-bold text-foreground">How was your interview?</h3>
+                  <p className="text-[11px] text-muted-foreground">
+                    Optional, and never shown to anyone assessing you. It only helps us improve
+                    the platform.
+                  </p>
+                </div>
+              </div>
+              {feedbackError && (
+                <Alert variant="error" className="mb-3 text-xs">
+                  {feedbackError}
+                </Alert>
+              )}
+              <InterviewFeedbackForm
+                onSubmit={handleSubmitFeedback}
+                submitting={feedbackLoading}
+                compact
+              />
+            </div>
+          )}
+
           <div className="no-print flex shrink-0 gap-1 overflow-x-auto border-b border-border print:hidden">
             {tabs.map((tab) => {
               const Icon = tab.icon;
@@ -748,48 +790,26 @@ const ReportDetailPage = () => {
                   <Alert variant="success" className="text-xs font-bold">
                     Thank you! Your feedback has been registered.
                   </Alert>
+                ) : showFeedbackPrompt ? (
+                  // The same form is already open at the top of this pane, so pointing at it
+                  // beats rendering a second copy that shares its state and would confuse
+                  // anyone who filled one and saw the other change with it.
+                  <p className="text-xs text-muted-foreground">
+                    The feedback form is at the top of this page.
+                  </p>
                 ) : (
-                  <form onSubmit={handleSubmitFeedback} className="space-y-4">
-                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                      <div className="space-y-1.5">
-                        <Label htmlFor="rating">Rate this assessment session</Label>
-                        <NativeSelect
-                          id="rating"
-                          value={rating}
-                          onChange={(e) => setRating(parseInt(e.target.value, 10))}
-                        >
-                          <option value="5">★★★★★ (5 — Excellent)</option>
-                          <option value="4">★★★★☆ (4 — Good)</option>
-                          <option value="3">★★★☆☆ (3 — Average)</option>
-                          <option value="2">★★☆☆☆ (2 — Poor)</option>
-                          <option value="1">★☆☆☆☆ (1 — Very Bad)</option>
-                        </NativeSelect>
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label htmlFor="issues">Report any hardware / AI issues</Label>
-                        <Input
-                          id="issues"
-                          placeholder="e.g. Minor lag in speech transcript."
-                          value={issuesReported}
-                          onChange={(e) => setIssuesReported(e.target.value)}
-                        />
-                      </div>
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label htmlFor="remarks">Review Remarks</Label>
-                      <Textarea
-                        id="remarks"
-                        placeholder="Share your thoughts about this assessment experience…"
-                        value={feedbackText}
-                        onChange={(e) => setFeedbackText(e.target.value)}
-                      />
-                    </div>
-                    <div className="flex justify-end">
-                      <Button type="submit" size="sm" disabled={feedbackLoading}>
-                        {feedbackLoading ? 'Submitting…' : 'Submit Feedback'}
-                      </Button>
-                    </div>
-                  </form>
+                  <>
+                    {feedbackError && (
+                      <Alert variant="error" className="mb-3 text-xs">
+                        {feedbackError}
+                      </Alert>
+                    )}
+                    <InterviewFeedbackForm
+                      onSubmit={handleSubmitFeedback}
+                      submitting={feedbackLoading}
+                      compact
+                    />
+                  </>
                 )}
               </div>
             </Panel>

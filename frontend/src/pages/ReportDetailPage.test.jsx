@@ -9,7 +9,8 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 
 let reportResponse;
@@ -151,5 +152,80 @@ describe('ReportDetailPage', () => {
     await screen.findByText('72%');
     expect(screen.getByText('What is a closure?')).toBeInTheDocument();
     expect(screen.getByText(/No answer recorded/i)).toBeInTheDocument();
+  });
+
+  /* ------------------------------------------------- post-interview feedback */
+  // Enrolled candidates never see the one-time thank-you screen — they land here. The
+  // form used to be one of six tabs with no categories, so half the intake was never
+  // really asked. It is now promoted to the top of the evidence pane, gated on who is
+  // looking and whether they have already answered.
+
+  it('asks the candidate for feedback when they have not given any', async () => {
+    reportResponse = { ...fullReport, feedback_submitted: false };
+    renderReport();
+    expect(await screen.findByText('How was your interview?', {}, { timeout: 5000 })).toBeInTheDocument();
+    // The categories are the point of the promoted form, not just a rating box.
+    expect(screen.getByText('Question Quality')).toBeInTheDocument();
+    expect(screen.getByText('Proctoring')).toBeInTheDocument();
+  });
+
+  it('does not ask again once the server says feedback exists', async () => {
+    // Survives a different device, a re-login and a cleared cache, because it is the
+    // server's answer rather than anything remembered in the browser.
+    reportResponse = { ...fullReport, feedback_submitted: true };
+    renderReport();
+    await screen.findByText('72%');
+    expect(screen.queryByText('How was your interview?')).not.toBeInTheDocument();
+  });
+
+  it('never asks an admin who is reviewing another persons report', async () => {
+    currentUser = { id: 99, name: 'Admin', role: 'admin' };
+    reportResponse = { ...fullReport, feedback_submitted: false };
+    renderReport();
+    await screen.findByText('72%');
+    expect(screen.queryByText('How was your interview?')).not.toBeInTheDocument();
+  });
+
+  it('submits the rating and categories, then stops asking', async () => {
+    const api = (await import('../services/api')).default;
+    reportResponse = { ...fullReport, feedback_submitted: false };
+    renderReport();
+    await screen.findByText('How was your interview?', {}, { timeout: 5000 });
+
+    // Rate one category specifically — scoped by its radiogroup, since the overall row
+    // renders the same star labels and picking by index would silently test that instead.
+    const group = screen.getByRole('radiogroup', { name: 'Question Quality' });
+    await userEvent.click(within(group).getByRole('radio', { name: /4 out of 5/i }));
+    await userEvent.click(screen.getByRole('button', { name: /submit feedback/i }));
+
+    // Generous timeouts: the default 1s is enough in isolation but this file mounts a
+    // heavy page, and under a full parallel suite run it was occasionally missed.
+    await waitFor(() => expect(api.post).toHaveBeenCalled(), { timeout: 5000 });
+    const [url, body] = api.post.mock.calls[0];
+    expect(url).toBe('/feedback');
+    expect(body.interview_id).toBe(11);
+    expect(body.rating).toBeGreaterThan(0);
+    expect(Object.keys(body.category_ratings).length).toBeGreaterThan(0);
+
+    // The prompt closes on success rather than sitting there re-askable.
+    await waitFor(
+      () => expect(screen.queryByText('How was your interview?')).not.toBeInTheDocument(),
+      { timeout: 5000 }
+    );
+  });
+
+  it('keeps the form up and explains itself when submission fails', async () => {
+    const api = (await import('../services/api')).default;
+    api.post.mockRejectedValueOnce({ response: { data: { message: 'Server said no' } } });
+    reportResponse = { ...fullReport, feedback_submitted: false };
+    renderReport();
+    await screen.findByText('How was your interview?', {}, { timeout: 5000 });
+
+    const stars = screen.getAllByRole('radio', { name: /5 out of 5/i });
+    await userEvent.click(stars[0]);
+    await userEvent.click(screen.getByRole('button', { name: /submit feedback/i }));
+
+    expect(await screen.findByText('Server said no', {}, { timeout: 5000 })).toBeInTheDocument();
+    expect(screen.getByText('How was your interview?')).toBeInTheDocument();
   });
 });
