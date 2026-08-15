@@ -43,3 +43,6 @@ backend/reports/*
 *.njsproj
 *.sln
 *.swp
+
+# Vercel CLI link state — contains projectId/orgId, not for sharing.
+.vercel/

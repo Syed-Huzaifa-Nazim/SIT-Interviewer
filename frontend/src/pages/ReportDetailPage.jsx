@@ -13,10 +13,13 @@ import { scoreColor } from '@/components/shadcn/chart';
 import {
   Activity,
   AlertCircle,
+  AlertTriangle,
   BookOpen,
   Calendar,
   ChevronLeft,
   Clock,
+  FileText,
+  Flag,
   Info,
   ListChecks,
   MessageSquare,
@@ -70,6 +73,28 @@ const VIOLATION_TONE = {
   TAB_SWITCH: 'info',
   FOCUS_LOSS: 'info',
 };
+
+/** One extracted-field list on the admin's Resume panel. */
+const ResumeFacts = ({ title, items }) => (
+  <div className="rounded-lg border border-border bg-muted/40 p-3">
+    <span className="text-[9px] font-bold uppercase tracking-wide text-muted-foreground">
+      {title} ({items.length})
+    </span>
+    {items.length === 0 ? (
+      <p className="mt-1 text-xs text-muted-foreground">
+        Nothing extracted — questions could not be built from this.
+      </p>
+    ) : (
+      <ul className="mt-1.5 space-y-1">
+        {items.map((item, i) => (
+          <li key={i} className="text-xs leading-relaxed text-foreground/80">
+            {item}
+          </li>
+        ))}
+      </ul>
+    )}
+  </div>
+);
 
 const ReportDetailPage = () => {
   const { id } = useParams();
@@ -125,6 +150,53 @@ const ReportDetailPage = () => {
       cancelled = true;
     };
   }, [isAdmin, data?.interview?.id]);
+
+  /* --------------------------------------------------- resume (Resume-Based only) */
+  // The CV this interview's questions were generated from (Resume §4.2). Without it an
+  // admin cannot judge whether the questions matched the candidate — the one thing that
+  // can go wrong in this category and nowhere else. Fetched only for admins, and only for
+  // this interview type, so every other report costs nothing.
+  const [resumeData, setResumeData] = useState(null);
+  const [flagReason, setFlagReason] = useState('');
+  const [flagBusy, setFlagBusy] = useState(false);
+  const [flagError, setFlagError] = useState('');
+
+  const isResumeBased = data?.interview?.type === 'resume_based';
+  const candidateId = data?.interview?.user_id;
+
+  useEffect(() => {
+    if (!isAdmin || !isResumeBased || !candidateId) return undefined;
+    let cancelled = false;
+    api
+      .get(`/admin/users/${candidateId}/resume`)
+      .then((res) => {
+        if (!cancelled) setResumeData(res.data);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [isAdmin, isResumeBased, candidateId]);
+
+  const resumeRecord = resumeData?.resume || null;
+
+  const toggleResumeFlag = useCallback(async (flagged) => {
+    if (!resumeRecord) return;
+    setFlagBusy(true);
+    setFlagError('');
+    try {
+      const res = await api.post(`/admin/resume-analyses/${resumeRecord.id}/flag`, {
+        flagged,
+        reason: flagged ? flagReason : undefined,
+      });
+      setResumeData((prev) => (prev ? { ...prev, resume: res.data.resume } : prev));
+      setFlagReason('');
+    } catch (err) {
+      setFlagError(err.response?.data?.message || 'Could not update the flag.');
+    } finally {
+      setFlagBusy(false);
+    }
+  }, [resumeRecord, flagReason]);
 
   /* ------------------------------------------------------------------ feedback */
   const [feedbackSubmitted, setFeedbackSubmitted] = useState(false);
@@ -312,6 +384,17 @@ const ReportDetailPage = () => {
       danger: true,
     },
     ...(showVideo ? [{ id: 'recording', label: 'Recording', icon: Video }] : []),
+    // Only for a Resume-Based interview, and only once the CV has loaded — an empty tab
+    // would just raise the question of where the resume went.
+    ...(isAdmin && isResumeBased && resumeRecord
+      ? [{
+          id: 'resume',
+          label: 'Resume',
+          icon: FileText,
+          badge: resumeRecord.flagged_at ? '!' : null,
+          danger: !!resumeRecord.flagged_at,
+        }]
+      : []),
     { id: 'feedback', label: 'Remarks', icon: MessageSquare },
     ...(isAdmin ? [{ id: 'admin', label: 'Tools', icon: UserCheck }] : []),
   ];
@@ -550,6 +633,27 @@ const ReportDetailPage = () => {
                       <h4 className="mt-1.5 text-sm font-bold leading-snug text-foreground">
                         {item.question.question_text}
                       </h4>
+                      {/* Resume-to-question traceability (Resume §4.2). Only on this
+                          category, and only for admins: it exists so a reviewer can tell
+                          whether the generator worked off the CV or invented a connection
+                          to it, which is a failure mode no other category has. A question
+                          with no source is shown as such rather than left blank — the
+                          absence IS the finding. */}
+                      {isAdmin && isResumeBased && item.question.question_type !== 'coding_sandbox' && (
+                        item.question.derived_from ? (
+                          <p className="mt-1.5 flex items-start gap-1.5 text-[10px] font-semibold text-muted-foreground">
+                            <FileText className="mt-px size-3 shrink-0 text-primary" />
+                            <span className="min-w-0">
+                              From resume: <span className="text-foreground/80">{item.question.derived_from}</span>
+                            </span>
+                          </p>
+                        ) : (
+                          <p className="mt-1.5 flex items-start gap-1.5 text-[10px] font-semibold text-amber-600 dark:text-amber-400">
+                            <AlertTriangle className="mt-px size-3 shrink-0" />
+                            <span>Not traceable to any skill or project on the resume</span>
+                          </p>
+                        )
+                      )}
                     </div>
                     {item.response && (
                       <div className="shrink-0 text-right">
@@ -588,6 +692,96 @@ const ReportDetailPage = () => {
                 </div>
               ))}
             </Panel>
+
+            {/* ---------------------------------------------------------- resume */}
+            {isAdmin && isResumeBased && resumeRecord && (
+              <Panel show={activeTab === 'resume'}>
+                {resumeRecord.flagged_at && (
+                  <Alert variant="warning">
+                    <b>Flagged as poorly parsed</b>
+                    {resumeRecord.flag_reason ? ` — ${resumeRecord.flag_reason}` : ''}
+                    {resumeData?.flagged_by_name ? ` (${resumeData.flagged_by_name})` : ''}
+                  </Alert>
+                )}
+
+                <div className="rounded-xl border border-border bg-card p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h4 className="flex items-center gap-2 text-xs font-bold text-primary">
+                      <FileText className="size-4" /> {resumeRecord.file_name}
+                    </h4>
+                    <Badge variant="secondary" size="sm">ATS {resumeRecord.resume_score}%</Badge>
+                  </div>
+
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                    <ResumeFacts title="Skills" items={asList(resumeRecord.extracted_skills)} />
+                    <ResumeFacts title="Projects" items={asList(resumeRecord.extracted_projects)} />
+                  </div>
+                </div>
+
+                {/* The uploaded file is never retained, so this text IS the document as the
+                    question generator saw it — which is exactly what makes it useful for
+                    checking a question against its source. */}
+                <div className="rounded-xl border border-border bg-card p-4">
+                  <h4 className="mb-2 flex items-center gap-2 text-xs font-bold text-primary">
+                    <BookOpen className="size-4" /> Resume text
+                  </h4>
+                  {resumeRecord.raw_text ? (
+                    <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-lg border border-border bg-muted/40 p-3 font-sans text-xs leading-relaxed text-foreground/80">
+                      {resumeRecord.raw_text}
+                    </pre>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">
+                      This resume was analysed before the full text was retained, so only the
+                      extracted skills and projects above are available.
+                    </p>
+                  )}
+                </div>
+
+                {/* Operational signal only — nothing branches on it. It is here so a garbled
+                    PDF is recorded as the cause of a weak interview rather than being
+                    mistaken for a weak candidate. */}
+                <div className="rounded-xl border border-border bg-card p-4">
+                  <h4 className="mb-2 flex items-center gap-2 text-xs font-bold text-primary">
+                    <Flag className="size-4" /> Analysis quality
+                  </h4>
+                  {flagError && <Alert variant="error">{flagError}</Alert>}
+
+                  {resumeRecord.flagged_at ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={flagBusy}
+                      onClick={() => toggleResumeFlag(false)}
+                    >
+                      Clear this flag
+                    </Button>
+                  ) : (
+                    <div className="space-y-2">
+                      <p className="text-xs text-muted-foreground">
+                        If the extraction above misread the CV — garbled text, missed skills,
+                        projects not picked up — record it here.
+                      </p>
+                      <textarea
+                        value={flagReason}
+                        onChange={(e) => setFlagReason(e.target.value)}
+                        rows={2}
+                        maxLength={500}
+                        placeholder="What did the analysis get wrong?"
+                        className="w-full rounded-lg border border-border bg-muted/40 p-2 text-xs text-foreground"
+                      />
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={flagBusy || !flagReason.trim()}
+                        onClick={() => toggleResumeFlag(true)}
+                      >
+                        <Flag className="size-3.5" /> Flag this analysis
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              </Panel>
+            )}
 
             {/* -------------------------------------------------------- evidence */}
             <Panel show={activeTab === 'compliance'}>
