@@ -1,192 +1,324 @@
 # Interviewer.AI — Project Summary
 
-An AI-powered mock interview platform. Candidates take voice-driven technical/HR/behavioral interviews against an LLM interviewer, get AI-transcribed and AI-scored answers, receive a full performance report, and can also analyze their resume against a job description. Admins get a full back-office: user management, platform analytics, revenue tracking, and an LLM-scoring audit dashboard. The live UI is branded **"SMIT Assessment Portal" / "SIT Interviewer[Admin]"**, suggesting this is a bootcamp capstone project.
+> **Last verified:** 2026-08-15, against `huzaifa` @ `b3902e2`. Every claim in this document
+> was checked against the running code on that date, not carried forward from an older
+> version — see `DEVELOPMENT_LOG.md` for the day-by-day history behind it.
+
+An AI-powered interview platform with two tracks that share the same core engine: **mock
+practice interviews** any registered candidate can run on demand, and **official proctored
+interviews** that an admin invites completed-course candidates to via one-time credentials.
+Candidates take voice-driven technical/HR/behavioral interviews (plus a closing 10-question
+MCQ round, and a hands-on coding exercise for course graduates) against an LLM interviewer,
+get AI-transcribed and AI-scored answers, and receive a full performance report. Admins get a
+full back-office: user management with per-candidate interview deadlines, bulk-invite
+cohorts, platform analytics, revenue tracking, session-recording review, and an LLM-scoring
+audit dashboard. The live UI is branded **"SMIT Assessment Portal" / "SIT Interviewer
+[Admin]"** — a bootcamp capstone project, live at **sit-interviewer.vercel.app** (frontend)
+and **interviewer-ai-backend-production.up.railway.app** (backend).
 
 ---
 
 ## 1. Tech Stack
 
 ### Backend
-- **Framework**: FastAPI (ASGI) served via **Uvicorn** — despite the README/Dockerfile still describing this as a Flask app (stale docs, see [§6](#6-known-inconsistencies--technical-debt)).
-- **ORM**: Raw SQLAlchemy, wrapped in a hand-rolled `db` shim (`app/database/db.py`) that mimics the Flask-SQLAlchemy API (`db.Model`, `db.Column`, `scoped_session`) so model code reads like a Flask app even though it isn't one.
-- **Database**: SQLite for local dev (`interviewer.db`), PostgreSQL in Docker/production (`psycopg2-binary`), auto-created tables on startup (no Alembic migrations).
-- **Auth**: Hand-rolled JWT (`pyjwt`) — 12-hour access tokens, 7-day refresh tokens, `bcrypt` password hashing.
-- **AI providers**: OpenAI-compatible chat completion APIs — **Groq** (default), Together AI, OpenAI, or OpenRouter — for the LLM, plus **Groq/OpenAI Whisper** for speech-to-text. All AI calls are optional: an `AI_MODE=mock` switch runs the entire platform on deterministic, hand-authored fallback logic with zero API keys.
-- **File handling**: `pypdf` (resume parsing), `pydub` + FFmpeg (audio transcoding), Supabase Storage REST API for profile pictures (falls back to Base64 data URIs if unconfigured).
-- **Other**: `python-dotenv`, `pydantic`, `python-multipart`, `gunicorn` (prod process manager).
+- **Framework**: FastAPI (ASGI) served via **Uvicorn**, single worker process.
+- **Every route handler is a plain `def`, not `async def`.** Nothing in the app is
+  genuinely asynchronous — synchronous SQLAlchemy, blocking `requests` calls to Supabase
+  Storage, `subprocess`-run candidate code, bcrypt, and the LLM/Whisper/SMTP clients all
+  block. An `async def` handler runs that work directly on the single event loop and
+  serializes the entire backend behind whichever request got there first; `def` handlers are
+  dispatched to FastAPI's worker threadpool instead, so requests genuinely overlap. This was
+  a deliberate migration (2026-08-11) across all ~89 handlers, guarded by a test
+  (`backend/tests/test_route_concurrency.py`) that fails the suite if any handler is
+  ever declared `async` again.
+- **ORM**: Raw SQLAlchemy, wrapped in a hand-rolled `db` shim (`app/database/db.py`) that
+  mimics the Flask-SQLAlchemy API (`db.Model`, `db.Column`, `scoped_session`).
+- **Database**: **PostgreSQL only, hosted on Supabase (Singapore region).** No SQLite
+  anywhere, including local dev — `db.py` fails fast on a missing or `sqlite://`
+  `DATABASE_URL`. Connects via Supabase's **transaction pooler** (port 6543), pool sized
+  `pool_size=25, max_overflow=35` (see `db.py` for the incident that drove that number up
+  from an earlier `5+5`). No Alembic — `app/database/migrate.py`'s `ensure_schema()` diffs
+  each SQLAlchemy model against the live table on boot and adds any missing column with a
+  lock-timeout-and-retry loop, so a schema change ships as a normal code change with no
+  manual migration step.
+- **Auth**: Hand-rolled JWT (`pyjwt`), `bcrypt` password hashing. Two parallel credential
+  systems: a normal email+password account, and a one-time OTP login for official-interview
+  candidates (`User.must_use_otp`, `otp_hash`, `otp_expires_at` — the deadline an admin sets
+  per bulk-invite row).
+- **AI providers**: OpenAI-compatible chat completion APIs — Groq (default), Together AI,
+  OpenAI, or OpenRouter — for the LLM, plus Groq/OpenAI Whisper for speech-to-text. An
+  `AI_MODE=mock` switch runs the entire platform on deterministic, hand-authored fallback
+  logic with zero API keys — every AI touchpoint (questions, MCQs, scoring, reports,
+  resume/JD analysis, transcription) has one.
+- **File handling**: `pypdf` (resume parsing), `pydub` + FFmpeg *not shipped* (Whisper
+  accepts raw webm/ogg directly; ffmpeg conversion is best-effort and no-ops if absent —
+  the Docker image deliberately omits it to stay small), Supabase Storage REST API for
+  profile pictures, session/answer recordings, and proctoring snapshots (private buckets,
+  short-lived signed URLs for admin playback).
+- **Other**: `python-dotenv`, `pydantic`, `python-multipart`.
 
 ### Frontend
-- **React 19** + **Vite 8** (dev server / build tool).
-- **React Router 7** for client-side routing.
-- **Axios** for HTTP, with interceptors for auth-token injection, error-shape normalization, and silent token refresh on 401.
-- **Tailwind CSS 4** (CSS-first `@theme` config in `index.css` rather than a classic JS theme file) — custom brand palette ("SMIT Blue" `#0d6db7`, "SMIT Green" `#8dc63f`), dark mode via a `.dark` class, glassmorphism/corporate panel utilities, custom animations.
-- **Recharts** for the admin scoring-analytics bar charts.
-- **lucide-react** for icons.
-- **oxlint** for linting.
+- **React 19** + **Vite 8**.
+- **React Router 7**, **Axios** (shared instance with auth-token injection, error-shape
+  normalization, silent token refresh on 401 — deliberately bypassed with a *raw* axios call
+  on the small set of requests that fire after a session-clearing navigation, e.g. the
+  post-interview thank-you screen, so a stray 401 there can't hard-redirect the whole tab).
+- **Tailwind CSS 4** (CSS-first `@theme` config), dark mode via a `.dark` class.
+- **CodeMirror 6** (`@uiw/react-codemirror` + Python/JavaScript/SQL language packages) for
+  the coding sandbox editor — syntax highlighting, bracket matching, autocomplete.
+  Lazy-loaded (`React.lazy`) behind a thin `CodeEditor` wrapper so its ~550KB chunk is never
+  in the entry bundle for anyone who doesn't open a coding question.
+- **Recharts** for admin analytics charts. **lucide-react** for icons. **oxlint** for
+  linting (not ESLint).
+- **vite-plugin-pwa**: installable app, precached shell, network-only `/api`.
 
 ### Infrastructure
-- `docker-compose.yml` orchestrates 3 services: `db` (Postgres 15), `backend` (FastAPI/Uvicorn), `frontend` (Nginx serving the Vite build).
+- **Frontend hosted on Vercel** (project `sit-interviewer`), connected to GitHub for
+  auto-deploy on push to `main`. **Vercel refuses to build any deployment whose tip commit's
+  author is not a member of the Vercel team** — this bit production twice (2026-08-11,
+  2026-08-13) when a merge from a non-team collaborator became `main`'s tip; the standing
+  workaround is a small commit under a team member's identity on top before pushing to
+  `main`, rather than inviting the collaborator or disabling the restriction (open decision,
+  see `PROJECT_STATUS.md`).
+- **Backend hosted on Railway** (`railway.toml`, Dockerfile-based build), also auto-deploys
+  on push to `main`. `.github/workflows/keep-alive.yml` pings `/health` every 10 minutes so
+  the backend never cold-sleeps on Railway's tier — this only fires from commits that have
+  reached `main`, since GitHub only evaluates `schedule:` triggers off a repo's default
+  branch.
+- `.github/workflows/ci.yml` — build/lint/audit on every push to `main`/`huzaifa`/
+  `development`/`saqib-colab`, plus PRs into `main`.
+- A local `docker-compose.yml` also exists (Postgres + backend + frontend-via-nginx) for
+  fully offline dev, independent of the Vercel/Railway/Supabase trio above.
 
 ---
 
 ## 2. Backend Functionality
 
 ### 2.1 Application Bootstrap (`app/__init__.py`)
-- Builds the FastAPI app, restricts CORS to the origins listed in `CORS_ORIGINS` (wildcard only when that is unset, i.e. local development), and registers a teardown middleware that closes the DB session after every request.
-- Registers 9 routers under `/api/*`: auth, users, tokens, interviews, resume-jd, notifications, feedback, admin, coding.
-- Auto-creates all database tables on startup and **seeds the admin account** (`ADMIN_EMAIL`, default `admin@interviewer.com`) with 999 tokens if one doesn't already exist. The password comes from `ADMIN_PASSWORD` and is never hard-coded; with that variable unset a random password is generated and printed to the boot log exactly once. Setting `ADMIN_PASSWORD` on a later boot rotates an existing admin's password and revokes their outstanding tokens.
-- Exposes `GET /health` for liveness checks.
+- Builds the FastAPI app, restricts CORS to `CORS_ORIGINS` (wildcard + a loud `[SECURITY]`
+  boot-log warning only when unset). A single `db_session_middleware` stamps a per-request
+  session identity *before* `call_next` so it propagates into the worker thread a sync
+  handler runs on, and tears it down in a `finally` after.
+- Auto-creates tables + runs `ensure_schema()` on startup; seeds/rotates the admin account
+  from `ADMIN_EMAIL`/`ADMIN_PASSWORD` (revokes existing sessions on a password rotation).
+- Starts two background workers: session-recording assembly (joins uploaded video parts
+  server-side, so a candidate's browser finishing an upload is never a dependency for
+  playback existing) and recording retention (auto-deletes recordings past 20 days).
+- Exposes `GET /health` (checks DB connectivity).
 
-### 2.2 Configuration (`app/config/config.py`)
-Centralizes all environment-driven settings: database URL, JWT secrets/expiry, upload/report folder paths, allowed file extensions (pdf/txt/audio/image, 32MB cap), and a multi-provider AI configuration block that auto-derives the correct API URL and default model name based on `AI_PROVIDER` (Groq/Together/OpenAI/OpenRouter) and `WHISPER_PROVIDER` (Groq/OpenAI only).
-
-### 2.3 Data Model (`app/models/models.py`)
+### 2.2 Data Model (`app/models/models.py`) — 18 tables
 | Model | Purpose |
 |---|---|
-| **User** | Account record — name, email, password hash, country, experience level, job role, `role` (candidate/admin), ban `status`/`banned_until`, profile picture URL. Owns tokens, interviews, resume/JD analyses, notifications, feedback. |
-| **Token** | 1:1 wallet per user — available/consumed/purchased token counts. |
-| **Transaction** | Ledger of token movements (signup bonus, purchase, refund, admin adjustment, consumption). |
-| **Interview** | A single interview session — type, job role, difficulty, question count, status, overall score, and **proctoring fields** (violation count, failure flag, JSON violation log). |
-| **InterviewQuestion** | An individual question within an interview (conceptual/scenario/coding/HR/behavioral). |
-| **InterviewResponse** | A candidate's answer to a question — transcript, audio path, duration, per-axis scores (technical/communication/confidence), AI feedback text (flaggable for manual review). |
-| **InterviewReport** | The final generated report for a completed interview — all scores, strengths/weaknesses/missing concepts/recommendations, PDF path, and an optional proctoring violation snapshot image. |
-| **ResumeAnalysis** | Stored result of an uploaded resume being parsed and scored against known skills. |
-| **JdAnalysis** | Stored result of a job description being parsed for requirements/skills. |
-| **Notification** | In-app notification feed item (interview/token/activity/recommendation). |
-| **Feedback** | User-submitted platform feedback/rating, optionally tied to an interview. |
-| **CodeSubmission** | A coding-sandbox run/submission — code, language, per-test-case results, pass count, score. |
-| **AdminLog** | Audit trail of admin actions (bans, token overrides, auto-bans, rejected domains). |
+| **User** | Account record — includes CNIC (candidate identity), `course_category`/`course_status`, `interview_status` lifecycle, one-time OTP fields (`must_use_otp`, `otp_hash`, `otp_expires_at`), `bulk_batch_id` (which invite batch created this account, if any), `admin_remarks`, ban status. |
+| **Token** | 1:1 wallet — available/consumed/purchased. |
+| **Transaction** | Ledger of token movements. |
+| **Interview** | A session — type, job role, difficulty, `scoring_status` (pending/finalizing/complete, atomically claimed to prevent double-report-generation), proctoring fields, `terminated_reason`, intro-segment video bookmark (`intro_video_start_seconds`/`_end_seconds`, for the admin player's "Jump to Introduction"). |
+| **InterviewQuestion** | One question — conceptual/scenario/coding formats/HR/behavioral, **or `question_type='mcq'`** (the closing 10-question round: `mcq_options` JSON list, `mcq_correct_index` never exposed to the candidate), server-anchored `time_limit_seconds`. |
+| **InterviewResponse** | An answer — transcript, audio path, per-axis scores, `scoring_status`. |
+| **InterviewReport** | Final report — scores, strengths/weaknesses/recommendations, optional termination snapshot. |
+| **ResumeAnalysis** / **JdAnalysis** | Stored resume/JD parse results. |
+| **Notification** | In-app feed item — **now carries an optional `link`** (an in-app route path, validated client-side against being an absolute/protocol-relative URL before navigation) so a notification opens the thing it's about instead of leaving the candidate to find it. |
+| **Feedback** | Rating + free text, **plus `category_ratings`** (JSON object of up to 6 category keys — questions/ai_interviewer/audio_video/proctoring/platform/coding_sandbox — each 1-5, any subset). Collected from *every* candidate now, not just official-interview ones (see §3). |
+| **CodeSubmission** | A coding-sandbox run/submission. |
+| **SecondInterviewRequest** | A candidate's request for a re-interview, with an admin approve/reject flow. |
+| **EmailLog** | Audit trail of emails sent (invites, clearance, HR handoff). |
+| **RecordingLog** | Lifecycle audit for every audio/video recording, backing the 20-day retention worker. |
+| **ProctorSnapshot** | Webcam/screen frames archived on each proctoring violation. |
+| **AdminLog** | Audit trail of admin actions. |
+| **BulkEmailBatch** | One run of the Bulk Email Module — **`batch_name`** (admin-chosen cohort label, e.g. "Spring 2026 Intake", falls back to `subject` for older/unnamed batches) plus send-progress counts. Powers the Manage Users "Bulk Invited" cohort filter chips. |
 
-### 2.4 API Surface (by router)
+### 2.3 API Surface (by router) — 11 routers under `/api/*`
 
-**Auth** (`/api/auth`, public)
-- `POST /register` — creates account, grants 5 free tokens + welcome notification, returns JWTs.
-- `POST /login` — validates credentials, auto-lifts expired bans, returns JWTs + token balance.
-- `POST /refresh` — issues a new access token from a refresh token.
-- `POST /forgot-password` / `POST /reset-password` — mock OTP flow (hardcoded OTP `123456`, no real email sent).
-- `POST /logout` — stateless no-op.
+**Auth** (`/api/auth`) — register, login (password or one-time OTP), refresh, forgot/reset
+password (real emailed random code, bcrypt-hashed, 15-minute expiry — not the old hardcoded
+mock OTP), logout.
 
-**Users** (`/api/users`, authenticated)
-- `GET/PUT /profile` — view/update profile.
-- `GET /achievements` — gamification badges + a leaderboard (partly hardcoded/mocked) with the current user ranked in.
-- `POST /profile/picture` — uploads avatar via Supabase (or Base64 fallback).
+**Users** (`/api/users`) — profile, achievements/leaderboard, avatar upload, online-presence
+heartbeat.
 
-**Tokens** (`/api/tokens`, authenticated)
-- `GET /balance`, `POST /purchase` (simulated, no real payment gateway), `GET /transactions`.
+**Tokens** (`/api/tokens`) — balance, purchase (simulated), transactions.
 
-**Interviews** (`/api/interviews`, authenticated) — the core feature
-- `POST /start` — validates the requested domain is "technical" via the AI domain classifier, deducts 1 token, generates questions (AI or JD-driven or mock bank).
-- `GET /history`, `GET /stats/summary`, `GET /{id}/details`.
-- `POST /transcribe` — standalone speech-to-text.
-- `POST /{id}/submit-answer` — the core pipeline: transcribes audio if needed, scores the answer with the LLM, and once all questions are answered, generates the full AI interview report.
-- `GET /{id}/report` — full report + Q&A breakdown.
-- `POST /evaluate-code` — ad-hoc code execution + AI code review (separate from the coding sandbox module).
-- `POST /{id}/proctor-log` — logs an integrity violation; auto-terminates the interview after 3+ violations and auto-bans the user (until end of day) after 3 terminated interviews.
-- `POST /{id}/fail-proctoring` — manual force-fail for integrity violations.
+**Interviews** (`/api/interviews`) — the core feature:
+- `POST /start` — generates the 5 main questions synchronously; the **MCQ round generates in
+  a background thread** (the candidate has several minutes of intro + main questions as
+  cover; `get_interview_details` self-heals and `submit_answer`'s completion check compares
+  against an *expected* total rather than counting MCQ rows, so a slow/failed background
+  generation can never freeze or wrongly early-end the interview — this was a real bug, fixed
+  2026-08-15, see `DEVELOPMENT_LOG.md`).
+- `POST /{id}/submit-answer` — transcribes, scores (background thread for verbal answers,
+  instant deterministic compare for MCQs), finalizes the report once every question is
+  resolved.
+- `POST /{id}/mark-intro-segment` — records the intro screen's position inside the one
+  continuous session recording, for the admin "Jump to Introduction" player control.
+- `POST /{id}/proctor-log`, `/identity-failed`, `/fail-proctoring` — violation tracking,
+  identity-mismatch hard-termination, manual force-fail.
+- Video upload endpoints (`/upload-video-part`, `/finalize-video`) — incremental, so an
+  abrupt disconnect never loses the whole recording.
 
-**Resume & JD** (`/api/resume-jd`, authenticated)
-- `POST /analyze-resume` — parses an uploaded PDF/TXT resume, validates it looks like a real resume, and scores it.
-- `POST /analyze-jd` — extracts requirements/skills from pasted JD text.
-- `POST /match` — matches resume against JD, returning match %, skill gaps, and 3 tailored interview questions.
-- `POST /extract-file-text` — generic file → text extraction utility.
+**Resume & JD** (`/api/resume-jd`) — resume parse+score, JD parse, resume↔JD match with
+tailored practice questions.
 
-**Coding Sandbox** (`/api/coding`, **admin-only**) — a soft-launched feature not yet exposed to regular candidates
-- `GET /problems`, `GET /problems/{id}` — problem bank (**18** LeetCode-style problems: 10 Easy, 6 Medium, 2 Hard; 106 test cases). Every problem's expected values are verified against a reference solution in `backend/tests/test_problem_bank.py`.
-- `POST /run` — executes code against visible sample tests only.
-- `POST /submit` — executes against sample + hidden tests, persists a `CodeSubmission`.
+**Coding Sandbox** (`/api/coding`) — problem bank (18 problems, SQL problems execute against
+an in-memory SQLite dataset, everything else through a `subprocess`-isolated runner with a
+per-test timeout). `GET /problems`, `/run`, `/submit` are admin-only practice tools;
+`GET /interview-problem/{id}`, `/interview-run`, `/interview-submit` are **candidate-facing**
+— completed-course candidates open their interview on a hands-on coding exercise instead of
+a verbal Question 1 (sandbox-first flow).
 
-**Admin** (`/api/admin`, admin-only)
-- `GET /stats` — platform dashboard: user/interview counts, revenue, token totals, recent feedback/logs.
-- `GET /users`, `POST /users/{id}/ban`, `POST /users/{id}/tokens` — user management.
-- `GET /interviews`, `GET /transactions`, `GET /feedback`, `GET /logs` — platform-wide listings.
-- `GET /scoring/analytics`, `GET /scoring/interviews/{id}` — an **LLM-scoring audit dashboard**: average scores, score-distribution buckets, and a count of answers flagged for manual review, with per-question drill-down.
+**Admin** (`/api/admin`) — user management (list/detail/ban/token-override/edit,
+per-candidate `otp_expires_at` deadline visible and cleared on re-invite), platform stats,
+interviews/transactions/feedback/logs listings, scoring-analytics audit dashboard,
+bulk-email batch history.
 
-**Notifications** (`/api/notifications`, authenticated) — list + mark-read (single or all).
+**Bulk Email** (`/api/admin/bulk-email`) — validate + send an invite batch (CSV or manual
+rows), optional cohort name, per-row deadline, live send-progress polling.
 
-**Feedback** (`/api/feedback`, authenticated) — submit a 1–5 rating with free-text comments, optionally tied to an interview.
+**Notifications** (`/api/notifications`) — list + mark-read.
 
-### 2.5 AI Services (`app/ai/`)
+**Feedback** (`/api/feedback`) — submit rating + optional per-category ratings, tied to an
+interview.
 
-- **`MixtralService`** (name is legacy branding — actual default models are Llama-3.3-70B class via Groq): a single service class providing domain classification, question generation (role-driven or JD-driven), answer evaluation (technical/communication/confidence scoring), full report generation, and resume/JD analysis. Every method has a robust, hand-authored mock fallback so the platform runs fully offline with no API key. Low-confidence or failed evaluations are explicitly flagged `needs_manual_review` rather than silently guessed — never fabricates a score.
-- **`WhisperService`**: speech-to-text via Groq (`whisper-large-v3`) or OpenAI (`whisper-1`), with automatic webm/ogg/wav → mp3 conversion. In mock mode returns context-aware canned transcripts; in live mode, raises an error on failure instead of ever fabricating a transcript.
+**Candidate** (`/api/candidate`) — one-time official-interview session lifecycle
+(`/official-interview/complete` closes the session server-side).
 
-### 2.6 Coding Sandbox Engine (`app/coding/`)
-A real, working code-execution engine (`runner.py`): wraps candidate Python/JavaScript code in a generated driver script, executes it via `subprocess` with a per-test timeout to guard against infinite loops, and parses the result through a sentinel marker to separate program stdout from the actual return value. Explicitly documented as a placeholder for a future sandboxed (Docker/Judge0) backend — it currently runs directly on the host with only a timeout guard.
+### 2.4 AI Services (`app/ai/`)
+- **`MixtralService`**: domain classification, main-question generation, **MCQ generation**
+  (always Hard difficulty regardless of the interview's own difficulty — a deliberate
+  product decision), answer evaluation, report generation, resume/JD analysis. Every method
+  has a deterministic mock fallback. Low-confidence evaluations are flagged
+  `needs_manual_review` rather than guessed.
+- **`WhisperService`**: speech-to-text via Groq/OpenAI, raises rather than fabricating a
+  transcript on failure.
 
-### 2.7 Utilities (`app/utils/`)
-- `security.py` — JWT issuance/verification and FastAPI dependency guards (`get_current_user`, `admin_required`).
-- `pdf_parser.py` — PDF text extraction via `pypdf`.
-- `supabase_service.py` — profile picture upload to Supabase Storage, with a Base64 data-URI fallback.
+### 2.5 Coding Sandbox Engine (`app/coding/`)
+`runner.py` wraps candidate Python/JavaScript in a generated driver, executes via
+`subprocess` with a per-test timeout (guards infinite loops; no memory/process isolation
+beyond that — a documented placeholder for a future Docker/Judge0 sandbox). SQL problems run
+against an isolated in-memory SQLite dataset seeded per test case. Both paths return
+`runtime_ms` and captured `stdout` per test, now surfaced in the candidate-facing UI.
 
 ---
 
 ## 3. Frontend Functionality
 
 ### 3.1 Routing (`App.jsx`)
-Three route tiers, each with its own layout shell:
-- **Public** (marketing site): Landing, Features, Technology, Pricing, Contact, Demo, Login, Register, Forgot Password.
-- **Candidate** (`ProtectedRoute` + `DashboardLayout`): Dashboard, Start Interview, Interview Setup/Session/Report, Coding Sandbox (UI present but disabled for non-admins, matching the backend's admin-only gate), Resume & JD Match, History, Profile.
-- **Admin** (`AdminRoute` + `AdminLayout`): Overview, Manage Users, Interviews, Scoring Analytics, Transactions, Feedback, Logs.
+Three tiers: **Public** (marketing), **Candidate** (`DashboardLayout`), **Admin**
+(`AdminLayout`, hard-blocked for non-admins). A one-time official-interview candidate is
+routed to `OfficialThankYou` instead of the normal report page on completion.
 
-### 3.2 Key Pages
-- **Dashboard** — recent interviews + stats summary.
-- **InterviewConfig** — configure a new interview (type/role/experience/difficulty, or paste/upload a JD).
-- **InterviewSetup / InterviewSession** — pre-flight checks and the live interview UI: question flow, audio recording, real-time transcription, and webcam/tab-switch proctoring/integrity monitoring.
-- **ReportDetailPage** — full post-interview report with scores, strengths/weaknesses, recommendations, and a feedback submission form.
-- **CodingInterview** — coding sandbox UI (problem list, code editor, run/submit).
-- **ResumeJdAnalyzer** — resume upload + JD paste + match scoring.
-- **InterviewHistory** — past interviews list.
-- **ProfilePage** — profile editing, achievements/leaderboard, token purchase, transaction history, avatar upload.
-- **AdminDashboard / AdminUsersPage / AdminInterviewsPage / AdminTransactionsPage / AdminFeedbackPage / AdminLogsPage** — back-office management screens.
-- **AdminScoringPage** — LLM-scoring analytics: aggregate score/confidence stats, a Recharts score-distribution bar chart, flagged-answer count, and per-interview drill-down.
-- **Public marketing pages** (`pages/public/`) — Features, Technology, Pricing, Contact, Demo, sharing a common hero component.
+### 3.2 Key Pages (post-2026-08 redesign)
+- **DashboardLayout** — candidate shell. Sidebar nav items are hoisted to module scope and
+  memoized (`NavLink`), fixing an INP regression Vercel flagged: URL-driven state (search
+  text, active tab) on `/history` and `/admin/users` was re-rendering the whole layout on
+  every keystroke, which previously remounted the sidebar and replayed its active-item
+  animation.
+- **NotificationsMenu** (`components/layout/`) — every row is clickable, navigating to the
+  notification's stored `link` or a type-based fallback route; relative timestamps
+  (`utils/datetime.js`) with the exact moment on hover; closes on outside-click/Escape.
+- **InterviewHistory** ("Mock Assessment History") — rebuilt on the shared admin page
+  furniture (`AdminPageHeader`/`AdminSearch`/`StatGrid`/`AdminEmpty`) rather than one-off
+  candidate widgets, with session-count/completed/average/best stat cards.
+- **ProfilePage** — same shared header treatment; added an "Account Activity" card
+  (member-since / last-active / profile-updated, relative + exact-on-hover) where the page
+  previously carried no time information beyond a bare transaction date.
+- **InterviewSession** — question flow, incremental video upload, MCQ round UI (renders once
+  the background-generated rows land, polling `GET /interviews/{id}/details` if it runs off
+  the end of what it loaded at start), intro-segment bookmark capture, full proctoring
+  (MediaPipe FaceMesh/Hands, face-api identity verification, screen-share requirement).
+- **InterviewCodingSandbox** / **CodingInterview** — share one `CodeEditor` component
+  (CodeMirror 6, lazy-loaded) rather than two independent plain-textarea implementations;
+  reset-to-starter, `Ctrl+Enter` to run, per-test runtime + captured stdout shown in the
+  console.
+- **ReportDetailPage** — report + Q&A, session-recording playback with a "Jump to
+  Introduction" control (seeks correctly around the `<video>` `readyState`/`loadedmetadata`
+  race that made an early version appear to hang), and a **universal post-interview feedback
+  prompt** (categories from §2.2) shown once per interview, gated on a server-computed
+  `feedback_submitted` flag rather than client-side state so it survives a refresh or a
+  different device.
+- **OfficialThankYou** — one-time candidates' terminal screen. Session close (token
+  revocation) is now *deferred* until feedback is submitted or skipped — it used to fire on
+  mount, which made collecting feedback here structurally impossible since the credential
+  was already gone. Closes on submit/skip/Back-button-trap/tab-close(`pagehide` + keepalive
+  fetch)/a 5-minute hard timeout, whichever fires first.
+- **AdminUsersPage** — Access column shows each candidate's interview deadline
+  (`otp_expires_at`, red once past); Bulk Invited tab has per-cohort filter chips built from
+  named `BulkEmailBatch` rows.
+- **AdminLayout** — same nav-remount/INP fix as the candidate sidebar (`NavItems`/
+  `SidebarInner` hoisted to module scope, guarded by
+  `frontend/src/layouts/AdminLayout.test.jsx`).
 
-### 3.3 Shared Components
-- **`components/ui/`** — a small design system: Alert, Badge, Button, Card, EmptyState, Input, PageHeader, SearchBar, Spinner, StatCard — all Tailwind-styled with dark-mode variants.
-- **`components/layout/`** — BrandLogo, GlowBackground (ambient decorative blobs), ThemeToggle (light/dark switch).
-- **Layouts** — `DashboardLayout` (candidate sidebar shell with token balance + notifications), `AdminLayout` (admin sidebar shell with a hard access-restriction screen for non-admins), `PublicLayout` (marketing navbar/footer shell).
-
-### 3.4 State & Services
-- **`AuthContext`** — manages the logged-in user, token balance, and notifications; handles login/register/logout and localStorage-based JWT persistence.
-- **`ThemeContext`** — manages light/dark mode via a `.dark` class on `<html>`.
-- **`services/api.js`** — a shared Axios instance that attaches the bearer token to every request, normalizes FastAPI error responses, and silently refreshes an expired access token on a 401 before retrying the original request (redirecting to `/login` if refresh also fails).
+### 3.3 State & Services
+- **`AuthContext`** — user, token balance, notifications, login/register/logout.
+- **`ThemeContext`** — light/dark via a `.dark` class.
+- **`services/api.js`** — shared Axios instance; a "still working" banner (renamed from a
+  Render-era "waking up the server" message that no longer applied once the backend moved to
+  Railway) fires past a 12s threshold rather than 4s, since several legitimate requests
+  (interview creation, final-answer scoring) exceed 4s by design.
+- **`utils/datetime.js`** — the one place relative/absolute timestamp formatting lives
+  (`timeAgo`, `formatDateTime`, `formatDate`, `formatDuration`), used by notifications,
+  history, and profile rather than each page rolling its own `toLocaleDateString()`.
 
 ---
 
 ## 4. Core User Flows
 
-1. **Sign up → free tokens** — registering grants 5 free tokens and a welcome notification.
-2. **Start an interview** — pick a role/type/difficulty (or paste a JD); the AI validates the domain, deducts a token, and generates a tailored question set.
-3. **Take the interview** — answer by voice; each response is transcribed, scored on technical/communication/confidence axes, and the session is monitored for proctoring violations (auto-terminates after repeated violations, can lead to an account ban).
-4. **Get a report** — once all questions are answered, an AI-generated report scores the full session and surfaces strengths, weaknesses, and recommendations.
-5. **Resume/JD matching** — upload a resume and/or paste a JD to get a skill-gap analysis and tailored practice questions.
-6. **Admin oversight** — admins manage users (ban/unban, token overrides), monitor platform-wide activity/revenue, and audit AI scoring quality (including manually-flagged low-confidence evaluations).
+1. **Sign up → free tokens**, or **admin bulk-invites a cohort** (named batch, per-row
+   deadline, one-time OTP credentials emailed).
+2. **Start an interview** — 5 main questions generate immediately; a closing 10-question MCQ
+   round generates in the background and is normally ready before the candidate reaches it;
+   completed-course candidates open on a hands-on coding exercise instead of a verbal
+   Question 1.
+3. **Take the interview** — voice answers (transcribed, scored technical/communication/
+   confidence) or MCQ selects; full proctoring with escalating violations and
+   identity-mismatch hard-termination; the intro screen's position is bookmarked inside the
+   one continuous session recording.
+4. **Finish → feedback → report/thank-you.** Every candidate is asked for a rating plus
+   optional per-category scores before the report (enrolled candidates) or before their
+   session closes (one-time candidates). A report generates once every question — main and
+   MCQ — is resolved.
+5. **Resume/JD matching** — skill-gap analysis, tailored practice questions.
+6. **Admin oversight** — user management with deadlines and cohorts, platform analytics,
+   session-recording review (with the intro bookmark), and an LLM-scoring audit trail.
 
 ---
 
 ## 5. Design Themes Worth Noting
 
-- **Mock-first AI design**: every AI touchpoint (questions, scoring, reports, resume/JD analysis, transcription) has a deterministic, hand-authored fallback, so the entire platform is demoable with zero API keys via `AI_MODE=mock`.
-- **Multi-provider LLM abstraction**: one config layer supports Groq/Together/OpenAI/OpenRouter for chat and Groq/OpenAI for speech-to-text, with automatic endpoint/model selection.
-- **Anti-fabrication safety rails**: the AI services are built to flag or fail rather than silently invent a transcript or score when a live API call fails.
-- **Proctoring/integrity system**: violation tracking with escalating consequences, up to automatic account bans.
-- **Coding sandbox is feature-complete but soft-launched**: fully working code execution and hidden test cases, deliberately gated to admins only pending integration into the live interview flow.
+- **Mock-first AI design**: every AI touchpoint has a deterministic fallback (`AI_MODE=mock`).
+- **Anti-fabrication safety rails**: AI services flag or fail rather than invent a score or
+  transcript.
+- **Background work never blocks a candidate-facing request**: verbal-answer scoring,
+  MCQ-round generation, and (as of 2026-08-11) report generation all run off the request
+  thread — each of those was, at some point, found blocking a `submit-answer` call and fixed.
+- **All backend I/O is threadpool-dispatched, not event-loop-blocking** — the single most
+  consequential architectural fix in the project's history (2026-08-11): every route handler
+  had been `async def` over synchronous work, serializing the whole backend behind one slow
+  request at a time.
+- **Proctoring/integrity system**: violation tracking with escalating consequences, identity
+  verification, session-recording bookmarks for admin review.
+- **Coding sandbox is fully live**, not soft-launched: admin practice tools plus a
+  candidate-facing sandbox-first interview flow, sharing one syntax-highlighted editor.
 
 ---
 
 ## 6. Known Inconsistencies / Technical Debt
 
-> **Accuracy note (2026-07-28):** parts of this document have drifted from the code. Seven
-> specific discrepancies are catalogued as D1–D7 at the top of **`TEST_CASES.md`**, which was
-> written against the actual code. The most important: registration also requires
-> `cnic`/`course_category`/`course_status`; proctoring terminates on the **4th** violation
-> (`> 3`), not the 3rd, and auto-bans for **30 days** after a **single** termination;
-> `submit-answer` scores on a **background thread** rather than inline. Two further findings
-> (F1: the offline domain keyword list misses job-title forms like "Dentist"; F2: mock
-> question generation is **not** deterministic — it calls `random.shuffle`) are pinned by
-> tests in `backend/tests/`. Treat `TEST_CASES.md` and the code as authoritative where they
-> disagree with this file.
-
-- **README.md and `backend/Dockerfile` still describe a Flask stack** (`Flask-SQLAlchemy`, `gunicorn app:app`), but the codebase has migrated to **FastAPI** (`main.py`, `uvicorn`). The Dockerfile's `CMD` should target `main:app` with a Uvicorn worker class for Gunicorn to serve it correctly.
-- No formal DB migration tool (tables are created via `create_all` on startup) — schema changes require manual care in production.
-- The coding-sandbox execution engine runs directly on the host with only a timeout guard (no memory/process isolation) — intended as a placeholder for a future Docker/Judge0-based sandbox.
+- **`README.md` and `backend/Dockerfile`'s comments may still carry Flask-era language** in
+  places — verify against `main.py`/`app/__init__.py` (FastAPI/Uvicorn) rather than trusting
+  prose describing the stack.
+- **No formal DB migration tool.** `ensure_schema()`'s add-only diffing handles new/missing
+  columns safely but cannot rename or drop one — a destructive schema change still needs
+  hand-written care.
+- **Coding-sandbox execution has no memory/process isolation** beyond the per-test timeout —
+  documented placeholder for a future Docker/Judge0-based sandbox.
+- **`_generate_and_save_mcqs`'s idempotency check is a plain row-count, not the atomic claim
+  pattern `_finalize_report_if_ready` uses for the identical class of race** — noted
+  2026-08-12, not yet hardened. Low probability in practice (the background call is a single
+  LLM request that normally finishes in the many minutes a candidate spends on the main
+  round) but worth fixing if it's ever observed to double-write MCQ rows.
+- **The Vercel git-author production-deploy block is a standing operational hazard, not
+  resolved.** See §1 (Infrastructure) — every merge from a non-team-member collaborator that
+  becomes `main`'s tip re-blocks the production build until a team-member commit lands on
+  top. `PROJECT_STATUS.md` has the two resolution options that are still pending a decision.
+- `TEST_CASES.md` predates several of the changes described here (written 2026-07-28) — treat
+  the code, this file, and `DEVELOPMENT_LOG.md` as authoritative over it where they disagree.
