@@ -8,14 +8,28 @@ import Input from '../components/ui/Input';
 import Button from '../components/ui/Button';
 import Alert from '../components/ui/Alert';
 import {
-  SIGNUP_CATEGORIES, COURSE_STATUS_OPTIONS, isInstructorCategory, formatCnic
+  SIGNUP_CATEGORIES, COURSE_STATUS_OPTIONS, isInstructorCategory, isResumeCategory,
+  hasCourseStatus, formatCnic
 } from '../utils/constants';
 import {
   User, Mail, Lock, UserPlus, ChevronLeft, CheckCircle2,
-  CreditCard, MailCheck, Hourglass, GraduationCap
+  CreditCard, MailCheck, Hourglass, GraduationCap,
+  FileText, UploadCloud, Loader2, X
 } from 'lucide-react';
 
 const CNIC_REGEX = /^\d{5}-?\d{7}-?\d$/;
+const GMAIL_REGEX = /^[^\s@]+@gmail\.com$/i;
+
+/** Server-side lists arrive as JSON strings in TEXT columns; never let a bad one throw. */
+const parseList = (blob) => {
+  if (!blob) return [];
+  try {
+    const parsed = JSON.parse(blob);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+};
 
 const RegisterPage = () => {
   const [formData, setFormData] = useState({
@@ -36,6 +50,12 @@ const RegisterPage = () => {
   // "Ongoing → Coming Soon" state without a frontend redeploy.
   const [categories, setCategories] = useState(SIGNUP_CATEGORIES);
   const [ongoingEnabled, setOngoingEnabled] = useState(false);
+  // Resume-Based enrolment: the CV is parsed before the account exists, so the form holds a
+  // single-use token from /auth/signup-resume until it submits (Resume §1.1).
+  const [resumeToken, setResumeToken] = useState('');
+  const [resumeInfo, setResumeInfo] = useState(null);
+  const [resumeUploading, setResumeUploading] = useState(false);
+  const [resumeError, setResumeError] = useState('');
   const { register, error, clearError } = useAuth();
   const navigate = useNavigate();
 
@@ -53,15 +73,66 @@ const RegisterPage = () => {
   }, []);
 
   const isInstructor = isInstructorCategory(formData.course_category);
+  const isResume = isResumeCategory(formData.course_category);
+  const needsCourseStatus = hasCourseStatus(formData.course_category);
   const isCompleted = formData.course_status === 'completed';
-  // Instructor and Completed-course both use the one-time-OTP flow (no signup password).
-  const isOneTime = isInstructor || isCompleted;
+  // Instructor, Resume-Based and Completed-course all use the one-time-OTP flow (no
+  // signup password).
+  const isOneTime = isInstructor || isResume || isCompleted;
+
+  // The upload is attributed to a CNIC and email server-side, so both have to be valid
+  // before the file can go anywhere.
+  const canUploadResume =
+    CNIC_REGEX.test(formData.cnic.trim()) && GMAIL_REGEX.test(formData.email.trim());
 
   const handleChange = (e) => setFormData({ ...formData, [e.target.id]: e.target.value });
 
   // CNIC gets its own handler so digits-only input is auto-formatted with dashes.
-  const handleCnicChange = (e) =>
-    setFormData({ ...formData, cnic: formatCnic(e.target.value) });
+  const handleCnicChange = (e) => {
+    const next = formatCnic(e.target.value);
+    // The upload is bound to the CNIC it was made under, and the server refuses to attach
+    // it to a different one. Dropping it here turns a confusing rejection at submit into an
+    // obvious "upload your resume" prompt while they are still on the field they changed.
+    if (resumeToken && next !== formData.cnic) clearResume();
+    setFormData({ ...formData, cnic: next });
+  };
+
+  const clearResume = () => {
+    setResumeToken('');
+    setResumeInfo(null);
+    setResumeError('');
+  };
+
+  const handleResumeUpload = async (e) => {
+    const file = e.target.files?.[0];
+    // Reset the input so re-picking the same file after an error still fires onChange.
+    e.target.value = '';
+    if (!file) return;
+
+    setResumeError('');
+    setResumeUploading(true);
+    try {
+      const body = new FormData();
+      body.append('resume', file);
+      body.append('cnic', formData.cnic.trim());
+      body.append('email', formData.email.trim());
+      const res = await api.post('/auth/signup-resume', body);
+      setResumeToken(res.data.resume_token);
+      setResumeInfo({
+        fileName: res.data.file_name,
+        skills: parseList(res.data.extracted_skills),
+        projects: parseList(res.data.extracted_projects),
+      });
+    } catch (err) {
+      setResumeToken('');
+      setResumeInfo(null);
+      setResumeError(
+        err.response?.data?.message || 'We could not read that file. Please try another.'
+      );
+    } finally {
+      setResumeUploading(false);
+    }
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -79,11 +150,16 @@ const RegisterPage = () => {
     if (!formData.course_category) {
       return setValidationError('Please select your category');
     }
-    if (!isInstructor && !formData.course_status) {
+    if (needsCourseStatus && !formData.course_status) {
       return setValidationError('Please select your course status');
     }
-    if (!isInstructor && formData.course_status === 'ongoing' && !ongoingEnabled) {
+    if (needsCourseStatus && formData.course_status === 'ongoing' && !ongoingEnabled) {
       return setValidationError("The 'Ongoing' option is coming soon and cannot be selected yet.");
+    }
+    // The interview for this category is built entirely from the CV, so an account without
+    // one could never start a session.
+    if (isResume && !resumeToken) {
+      return setValidationError('Please upload your resume before creating your profile.');
     }
     if (!isOneTime) {
       if (formData.password !== formData.confirmPassword) {
@@ -101,12 +177,17 @@ const RegisterPage = () => {
         email: formData.email,
         cnic: formData.cnic.trim(),
         course_category: formData.course_category,
-        // Instructor signups carry no course status.
-        course_status: isInstructor ? undefined : formData.course_status,
+        // Instructor and Resume-Based signups carry no course status.
+        course_status: needsCourseStatus ? formData.course_status : undefined,
         password: isOneTime ? undefined : formData.password,
+        resume_token: isResume ? resumeToken : undefined,
       });
 
-      if (res?.status === 'completed_pending_login' || res?.status === 'instructor_pending_login') {
+      if (
+        res?.status === 'completed_pending_login' ||
+        res?.status === 'instructor_pending_login' ||
+        res?.status === 'resume_pending_login'
+      ) {
         setOutcome('check_email');
       } else if (res?.status === 'reinterview_pending') {
         setOutcome('reinterview');
@@ -212,10 +293,10 @@ const RegisterPage = () => {
           {(error || validationError) && <Alert variant="error">{validationError || error}</Alert>}
 
           <form onSubmit={handleSubmit} className="space-y-4">
-            <Input id="name" type="text" label="Full Name" value={formData.name} onChange={handleChange} icon={User} placeholder="John Doe" required />
+            <Input id="name" type="text" label="Full Name" value={formData.name} onChange={handleChange} icon={User} placeholder="Ali" required />
 
             <div className="space-y-1">
-              <Input id="email" type="email" label="Email Address" value={formData.email} onChange={handleChange} icon={Mail} placeholder="john@example.com" required />
+              <Input id="email" type="email" label="Email Address" value={formData.email} onChange={handleChange} icon={Mail} placeholder="ali@example.com" required />
               <p className="text-[11px] text-slate-400 dark:text-slate-500 leading-snug px-1">
                 Only invited @gmail.com accounts have access. Other providers (e.g. Outlook) are not accepted.
               </p>
@@ -238,8 +319,96 @@ const RegisterPage = () => {
               </select>
             </div>
 
-            {/* Course status applies only to course candidates, not Instructors (Update §2). */}
-            {!isInstructor && (
+            {/* Resume-Based enrolment (Resume §1.1): this category has no course status —
+                the CV takes its place, and the interview is generated from it. Parsed here,
+                at enrolment, so no model call ever sits on the interview path. */}
+            {isResume && (
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">Your Resume</label>
+
+                {resumeInfo ? (
+                  <div className="p-3.5 bg-accent-500/5 border border-accent-500/25 rounded-xl space-y-2">
+                    <div className="flex items-start gap-2.5">
+                      <FileText size={16} className="text-accent-500 shrink-0 mt-0.5" />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs font-bold text-slate-800 dark:text-slate-200 truncate">
+                          {resumeInfo.fileName}
+                        </p>
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                          {resumeInfo.skills.length} skill{resumeInfo.skills.length === 1 ? '' : 's'}
+                          {' and '}
+                          {resumeInfo.projects.length} project{resumeInfo.projects.length === 1 ? '' : 's'}
+                          {' found — your interview will be built from these.'}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={clearResume}
+                        aria-label="Remove uploaded resume"
+                        className="shrink-0 p-1 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-500/10 transition"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+
+                    {resumeInfo.skills.length > 0 && (
+                      <div className="flex flex-wrap gap-1 pt-0.5">
+                        {resumeInfo.skills.slice(0, 8).map((skill) => (
+                          <span
+                            key={skill}
+                            className="px-1.5 py-0.5 rounded-md bg-slate-200/70 dark:bg-slate-800 text-[10px] font-semibold text-slate-600 dark:text-slate-300"
+                          >
+                            {skill}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <label
+                    className={`flex flex-col items-center justify-center gap-1.5 px-4 py-6 rounded-xl border-2 border-dashed transition ${
+                      canUploadResume && !resumeUploading
+                        ? 'border-primary-500/40 hover:border-primary-500/70 hover:bg-primary-500/5 cursor-pointer'
+                        : 'border-slate-300 dark:border-slate-700 opacity-60 cursor-not-allowed'
+                    }`}
+                  >
+                    <input
+                      type="file"
+                      accept=".pdf,.txt"
+                      className="hidden"
+                      disabled={!canUploadResume || resumeUploading}
+                      onChange={handleResumeUpload}
+                    />
+                    {resumeUploading ? (
+                      <>
+                        <Loader2 size={20} className="text-primary-500 animate-spin" />
+                        <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">
+                          Reading your resume…
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <UploadCloud size={20} className="text-primary-500" />
+                        <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">
+                          {canUploadResume ? 'Upload your resume (PDF or TXT)' : 'Enter your email and CNIC first'}
+                        </span>
+                        <span className="text-[10px] text-slate-400 dark:text-slate-500">
+                          Max 5MB · text-based PDFs only, not scans
+                        </span>
+                      </>
+                    )}
+                  </label>
+                )}
+
+                {resumeError && (
+                  <p className="text-[11px] text-red-500 leading-snug px-1">{resumeError}</p>
+                )}
+              </div>
+            )}
+
+            {/* Course status applies only to course candidates, not Instructors or
+                Resume-Based signups (Update §2 / Resume §1.1). */}
+            {needsCourseStatus && (
               <div className="space-y-1.5">
                 <label htmlFor="course_status" className="text-xs font-semibold text-slate-700 dark:text-slate-300">Course Status</label>
                 <select id="course_status" value={formData.course_status} onChange={handleChange} className={selectClass} required>
@@ -266,6 +435,15 @@ const RegisterPage = () => {
                 <span>
                   <b className="text-primary-600 dark:text-primary-400">Instructor signup:</b> no course status or password needed.
                   After signup we'll email you a <b>one-time password</b> for your instructor interview.
+                </span>
+              </div>
+            ) : isResume ? (
+              <div className="p-3.5 bg-primary-500/5 border border-primary-500/20 rounded-xl text-xs text-slate-600 dark:text-slate-300 leading-relaxed flex gap-2.5">
+                <FileText size={16} className="text-primary-500 shrink-0 mt-0.5" />
+                <span>
+                  <b className="text-primary-600 dark:text-primary-400">Resume-based interview:</b> no course status or password needed.
+                  Your questions come from the skills and projects on the resume you upload above.
+                  After signup we'll email you a <b>one-time password</b> for your interview.
                 </span>
               </div>
             ) : isCompleted ? (
