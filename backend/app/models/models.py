@@ -70,7 +70,18 @@ class User(db.Model):
     # Relationships
     tokens = db.relationship('Token', backref='user', uselist=False, cascade="all, delete-orphan")
     interviews = db.relationship('Interview', backref='user', lazy=True, cascade="all, delete-orphan")
-    resume_analyses = db.relationship('ResumeAnalysis', backref='user', lazy=True, cascade="all, delete-orphan")
+    # foreign_keys is required here, not optional tidiness: resume_analyses carries a second
+    # FK back to users (flagged_by, the admin who flagged a bad parse), so without naming the
+    # owning column SQLAlchemy cannot tell which one this relationship traverses and refuses
+    # to map at all — it is an AmbiguousForeignKeysError on the very first query, not a
+    # subtle mis-join.
+    resume_analyses = db.relationship(
+        'ResumeAnalysis',
+        backref='user',
+        lazy=True,
+        cascade="all, delete-orphan",
+        foreign_keys='ResumeAnalysis.user_id',
+    )
     jd_analyses = db.relationship('JdAnalysis', backref='user', lazy=True, cascade="all, delete-orphan")
     notifications = db.relationship('Notification', backref='user', lazy=True, cascade="all, delete-orphan")
     feedbacks = db.relationship('Feedback', backref='user', lazy=True, cascade="all, delete-orphan")
@@ -280,6 +291,12 @@ class InterviewQuestion(db.Model):
     # to_dict() below — it must never reach the candidate-facing API response.
     mcq_options = db.Column(db.Text, nullable=True)
     mcq_correct_index = db.Column(db.Integer, nullable=True)
+    # Resume-to-question traceability (Resume §4.2). Set only on questions generated from a
+    # candidate's resume: the skill or project the question was built from, verbatim from the
+    # extracted resume data. Lets an admin see at a glance whether the generator is really
+    # working off the CV or inventing a connection to it — a failure mode that only exists
+    # for this category, since every other category's questions come from a fixed domain.
+    derived_from = db.Column(db.String(255), nullable=True)
     order_num = db.Column(db.Integer, nullable=False)
 
     # Per-question timer (§2). ``time_limit_seconds`` is set at creation from the
@@ -316,6 +333,7 @@ class InterviewQuestion(db.Model):
             'code_snippet': self.code_snippet,
             'sandbox_problem_id': self.sandbox_problem_id,
             'mcq_options': mcq_options,
+            'derived_from': self.derived_from,
             'order_num': self.order_num,
             'time_limit_seconds': self.time_limit_seconds or 120,
             'started_at': self.started_at.isoformat() if self.started_at else None,
@@ -412,19 +430,99 @@ class ResumeAnalysis(db.Model):
     suggestions = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
 
-    def to_dict(self):
-        return {
+    # --- Resume-Based Interview additions (Resume §2/§4) ---
+    # The Resume & JD Analyzer deletes the uploaded file straight after parsing it and keeps
+    # only the extracted lists, which is right for that feature. The Resume-Based Interview
+    # category needs more: the raw text is what the question generator is prompted with, and
+    # it is also what an admin reads when checking whether the generated questions actually
+    # match the CV. Stored as text rather than the original PDF — no file is retained.
+    raw_text = db.Column(db.Text, nullable=True)
+    # Projects called out separately from extracted_experience: questions are supposed to ask
+    # about specific things the candidate built, and those were previously blended into the
+    # experience bullets with no way to address them individually.
+    extracted_projects = db.Column(db.Text, nullable=True)
+
+    # Resume-analysis quality flagging (Resume §4.2): an admin marks a parse as poor (garbled
+    # PDF text, skills missed) so bad extractions are visible instead of silently producing
+    # irrelevant questions. Purely an operational signal — nothing branches on it.
+    flagged_at = db.Column(db.DateTime, nullable=True)
+    flagged_by = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    flag_reason = db.Column(db.String(500), nullable=True)
+
+    def to_dict(self, include_raw_text=False):
+        # raw_text is opt-in: it is the full CV and only the owning admin view needs it, so it
+        # stays out of the default payload rather than riding along on every response.
+        data = {
             'id': self.id,
             'user_id': self.user_id,
             'file_name': self.file_name,
             'extracted_skills': self.extracted_skills,
             'extracted_experience': self.extracted_experience,
             'extracted_education': self.extracted_education,
+            'extracted_projects': self.extracted_projects,
             'missing_skills': self.missing_skills,
             'resume_score': self.resume_score,
             'suggestions': self.suggestions,
+            'flagged_at': self.flagged_at.isoformat() if self.flagged_at else None,
+            'flagged_by': self.flagged_by,
+            'flag_reason': self.flag_reason,
             'created_at': self.created_at.isoformat() if self.created_at else None
         }
+        if include_raw_text:
+            data['raw_text'] = self.raw_text
+        return data
+
+class PendingResume(db.Model):
+    """A resume parsed BEFORE its owner has an account (Resume §1.1).
+
+    The Resume-Based signup collects the CV on the enrolment form itself, so the parse has to
+    run while the candidate is still anonymous — there is no user row to hang a
+    ResumeAnalysis off yet, and ResumeAnalysis.user_id is deliberately NOT NULL. This table
+    holds the parsed result against a single-use random token for the few minutes between the
+    upload call and /register, which copies it into a real ResumeAnalysis and deletes the row.
+
+    Nothing here is read once the account exists. Rows are consumed on claim, and any that are
+    abandoned (candidate uploads, then never finishes signing up) are swept on the next
+    upload, so the table does not accumulate unclaimed CVs.
+    """
+    __tablename__ = 'pending_resumes'
+
+    id = db.Column(db.Integer, primary_key=True)
+    # Random and unguessable — the only thing the client holds between the two calls, and the
+    # sole authority for claiming this row, since there is no session to scope it to.
+    token = db.Column(db.String(64), unique=True, nullable=False, index=True)
+    # Captured at upload time and re-checked at claim time: the token alone must not let a
+    # resume be attached to a different signup than the one that uploaded it.
+    cnic = db.Column(db.String(20), nullable=False)
+    email = db.Column(db.String(120), nullable=False)
+    file_name = db.Column(db.String(150), nullable=False)
+
+    raw_text = db.Column(db.Text, nullable=True)
+    extracted_skills = db.Column(db.Text, nullable=True)
+    extracted_experience = db.Column(db.Text, nullable=True)
+    extracted_education = db.Column(db.Text, nullable=True)
+    extracted_projects = db.Column(db.Text, nullable=True)
+    missing_skills = db.Column(db.Text, nullable=True)
+    resume_score = db.Column(db.Integer, default=0)
+    suggestions = db.Column(db.Text, nullable=True)
+
+    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+    expires_at = db.Column(db.DateTime, nullable=False)
+
+    def is_expired(self):
+        return bool(self.expires_at and datetime.datetime.utcnow() > self.expires_at)
+
+    def to_preview(self):
+        """What the enrolment form is allowed to see back — enough to show the candidate the
+        upload worked and what was picked up, without echoing the whole CV."""
+        return {
+            'resume_token': self.token,
+            'file_name': self.file_name,
+            'extracted_skills': self.extracted_skills,
+            'extracted_projects': self.extracted_projects,
+            'resume_score': self.resume_score,
+        }
+
 
 class JdAnalysis(db.Model):
     __tablename__ = 'jd_analyses'
