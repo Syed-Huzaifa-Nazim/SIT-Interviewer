@@ -88,9 +88,17 @@ def _notify_admins(title, message, notif_type='activity'):
         ))
 
 
-def _handle_reinterview_signup(existing_user, name, email):
+def _handle_reinterview_signup(existing_user, name, email, pending_resume=None):
     """A CNIC that already completed an interview is signing up again (§3.4):
-    queue an admin approval request instead of auto-sending credentials."""
+    queue an admin approval request instead of auto-sending credentials.
+
+    ``pending_resume`` carries a Resume-Based candidate's freshly uploaded CV. It is added as
+    a NEW analysis row rather than replacing the old one — start_interview reads the most
+    recent, so an approved second attempt is built from the resume they just submitted. The
+    alternative was discarding the upload and re-interviewing them on a CV that may be a year
+    stale, which for this category is the wrong answer; nothing is overwritten either way,
+    and this is the same "refresh what the new form told us" the name and email already get.
+    """
     pending = SecondInterviewRequest.query.filter_by(
         user_id=existing_user.id, status='pending'
     ).first()
@@ -122,6 +130,21 @@ def _handle_reinterview_signup(existing_user, name, email):
         first_interview_id=first_interview.id if first_interview else None
     )
     db.session.add(req)
+
+    if pending_resume:
+        db.session.add(ResumeAnalysis(
+            user_id=existing_user.id,
+            file_name=pending_resume.file_name,
+            raw_text=pending_resume.raw_text,
+            extracted_skills=pending_resume.extracted_skills,
+            extracted_experience=pending_resume.extracted_experience,
+            extracted_education=pending_resume.extracted_education,
+            extracted_projects=pending_resume.extracted_projects,
+            missing_skills=pending_resume.missing_skills,
+            resume_score=pending_resume.resume_score,
+            suggestions=pending_resume.suggestions,
+        ))
+        db.session.delete(pending_resume)
 
     # Admin is notified IN-PORTAL only (Update §4): a persistent notification plus the
     # Approval Queue / sidebar badge. No email is sent to the admin anymore.
@@ -322,22 +345,24 @@ def register(payload: dict = Body(default=None)):
             if len(password) < 6:
                 raise HTTPException(status_code=400, detail="Password must be at least 6 characters long")
 
+    # Resume-Based signups carry the token from /signup-resume. Claimed up front, before
+    # either branch below, for two reasons: a bad or expired token must fail the signup
+    # outright rather than leave a candidate in this category with no resume — an account
+    # that could never start an interview, since the whole question set comes from the CV —
+    # and a re-interview request needs the upload too, or the CV they just submitted would
+    # be silently discarded.
+    pending_resume = _claim_pending_resume(data.get('resume_token'), cnic) if resume_signup else None
+
     # CNIC re-signup detection (§3.4): same CNIC + a completed interview on record
     # routes into the admin approval workflow instead of a normal signup.
     existing_by_cnic = User.query.filter_by(cnic=cnic).first()
     if existing_by_cnic:
         if existing_by_cnic.interview_status in ('interview_completed', 'reinterview_pending', 'reinterview_rejected'):
-            return _handle_reinterview_signup(existing_by_cnic, name, email)
+            return _handle_reinterview_signup(existing_by_cnic, name, email, pending_resume)
         raise HTTPException(status_code=409, detail="An account with this CNIC already exists. Please log in instead.")
 
     if User.query.filter_by(email=email).first():
         raise HTTPException(status_code=409, detail="Account with this email already exists")
-
-    # Resume-Based signups carry the token from /signup-resume. Claimed before the account
-    # is created so a bad or expired token fails the signup outright rather than leaving a
-    # candidate in this category with no resume — which would be an account that can never
-    # start an interview, since the whole question set comes from the CV.
-    pending_resume = _claim_pending_resume(data.get('resume_token'), cnic) if resume_signup else None
 
     default_job_role = CATEGORY_JOB_ROLES.get(course_category, 'Software Engineer')
 
