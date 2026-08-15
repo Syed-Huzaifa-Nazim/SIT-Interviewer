@@ -372,14 +372,19 @@ still an open call.
   branch merged into `huzaifa` regularly (usually with real, substantive commits — recent
   examples include the async-handler migration follow-ups, the MCQ background-generation
   race fix, and the "Jump to Introduction" recording bookmark).
-- **Deployed:** `main` @ `ffd87db` — a Google Search Console verification file, the last
-  thing actually pushed to production. **Six real commits on `huzaifa` are not yet on
-  `main`** and so are not live: the notification-links/sidebar-INP fix, the History/Profile
-  redesign, the StrictMode double-pushState fix, the MCQ-round submit-button-freeze fix, the
-  post-interview-video-upload-booting-candidates-to-`/login` fix, and the stale-OTP-deadline
-  fix. The last two in particular are real, currently-live bugs candidates can hit until
-  `main` is pushed. Check `git log origin/main..origin/huzaifa` before trusting this —
+- **Deployed:** `main` @ `167c887`, level with `huzaifa` — pushed 2026-08-15. This cleared a
+  backlog of fourteen commits, including two bugs that had been live for days (the
+  post-interview video upload booting one-time candidates to `/login`, and the MCQ-round
+  submit-button freeze) plus the whole Resume-Based Interview category. Verified live after
+  the deploy: `/health` database up, the new endpoints present and auth-guarded, the
+  refactored Resume & JD Analyzer routes returning 401 rather than 500, and 30 concurrent
+  requests all served. Check `git log origin/main..origin/huzaifa` before trusting this —
   it drifts every session; this was last verified 2026-08-15.
+- **Not verified end-to-end:** the Resume-Based flow has never been walked against a real
+  database — signup, OTP email, login, interview. Its automated coverage is unit-level, and
+  the one bug found so far (FormData posted under the shared axios instance's JSON
+  content-type, so the server saw no fields at all) was caught by a human clicking the
+  button, not by the 427 passing tests. Worth an actual run before trusting the category.
 - **`DEVELOPMENT_LOG.md`** is the accurate day-by-day change record from 2026-08-07 onward
   (this file's own Daily Log below stops at 2026-07-29) — read it for anything more recent
   than that date.
