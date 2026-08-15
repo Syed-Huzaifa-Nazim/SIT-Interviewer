@@ -337,6 +337,13 @@ def send_interview_invite(target_user_id: int, user: User = Depends(admin_requir
         target.must_use_otp = True
         target.set_otp(otp)  # also resets otp_used to False
         target.interview_status = 'invited'
+        # Clears any deadline left over from an earlier Bulk Email Module invite. This is a
+        # fresh, individually-issued credential — otp_expires_at is only ever meant to be set
+        # by the bulk flow (bulk_email_routes.py) — so without this, a candidate re-invited
+        # after their old bulk deadline passed would get a working-looking OTP that
+        # login (auth_routes.py) then still rejects as "expired", and the admin dashboard
+        # would keep showing the stale old date as if this invite never happened.
+        target.otp_expires_at = None
 
         db.session.add(AdminLog(
             admin_id=user.id,
