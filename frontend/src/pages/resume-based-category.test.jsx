@@ -228,6 +228,44 @@ describe('enrolment form', () => {
     expect(screen.getByText(/Upload your resume|Enter your email and CNIC first/i)).toBeTruthy();
   });
 
+  it('sends the resume as multipart, not JSON', async () => {
+    // THE BUG THIS PINS: the shared api instance defaults to
+    // Content-Type: application/json. FormData sent under that header never gets a
+    // multipart boundary, so the server parses nothing and rejects every field as
+    // missing — which is exactly how this shipped the first time. Five other uploads in
+    // this app override the header; forgetting it produces a 422 that names the fields
+    // you can plainly see being appended, so it reads as a server bug rather than a
+    // client one.
+    const { default: RegisterPage } = await import('./RegisterPage');
+    await renderAt(RegisterPage);
+
+    fireEvent.change(screen.getByLabelText(/Category/i), { target: { value: RESUME_CATEGORY } });
+    // By id, not by label: the shared Input component renders its <label> without a
+    // htmlFor, so getByLabelText cannot reach these two fields.
+    fireEvent.change(document.getElementById('email'), { target: { value: 'bilal@gmail.com' } });
+    fireEvent.change(document.getElementById('cnic'), { target: { value: '4210112345673' } });
+
+    const input = await waitFor(() => {
+      const el = document.querySelector('input[type="file"]');
+      expect(el).toBeTruthy();
+      expect(el.disabled).toBe(false);
+      return el;
+    });
+
+    const file = new File(['Skills\nReact\nExperience\nACME'], 'cv.txt', { type: 'text/plain' });
+    fireEvent.change(input, { target: { files: [file] } });
+
+    await waitFor(() => expect(postMock).toHaveBeenCalled());
+    const [url, body, config] = postMock.mock.calls[0];
+    expect(url).toBe('/auth/signup-resume');
+    expect(body).toBeInstanceOf(FormData);
+    expect(config?.headers?.['Content-Type']).toBe('multipart/form-data');
+    // All three fields the endpoint requires actually make it into the body.
+    expect(body.get('resume')).toBeTruthy();
+    expect(body.get('cnic')).toBe('42101-1234567-3');
+    expect(body.get('email')).toBe('bilal@gmail.com');
+  }, 20000);
+
   it('will not accept the upload until the email and CNIC are valid', async () => {
     const { default: RegisterPage } = await import('./RegisterPage');
     await renderAt(RegisterPage);

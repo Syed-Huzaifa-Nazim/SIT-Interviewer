@@ -116,7 +116,13 @@ const RegisterPage = () => {
       body.append('resume', file);
       body.append('cnic', formData.cnic.trim());
       body.append('email', formData.email.trim());
-      const res = await api.post('/auth/signup-resume', body);
+      // The shared api instance defaults to Content-Type: application/json. Sending
+      // FormData under that header stops the browser generating the multipart boundary,
+      // so the server receives a body it cannot parse and reports every field as missing.
+      // Every other upload in this app overrides it the same way.
+      const res = await api.post('/auth/signup-resume', body, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
       setResumeToken(res.data.resume_token);
       setResumeInfo({
         fileName: res.data.file_name,
