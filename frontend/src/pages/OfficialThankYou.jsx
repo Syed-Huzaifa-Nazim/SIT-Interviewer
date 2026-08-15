@@ -35,6 +35,7 @@ const OfficialThankYou = () => {
   const tokenRef = useRef(null);
   const capturedRef = useRef(false);
   const closedRef = useRef(false);
+  const pushedSentinelRef = useRef(false);
 
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState(false);
@@ -97,8 +98,17 @@ const OfficialThankYou = () => {
   // entry and, on Back, close the session and hard-redirect to /login. A full
   // location.replace (not SPA navigate) reloads the app so any stale in-memory auth state
   // is discarded and there is no way to resume the one-time interview.
+  //
+  // pushedSentinelRef guards the pushState call specifically: React 18 StrictMode (dev only)
+  // double-invokes this effect (mount → cleanup → mount again), and the cleanup here only
+  // removes the popstate listener — it has no way to undo a pushState — so without the guard,
+  // dev mode pushed two sentinel entries instead of one, meaning Back had to be pressed twice
+  // before this trap actually caught it.
   useEffect(() => {
-    window.history.pushState(null, '', window.location.href);
+    if (!pushedSentinelRef.current) {
+      pushedSentinelRef.current = true;
+      window.history.pushState(null, '', window.location.href);
+    }
     const onPopState = () => {
       closeSession(true);
       window.location.replace('/login');
