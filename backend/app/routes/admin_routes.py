@@ -13,7 +13,7 @@ from app.models import (
 from app.utils.security import admin_required, get_current_user_id
 from app.utils.candidate import (
     COURSE_CATEGORIES, COURSE_STATUSES, SIGNUP_CATEGORIES, INSTRUCTOR_CATEGORY,
-    is_instructor_category, normalize_cnic, generate_otp
+    is_instructor_category, requires_course_status, normalize_cnic, generate_otp
 )
 from app.email import EmailService
 from app.email import templates as email_templates
@@ -320,10 +320,10 @@ def send_interview_invite(target_user_id: int, user: User = Depends(admin_requir
     if target.role == 'admin':
         raise HTTPException(status_code=400, detail="Cannot send an interview invite to an administrator")
 
-    # Eligible: Completed-course candidates OR Instructors (Update §3). Instructors have
-    # no course-status, so they qualify by category instead.
-    instructor = is_instructor_category(target.course_category)
-    if not instructor and target.course_status != 'completed':
+    # Eligible: Completed-course candidates, OR any category that has no course-status at
+    # all (Instructor, Resume-Based). Those qualify by category instead — requiring
+    # 'completed' of them would be requiring a field they can never have.
+    if requires_course_status(target.course_category) and target.course_status != 'completed':
         raise HTTPException(
             status_code=400,
             detail="Candidate's course status must be 'Completed' before sending an interview invite. "

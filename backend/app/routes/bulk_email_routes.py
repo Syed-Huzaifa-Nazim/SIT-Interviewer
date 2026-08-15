@@ -26,7 +26,7 @@ from app.models import User, Token, Transaction, Notification, AdminLog, BulkEma
 from app.utils.security import admin_required
 from app.utils.candidate import (
     SIGNUP_CATEGORIES, COURSE_STATUSES, CATEGORY_JOB_ROLES,
-    is_instructor_category, normalize_cnic, generate_otp,
+    is_instructor_category, is_resume_category, normalize_cnic, generate_otp,
 )
 from app.config.config import Config
 from app.email import EmailService
@@ -96,6 +96,15 @@ def _validate_row(raw, seen_cnics, seen_emails):
     instructor = is_instructor_category(category)
     if category not in SIGNUP_CATEGORIES:
         errors.append(f"Category must be one of: {', '.join(SIGNUP_CATEGORIES)}")
+    elif is_resume_category(category):
+        # A Resume-Based interview is generated entirely from the candidate's CV, and a
+        # spreadsheet row has no way to carry one. Inviting them in bulk would create an
+        # account that can never start an interview, so it is refused here rather than
+        # failing later at the point the candidate tries to begin.
+        errors.append(
+            f"'{category}' candidates cannot be invited in bulk — their interview is built "
+            "from an uploaded resume, so they must enrol themselves through the signup form"
+        )
     elif not instructor:
         # Instructors have no course status; everyone else must supply a valid one.
         if course_status not in COURSE_STATUSES:
