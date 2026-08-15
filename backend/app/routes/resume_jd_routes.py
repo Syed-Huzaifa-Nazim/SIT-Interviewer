@@ -81,7 +81,8 @@ def analyze_resume(resume: UploadFile = File(...), user_id: int = Depends(get_cu
             user_id=user_id,
             title='Resume Scored Successfully!',
             message=f"Your resume '{filename}' was analyzed. ATS Score: {resume_record.resume_score}%. View recommendations in profile.",
-            type='recommendation'
+            type='recommendation',
+            link='/resume-match',
         )
         db.session.add(notification)
 

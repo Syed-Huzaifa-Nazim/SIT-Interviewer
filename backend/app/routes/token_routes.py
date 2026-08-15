@@ -47,7 +47,9 @@ def purchase_tokens(payload: dict = Body(default=None), user_id: int = Depends(g
             user_id=user_id,
             title='Tokens Purchased Successfully!',
             message=f'Your purchase of {tokens_to_buy} tokens for ${amount} was successful. Enjoy your interviews!',
-            type='token'
+            type='token',
+            # Transaction log and token balance both live on the profile page.
+            link='/profile',
         )
         db.session.add(notification)
 

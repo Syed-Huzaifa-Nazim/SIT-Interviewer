@@ -1103,7 +1103,9 @@ def _finalize_report_if_ready(interview_id):
             user_id=interview.user_id,
             title='Interview Evaluation Ready!',
             message=f"Your interview report for {interview.job_role} is complete. Overall Score: {report_data.get('overall_score', 0)}%!",
-            type='interview'
+            type='interview',
+            # Straight to the report this is about — the whole point of the notification.
+            link=f'/interview/report/{interview_id}',
         )
         db.session.add(notification)
 

@@ -461,6 +461,18 @@ class Notification(db.Model):
     message = db.Column(db.Text, nullable=False)
     type = db.Column(db.String(50), default='activity')  # interview, token, activity, recommendation
     is_read = db.Column(db.Boolean, default=False)
+
+    # Where clicking this notification should take the candidate — an in-app route path such
+    # as '/interview/report/42'. Set at creation wherever a specific destination exists, so
+    # "Interview Evaluation Ready!" opens that exact report rather than a list the candidate
+    # then has to search. Deliberately nullable: notifications that are purely informational
+    # have nowhere better to go, and every row written before this column existed has none,
+    # so the frontend falls back to a route derived from `type` (see NOTIFICATION_ROUTES).
+    #
+    # Stored as a path, never a full URL — it is fed straight into the router, and accepting
+    # an absolute URL here would turn any write to this column into an open-redirect.
+    link = db.Column(db.String(255), nullable=True)
+
     created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
 
     def to_dict(self):
@@ -471,6 +483,7 @@ class Notification(db.Model):
             'message': self.message,
             'type': self.type,
             'is_read': self.is_read,
+            'link': self.link,
             'created_at': self.created_at.isoformat() if self.created_at else None
         }
 
