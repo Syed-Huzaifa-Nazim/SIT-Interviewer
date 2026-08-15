@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import axios from 'axios';
 import api from '../services/api';
 import { getScreenStream, hasScreenStream, clearScreenStream } from '../services/proctorScreen';
 import {
@@ -273,6 +274,15 @@ const InterviewSession = () => {
   const sessionChunksRef = useRef([]);
   const videoUploadedRef = useRef(false);
   const [savingVideo, setSavingVideo] = useState(false);
+  // Captured once, used for the video-part/finalize uploads below (raw axios, not the shared
+  // `api` instance — see those call sites). Those uploads are fire-and-forget background work
+  // that can still be retrying after navigate() has already moved on to a page that clears
+  // localStorage (the one-time candidate's thank-you screen does this on mount, by design —
+  // see OfficialThankYou.jsx). Routed through the shared instance, a retry firing after that
+  // point goes out with no token, gets a 401, and the shared interceptor hard-redirects the
+  // WHOLE page to /login — which is what was ripping candidates off the thank-you/feedback
+  // screen moments after they landed on it. A snapshot from mount sidesteps that entirely.
+  const authTokenRef = useRef(localStorage.getItem('access_token'));
 
   // Incremental upload state. The recording is sent to the server in slices WHILE the
   // interview runs, instead of as one large file once it ends. A single end-of-session
@@ -1804,8 +1814,11 @@ const InterviewSession = () => {
           const fd = new FormData();
           fd.append('part_index', String(index));
           fd.append('video', blob, `part_${index}.webm`);
-          await api.post(`/interviews/${id}/upload-video-part`, fd, {
-            headers: { 'Content-Type': 'multipart/form-data' },
+          await axios.post(`${api.defaults.baseURL}/interviews/${id}/upload-video-part`, fd, {
+            headers: {
+              'Content-Type': 'multipart/form-data',
+              ...(authTokenRef.current ? { Authorization: `Bearer ${authTokenRef.current}` } : {}),
+            },
             timeout: 120000,
           });
           partsUploadedRef.current += 1;
@@ -1884,7 +1897,10 @@ const InterviewSession = () => {
 
       for (let attempt = 1; attempt <= 3; attempt++) {
         try {
-          await api.post(`/interviews/${id}/finalize-video`, {}, { timeout: 180000 });
+          await axios.post(`${api.defaults.baseURL}/interviews/${id}/finalize-video`, {}, {
+            timeout: 180000,
+            headers: authTokenRef.current ? { Authorization: `Bearer ${authTokenRef.current}` } : undefined,
+          });
           return;
         } catch (err) {
           console.warn(`Finalize attempt ${attempt} failed:`, err?.response?.status || err.message);
