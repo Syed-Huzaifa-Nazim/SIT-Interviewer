@@ -23,6 +23,11 @@ from app.utils.supabase_service import SupabaseService
 
 interview_bp = APIRouter()
 
+# Fixed size of the MCQ round (MixtralService.generate_mcqs' own default). Used to compute
+# an interview's expected total question count WITHOUT counting mcq rows in the database —
+# see submit_answer's is_completed check below for why that distinction matters.
+MCQ_ROUND_SIZE = 10
+
 # ---------------------------------------------------------------------------------------
 # Why every handler below is `def` and not `async def`
 #
@@ -233,13 +238,21 @@ def allowed_file(filename: str) -> bool:
     return '.' in filename and filename.rsplit('.', 1)[-1].lower() in Config.ALLOWED_EXTENSIONS
 
 
+# Interview IDs with an MCQ-generation thread currently in flight (single in-process set —
+# this deployment runs one uvicorn worker, no multi-process coordination needed; see
+# railway.toml/main.py). Without this, get_interview_details polled every ~1.5s by a
+# candidate waiting on the MCQ round would spawn a fresh background thread on every single
+# poll for as long as none had committed yet, each kicking off its own LLM call — wasted
+# API cost and, worse, duplicate rows once more than one finished.
+_mcq_generation_in_flight = set()
+
+
 def _generate_and_save_mcqs(interview_id, job_role, experience_level, difficulty):
     """Generate the 10-question MCQ round and save it — unless it's already there.
 
-    Called from two places (_generate_mcqs_in_background's worker, and submit_answer's
-    last-main-question fallback) that can race in principle, so this checks for existing
-    mcq rows first and no-ops if it finds any: whichever call actually generates wins, the
-    other is a no-op.
+    Idempotent by design: checks for existing mcq rows first and no-ops if it finds any.
+    Called from _generate_mcqs_in_background's worker only — see that function's own guard
+    for how concurrent callers for the same interview are prevented from racing.
     """
     already = InterviewQuestion.query.filter_by(interview_id=interview_id, question_type='mcq').count()
     if already > 0:
@@ -267,15 +280,27 @@ def _generate_and_save_mcqs(interview_id, job_role, experience_level, difficulty
 
 def _generate_mcqs_in_background(interview_id, job_role, experience_level, difficulty):
     """Kick off MCQ-round generation off the request thread (Perf): 'Start Interview' no
-    longer waits on it. By design the candidate has several minutes (the intro screen plus
-    every main question) before reaching the MCQ round, so this is normally long done by
-    then — the fallback in submit_answer covers the rare case it isn't."""
+    longer waits on it, and neither does submit_answer on the last main question — by design
+    the candidate has several minutes (the intro screen plus every main question) before
+    reaching the MCQ round, so this is normally long done by then.
+
+    Called twice by design: once from /interviews/start (the normal case), and again from
+    get_interview_details every time a candidate who has run out of loaded questions polls it
+    (the self-heal case — covers this call never having been made, or having failed, e.g. the
+    process restarting mid-generation). The in-flight guard is what makes calling it
+    liberally from a polled endpoint safe instead of piling up redundant LLM calls.
+    """
+    if interview_id in _mcq_generation_in_flight:
+        return
+    _mcq_generation_in_flight.add(interview_id)
+
     def _worker():
         try:
             _generate_and_save_mcqs(interview_id, job_role, experience_level, difficulty)
         except Exception as e:
             print(f"[mcq-gen] Background MCQ generation failed for interview {interview_id}: {e}")
         finally:
+            _mcq_generation_in_flight.discard(interview_id)
             # Outside the request middleware, so this thread owns its session and must
             # return the connection itself or it leaks and holds locks (see app/__init__).
             db.session.remove()
@@ -502,6 +527,20 @@ def get_interview_details(interview_id: int, user_id: int = Depends(get_current_
         
     saved_questions = InterviewQuestion.query.filter_by(interview_id=interview_id).order_by(InterviewQuestion.order_num).all()
     responses_count = InterviewResponse.query.filter_by(interview_id=interview_id).count()
+
+    # Self-heal (see _generate_mcqs_in_background's docstring): the frontend polls this
+    # endpoint once it runs out of the questions it loaded at /start, waiting for the MCQ
+    # round to land. If it genuinely isn't there yet — the background call from /start never
+    # ran, or failed outright — kick it off again here instead of leaving the candidate
+    # polling forever. Scoped to interviews that have actually finished their main round, so
+    # this never fires while someone is still partway through it. No-ops instantly if
+    # generation is already in flight or already saved.
+    has_mcqs = any(q.question_type == 'mcq' for q in saved_questions)
+    if not has_mcqs:
+        main_questions = [q for q in saved_questions if q.question_type != 'mcq']
+        if main_questions and responses_count >= len(main_questions):
+            _generate_mcqs_in_background(interview_id, interview.job_role, interview.experience_level, interview.difficulty)
+
     return {
         'interview': interview.to_dict(),
         'questions': [q.to_dict() for q in saved_questions],
@@ -1194,21 +1233,20 @@ def submit_answer(
         db.session.commit()
 
         # The MCQ round is generated in the background (see _generate_mcqs_in_background) so
-        # it's normally already saved by now. This is the one place that matters if it isn't:
-        # the completion check right below just counts rows, so an interview finishing its
-        # last main question before the MCQs exist would otherwise end a round early. Generate
-        # synchronously here as a fallback — _generate_and_save_mcqs no-ops if the background
-        # thread already won.
-        if question.question_type != 'mcq':
-            has_later_main_question = InterviewQuestion.query.filter(
-                InterviewQuestion.interview_id == interview_id,
-                InterviewQuestion.question_type != 'mcq',
-                InterviewQuestion.order_num > question.order_num,
-            ).first() is not None
-            if not has_later_main_question:
-                _generate_and_save_mcqs(interview_id, interview.job_role, interview.experience_level, interview.difficulty)
-
-        total_questions = InterviewQuestion.query.filter_by(interview_id=interview_id).count()
+        # it's normally already saved well before a candidate gets here — but this request
+        # must never block waiting on it (an earlier version generated it synchronously right
+        # here, which meant a candidate who reached the end of the main round faster than that
+        # background call finished sat on a submit button that looked hung for 10-20s while it
+        # ran). So "expected total" is computed WITHOUT counting mcq rows at all: actual main
+        # questions actually saved (not interview.num_questions — generation can fall short of
+        # what was requested) plus the MCQ round's fixed size, regardless of whether those mcq
+        # rows physically exist in the database yet. get_interview_details is what actually
+        # self-heals a stuck background generation, by polling.
+        total_main_questions = InterviewQuestion.query.filter(
+            InterviewQuestion.interview_id == interview_id,
+            InterviewQuestion.question_type != 'mcq',
+        ).count()
+        total_questions = total_main_questions + MCQ_ROUND_SIZE
         total_responses = InterviewResponse.query.filter_by(interview_id=interview_id).count()
 
         is_completed = total_responses >= total_questions

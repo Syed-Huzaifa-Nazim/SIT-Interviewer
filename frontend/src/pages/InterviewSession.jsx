@@ -107,6 +107,10 @@ const InterviewSession = () => {
   const [questions, setQuestions] = useState(location.state?.questions || []);
   const [currentIdx, setCurrentIdx] = useState(0);
   const [loading, setLoading] = useState(false);
+  // True while polling for the MCQ round to land after running off the end of the main
+  // questions (see submitAnswer) — lets the submit button say why it's taking longer than a
+  // normal question instead of just sitting on a generic spinner.
+  const [awaitingMcqRound, setAwaitingMcqRound] = useState(false);
   const [error, setError] = useState('');
 
   // Intro stage (§ intro stage): a 1-minute welcome/rules screen. Camera and proctoring
@@ -1991,15 +1995,36 @@ const InterviewSession = () => {
         navigate(`/interview/report/${id}`, { replace: true });
       } else {
         // The MCQ round is generated in the background while the candidate works through
-        // the main questions (see /interviews/start) and isn't in `questions` yet — refetch
-        // once we've run off the end of what we loaded at start, so the newly-available rows
-        // are in state before advancing into them. Every other advance is a plain index bump.
+        // the main questions (see /interviews/start) and isn't in `questions` yet — poll
+        // once we've run off the end of what we loaded at start, until the newly-available
+        // rows show up (the backend self-heals a stuck/failed generation on this same poll,
+        // see get_interview_details). Every other advance is a plain index bump.
         if (currentIdx + 1 >= questions.length) {
-          try {
-            const detailsRes = await api.get(`/interviews/${id}/details`);
-            setQuestions(detailsRes.data.questions);
-          } catch (err) {
-            console.error('Failed to refetch questions for the MCQ round:', err);
+          setAwaitingMcqRound(true);
+          const loadedCount = questions.length;
+          let gotMore = false;
+          for (let attempt = 0; attempt < 20 && !gotMore; attempt++) {
+            try {
+              const detailsRes = await api.get(`/interviews/${id}/details`);
+              if (detailsRes.data.questions.length > loadedCount) {
+                setQuestions(detailsRes.data.questions);
+                gotMore = true;
+                break;
+              }
+            } catch (err) {
+              console.error('Failed to refetch questions for the MCQ round:', err);
+            }
+            await new Promise((r) => setTimeout(r, 1500));
+          }
+          setAwaitingMcqRound(false);
+          // Answer is already saved (the submit-answer call above succeeded) — this only
+          // guards against advancing into an index the (still empty) `questions` array has
+          // nothing for, which would blank the screen. Resubmitting is safe (submit_answer
+          // upserts on question_id) and will normally succeed immediately, since generation
+          // has had another 30s to finish.
+          if (!gotMore) {
+            setError('The quiz round is taking longer than usual to prepare. Please try submitting again in a moment.');
+            return false;
           }
         }
         setCurrentIdx(prev => prev + 1);
@@ -2360,6 +2385,17 @@ const InterviewSession = () => {
       {/* Hidden sink for the shared-screen stream — frames are grabbed from here for the
           proctoring screenshot archive. Never shown to the candidate. */}
       <video ref={screenVideoRef} autoPlay playsInline muted className="hidden" aria-hidden="true" />
+
+      {/* Shown while polling for the MCQ round after the last main question (see
+          submitAnswer) — the submit button is already disabled/spinning at this point via
+          `loading`, but that alone reads as "did this even save?" on a wait this much longer
+          than a normal submit. This says what's actually happening. */}
+      {awaitingMcqRound && (
+        <div className="fixed top-5 left-1/2 -translate-x-1/2 z-[75] px-5 py-3.5 bg-primary-600 border-2 border-primary-300 text-white rounded-xl text-sm font-bold flex items-center gap-2.5 shadow-2xl shadow-primary-950/40 max-w-[92vw] animate-fade-in">
+          <Sparkles className="shrink-0 animate-pulse" size={18} />
+          <span>Preparing your quiz round — this takes a few seconds…</span>
+        </div>
+      )}
 
       {/* Session Header */}
       <Card padding={false} className="px-5 py-3 md:px-6">
