@@ -445,7 +445,7 @@ const AdminLogsPage = () => {
                       <TableCell className="text-center">
                         {item.interview_id ? (
                           <Button variant="link" size="sm" asChild className="h-auto p-0 font-mono">
-                            <Link to={`/interview/report/${item.interview_id}`}>#{item.interview_id}</Link>
+                            <Link to={`/interview/report/${item.interview_id}`} state={{ from: 'Logs' }}>#{item.interview_id}</Link>
                           </Button>
                         ) : (
                           <span className="text-muted-foreground">—</span>
@@ -511,7 +511,7 @@ const AdminLogsPage = () => {
                       <TableCell className="text-center">
                         {item.interview_id ? (
                           <Button variant="link" size="sm" asChild className="h-auto p-0 font-mono">
-                            <Link to={`/interview/report/${item.interview_id}`}>#{item.interview_id}</Link>
+                            <Link to={`/interview/report/${item.interview_id}`} state={{ from: 'Logs' }}>#{item.interview_id}</Link>
                           </Button>
                         ) : (
                           <span className="text-muted-foreground">—</span>

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
 import InterviewFeedbackForm from '../components/feedback/InterviewFeedbackForm';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
@@ -117,6 +117,7 @@ const ResumeFacts = ({ title, items }) => (
 const ReportDetailPage = () => {
   const { id } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
   // window.history.state.idx (set by React Router's data router on every navigate/push) is
@@ -129,6 +130,11 @@ const ReportDetailPage = () => {
   const canGoBack = (window.history.state?.idx ?? 0) > 0;
   const backFallback = isAdmin ? '/admin/interviews' : '/history';
   const goBack = () => (canGoBack ? navigate(-1) : navigate(backFallback));
+  // Label mirrors AdminUserProfilePage's Back button: every admin-side link into this page
+  // sets state={{ from: '<page name>' }} (Manage Users, Interviews, Logs, Scoring Analytics,
+  // Approvals, Candidate Profile). Falls back to a plain "Back" for a candidate viewing their
+  // own report, or a direct/bookmarked admin visit — nothing truthful to name in either case.
+  const backLabel = location.state?.from ? `Back to ${location.state.from}` : 'Back';
 
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -483,7 +489,7 @@ const ReportDetailPage = () => {
             has nowhere to go back to. */}
         <Button variant="ghost" size="sm" onClick={goBack}>
           <ChevronLeft />
-          Back
+          {backLabel}
         </Button>
         <div className="flex items-center gap-2">
           {interview.is_proctor_failed && (

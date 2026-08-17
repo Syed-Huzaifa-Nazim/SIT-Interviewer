@@ -227,7 +227,7 @@ const AdminUserProfilePage = () => {
                     </div>
                     {itv.status === 'completed' ? (
                       <Button variant="outline" size="sm" asChild className="shrink-0">
-                        <Link to={`/interview/report/${itv.id}`}>
+                        <Link to={`/interview/report/${itv.id}`} state={{ from: 'Candidate Profile' }}>
                           View Report <ArrowRight />
                         </Link>
                       </Button>
@@ -320,7 +320,7 @@ const AdminUserProfilePage = () => {
                     </div>
                     {req.first_interview_id && (
                       <Button variant="ghost" size="sm" asChild className="shrink-0">
-                        <Link to={`/interview/report/${req.first_interview_id}`}>
+                        <Link to={`/interview/report/${req.first_interview_id}`} state={{ from: 'Candidate Profile' }}>
                           First interview <ArrowRight />
                         </Link>
                       </Button>

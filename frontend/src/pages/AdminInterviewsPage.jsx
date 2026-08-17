@@ -239,7 +239,7 @@ const AdminInterviewsPage = () => {
                       <div className="flex items-center justify-end gap-1.5">
                         {item.status === 'completed' ? (
                           <Button variant="outline" size="icon-sm" asChild title="Inspect scorecard">
-                            <Link to={`/interview/report/${item.id}`} aria-label="Inspect scorecard">
+                            <Link to={`/interview/report/${item.id}`} state={{ from: 'Interviews' }} aria-label="Inspect scorecard">
                               <ArrowRight />
                             </Link>
                           </Button>
