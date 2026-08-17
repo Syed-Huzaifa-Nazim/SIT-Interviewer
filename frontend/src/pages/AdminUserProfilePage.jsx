@@ -40,6 +40,13 @@ const INTERVIEW_STATUS_VARIANTS = {
 const AdminUserProfilePage = () => {
   const { userId } = useParams();
   const navigate = useNavigate();
+  // Same reasoning as ReportDetailPage's Back button: this profile is reachable from more
+  // than one place (Manage Users, the Interviews list, ...), so a hardcoded destination is
+  // wrong whenever the admin arrived from anywhere else. window.history.state.idx (set by
+  // React Router's data router on every navigate/push) survives a page refresh, unlike
+  // location.key — checked here instead for that reason.
+  const canGoBack = (window.history.state?.idx ?? 0) > 0;
+  const goBack = () => (canGoBack ? navigate(-1) : navigate('/admin/users'));
 
   const [user, setUser] = useState(null);
   const [interviews, setInterviews] = useState([]);
@@ -120,10 +127,8 @@ const AdminUserProfilePage = () => {
 
   return (
     <div className="space-y-6">
-      <Button variant="ghost" size="sm" asChild className="-ml-2">
-        <Link to="/admin/users">
-          <ChevronLeft /> Back to Manage Users
-        </Link>
+      <Button variant="ghost" size="sm" onClick={goBack} className="-ml-2">
+        <ChevronLeft /> Back
       </Button>
 
       {/* --------------------------------------------------------- identity card */}

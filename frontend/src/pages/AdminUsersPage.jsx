@@ -9,7 +9,7 @@ import Spinner from '../components/ui/Spinner';
 import Input from '../components/ui/Input';
 import Pagination from '../components/ui/Pagination';
 import BulkEmailModal from '../components/admin/BulkEmailModal';
-import { SIGNUP_CATEGORIES, INTERVIEW_STATUS_LABELS, isInstructorCategory, formatCnic } from '../utils/constants';
+import { SIGNUP_CATEGORIES, INTERVIEW_STATUS_LABELS, isInstructorCategory, isResumeCategory, formatCnic } from '../utils/constants';
 import { Button as UiButton } from '@/components/shadcn/button';
 import { UnderlineTabs } from '@/components/shadcn/tabs';
 import {
@@ -126,8 +126,11 @@ const AdminUsersPage = () => {
   // returns to exactly the view the admin left instead of resetting it.
   const [searchParams, setSearchParams] = useSearchParams();
   // 'enrolled' = people who signed up themselves, 'bulk' = accounts created by the Bulk
-  // Email Module. Together they cover every user, so there is no separate "all" view.
-  const activeTab = searchParams.get('tab') === 'bulk' ? 'bulk' : 'enrolled';
+  // Email Module, 'resume' = the Resume-Based category, kept separate so its assessment is
+  // not reviewed mixed in with the others. Together they cover every user exactly once, so
+  // there is no separate "all" view.
+  const tabParam = searchParams.get('tab');
+  const activeTab = ['bulk', 'resume'].includes(tabParam) ? tabParam : 'enrolled';
   const searchTerm = searchParams.get('q') || '';
   const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10) || 1);
   const batchFilter = searchParams.get('batch') ? Number(searchParams.get('batch')) : null;
@@ -387,7 +390,15 @@ const AdminUsersPage = () => {
   // Split by origin first: bulk_batch_id is set only on accounts the Bulk Email Module
   // created, so a null value is exactly "this person signed up themselves".
   const tabUsers = useMemo(() => {
-    const byTab = users.filter((u) => (activeTab === 'bulk' ? u.bulk_batch_id != null : u.bulk_batch_id == null));
+    // Resume-Based candidates get their own tab so their assessment is not reviewed mixed in
+    // with the other categories (Resume §4.1). They are split out FIRST and excluded from
+    // the other two: they always self-enrol (bulk invites refuse this category, since a
+    // spreadsheet row cannot carry a CV), so they would otherwise sit inside Enrolled Users.
+    const byTab = users.filter((u) => {
+      if (isResumeCategory(u.course_category)) return activeTab === 'resume';
+      if (activeTab === 'resume') return false;
+      return activeTab === 'bulk' ? u.bulk_batch_id != null : u.bulk_batch_id == null;
+    });
     return batchFilter == null ? byTab : byTab.filter((u) => u.bulk_batch_id === batchFilter);
   }, [users, activeTab, batchFilter]);
 
@@ -463,8 +474,17 @@ const AdminUsersPage = () => {
       page: null,
     });
 
-  const enrolledCount = useMemo(() => users.filter((u) => u.bulk_batch_id == null).length, [users]);
-  const bulkCount = users.length - enrolledCount;
+  // Resume-Based accounts are counted only under their own tab, never under Enrolled Users,
+  // so the three counts add up to the whole list exactly once.
+  const { enrolledCount, bulkCount, resumeCount } = useMemo(() => {
+    let enrolled = 0, bulk = 0, resume = 0;
+    users.forEach((u) => {
+      if (isResumeCategory(u.course_category)) resume += 1;
+      else if (u.bulk_batch_id == null) enrolled += 1;
+      else bulk += 1;
+    });
+    return { enrolledCount: enrolled, bulkCount: bulk, resumeCount: resume };
+  }, [users]);
 
   // One chip per batch that still has accounts, newest first, counted from the users already
   // in memory rather than asking the server. A batch whose accounts were all since deleted is
@@ -526,6 +546,7 @@ const AdminUsersPage = () => {
         tabs={[
           { value: 'enrolled', label: 'Enrolled Users', count: enrolledCount },
           { value: 'bulk', label: 'Bulk Invited', count: bulkCount },
+          { value: 'resume', label: 'Resume-Based', count: resumeCount },
         ]}
       />
 
@@ -638,6 +659,8 @@ const AdminUsersPage = () => {
                       </div>
                       {isInstructorCategory(item.course_category) ? (
                         <Badge variant="accent" className="mt-1">Instructor</Badge>
+                      ) : isResumeCategory(item.course_category) ? (
+                        <Badge variant="accent" className="mt-1">Resume-based</Badge>
                       ) : item.course_status ? (
                         <Badge variant={item.course_status === 'completed' ? 'success' : 'info'} className="mt-1">
                           {item.course_status}
@@ -691,7 +714,12 @@ const AdminUsersPage = () => {
                           className="!p-2 !rounded-lg"
                           title="Quick Edit Profile"
                         />
-                        {(item.course_status === 'completed' || isInstructorCategory(item.course_category)) && (
+                        {/* Statusless categories qualify by category — requiring 'completed'
+                            of them would demand a field they can never have. Mirrors the
+                            same rule the backend invite endpoint enforces. */}
+                        {(item.course_status === 'completed'
+                          || isInstructorCategory(item.course_category)
+                          || isResumeCategory(item.course_category)) && (
                           <Button
                             variant="primary"
                             size="sm"
@@ -833,8 +861,10 @@ const AdminUsersPage = () => {
                 </select>
               </div>
 
-              {/* Instructors carry no course status (Update §2). */}
-              {!isInstructorCategory(editForm.course_category) && (
+              {/* Instructors and Resume-Based candidates carry no course status
+                  (Update §2 / Resume §1.1). */}
+              {!isInstructorCategory(editForm.course_category)
+                && !isResumeCategory(editForm.course_category) && (
                 <div className="space-y-1.5">
                   <label htmlFor="course_status" className="text-xs font-semibold text-slate-700 dark:text-slate-300">Course Status</label>
                   <select id="course_status" value={editForm.course_status} onChange={handleEditChange} className={selectClass}>

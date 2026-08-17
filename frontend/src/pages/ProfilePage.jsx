@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
-import PageHeader from '../components/ui/PageHeader';
+import { timeAgo, formatDateTime, formatDate } from '../utils/datetime';
+import { AdminPageHeader } from '@/components/shadcn/page';
 import Card, { CardHeader, CardTitle } from '../components/ui/Card';
 import Alert from '../components/ui/Alert';
 import Badge from '../components/ui/Badge';
@@ -82,6 +83,29 @@ const BADGE_ICONS = {
   FileText,
   Zap: TrendingUp,
 };
+
+/**
+ * One line of the Account Activity card.
+ *
+ * `absolute` picks the calendar date over a relative reading — "member since" is a fact
+ * about a date, whereas "last active" is about recency, and "312d ago" is a worse answer to
+ * the first question than "12 Oct 2025". Renders a dash rather than being omitted when the
+ * timestamp is missing, so the rows stay aligned and the absence is visible.
+ */
+const TimelineRow = ({ label, value, absolute = false }) => (
+  <div className="flex items-baseline justify-between gap-3">
+    <dt className="text-xs text-slate-500 dark:text-slate-400">{label}</dt>
+    <dd className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+      {value ? (
+        <time dateTime={value} title={formatDateTime(value)}>
+          {absolute ? formatDate(value) : timeAgo(value)}
+        </time>
+      ) : (
+        <span className="text-slate-400">—</span>
+      )}
+    </dd>
+  </div>
+);
 
 const ProfilePage = () => {
   const { user, tokens, fetchProfile, setTokens } = useAuth();
@@ -317,7 +341,9 @@ const ProfilePage = () => {
         }
       `}</style>
 
-      <PageHeader
+      {/* Same header treatment as the rest of the portal (aurora backdrop, icon tile) rather
+          than this page's own older PageHeader, so Profile stops looking like a different app. */}
+      <AdminPageHeader
         icon={User}
         title="Profile & Account Management"
         subtitle="Adjust interview parameters, purchase mock tokens, and review candidate ranking scores."
@@ -659,6 +685,22 @@ const ProfilePage = () => {
             </div>
           </Card>
 
+          {/* Account activity. The profile carried no time information at all beyond a bare
+              date on each transaction — no sense of how long the account had existed or when
+              it was last touched. Each row pairs a relative reading with the exact timestamp
+              on hover, which is the pattern used everywhere else now. */}
+          <Card className="space-y-4">
+            <div className="flex items-center gap-2 border-b border-slate-200 dark:border-slate-800 pb-3">
+              <UserCheck className="text-slate-400" size={18} />
+              <CardTitle className="text-base mb-0">Account Activity</CardTitle>
+            </div>
+            <dl className="space-y-2.5">
+              <TimelineRow label="Member since" value={user?.created_at} absolute />
+              <TimelineRow label="Last active" value={user?.last_seen_at} />
+              <TimelineRow label="Profile updated" value={user?.updated_at} />
+            </dl>
+          </Card>
+
           {/* Transactions Log */}
           <Card className="space-y-4">
             <div className="flex items-center gap-2 border-b border-slate-200 dark:border-slate-800 pb-3">
@@ -679,9 +721,15 @@ const ProfilePage = () => {
                       <span className="font-bold text-slate-700 dark:text-slate-300 block capitalize">
                         {tx.transaction_type.replace('_', ' ')}
                       </span>
-                      <span className="text-[10px] text-slate-500">
-                        {new Date(tx.created_at).toLocaleDateString()}
-                      </span>
+                      {/* Relative, with the exact moment on hover — a bare date gave no
+                          sense of whether a purchase was an hour or a year ago. */}
+                      <time
+                        className="text-[10px] text-slate-500"
+                        dateTime={tx.created_at}
+                        title={formatDateTime(tx.created_at)}
+                      >
+                        {timeAgo(tx.created_at)}
+                      </time>
                     </div>
                     <div className="text-right">
                       <span className={`font-mono font-bold block ${tx.tokens_added > 0 ? 'text-emerald-500 dark:text-emerald-400' : 'text-red-500 dark:text-red-400'}`}>

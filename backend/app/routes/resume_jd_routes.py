@@ -7,6 +7,7 @@ from app.database.db import db
 from app.models import ResumeAnalysis, JdAnalysis, User, Notification
 from app.ai.mixtral.mixtral_service import MixtralService
 from app.utils.pdf_parser import PDFParser
+from app.utils.resume_text import extract_resume_text
 from app.config.config import Config
 from app.utils.security import get_current_user_id
 
@@ -22,47 +23,22 @@ def analyze_resume(resume: UploadFile = File(...), user_id: int = Depends(get_cu
     if not filename:
         raise HTTPException(status_code=400, detail="No file uploaded")
 
-    ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
-    if ext not in {'pdf', 'txt'}:
-        raise HTTPException(status_code=400, detail="Only PDF and TXT formats are supported")
+    contents = resume.file.read()
+    if not contents:
+        raise HTTPException(status_code=400, detail="No file uploaded")
 
-    # Ensure uploads folder exists
-    os.makedirs(Config.UPLOAD_FOLDER, exist_ok=True)
-    safe_name = clean_filename(f"user_{user_id}_resume_{int(datetime.datetime.utcnow().timestamp())}_{filename}")
-    file_path = os.path.join(Config.UPLOAD_FOLDER, safe_name)
+    # Format checks, text extraction and the "is this actually a CV?" test now live in
+    # app/utils/resume_text.py, shared with the Resume-Based Interview's enrolment upload —
+    # one parsing pipeline rather than two that can drift apart. The behaviour is what it
+    # always was, minus the temp file: this endpoint used to write the upload to disk purely
+    # so pypdf could be handed a path, then delete it again on every exit path.
+    #
+    # The size cap is not applied here: this route is authenticated and never had one, and
+    # quietly starting to reject a CV that used to work would be a regression for existing
+    # users of the Analyzer.
+    resume_text = extract_resume_text(contents, filename, enforce_size_limit=False)
 
     try:
-        # Save file to disk
-        contents = resume.file.read()
-        with open(file_path, "wb") as f:
-            f.write(contents)
-
-        if safe_name.endswith('.pdf'):
-            resume_text = PDFParser.extract_text(file_path)
-        else:
-            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                resume_text = f.read()
-
-        if not resume_text or len(resume_text.strip()) < 50:
-            raise HTTPException(status_code=400, detail="Failed to extract text. File might be blank or scanned.")
-
-        # Validate that the extracted text looks like a resume
-        text_lower = resume_text.lower()
-        resume_keywords = [
-            'experience', 'education', 'skills', 'projects', 'employment', 
-            'history', 'summary', 'contact', 'qualification', 'certifications', 
-            'cv', 'resume', 'work history', 'professional experience',
-            'academic', 'courses', 'achievements', 'objective'
-        ]
-        matches = sum(1 for kw in resume_keywords if kw in text_lower)
-        if matches < 2 and 'curriculum vitae' not in text_lower and 'resume' not in text_lower:
-            if os.path.exists(file_path):
-                os.remove(file_path)
-            raise HTTPException(
-                status_code=400, 
-                detail="Invalid file content: The uploaded document does not appear to be a valid resume or CV. Please ensure it contains standard sections such as Experience, Education, or Skills."
-            )
-
         analysis = MixtralService.analyze_resume(resume_text)
 
         resume_record = ResumeAnalysis(
@@ -71,9 +47,14 @@ def analyze_resume(resume: UploadFile = File(...), user_id: int = Depends(get_cu
             extracted_skills=analysis.get('extracted_skills', '[]'),
             extracted_experience=analysis.get('extracted_experience', '[]'),
             extracted_education=analysis.get('extracted_education', '[]'),
+            extracted_projects=analysis.get('extracted_projects', '[]'),
             missing_skills=analysis.get('missing_skills', '[]'),
             resume_score=analysis.get('resume_score', 0),
             suggestions=analysis.get('suggestions', '[]')
+            # raw_text is deliberately NOT stored here. The Analyzer has always kept only the
+            # extracted fields and thrown the document away; retaining the full CV for it
+            # would be a change to this feature's data retention that nobody asked for. The
+            # Resume-Based Interview stores it because its questions are generated from it.
         )
         db.session.add(resume_record)
 
@@ -81,28 +62,22 @@ def analyze_resume(resume: UploadFile = File(...), user_id: int = Depends(get_cu
             user_id=user_id,
             title='Resume Scored Successfully!',
             message=f"Your resume '{filename}' was analyzed. ATS Score: {resume_record.resume_score}%. View recommendations in profile.",
-            type='recommendation'
+            type='recommendation',
+            link='/resume-match',
         )
         db.session.add(notification)
 
         db.session.commit()
-
-        if os.path.exists(file_path):
-            os.remove(file_path)
 
         return {
             'message': 'Resume analyzed successfully',
             'analysis': resume_record.to_dict()
         }
 
-    except HTTPException as he:
-        if os.path.exists(file_path):
-            os.remove(file_path)
-        raise he
+    except HTTPException:
+        raise
     except Exception as e:
         db.session.rollback()
-        if os.path.exists(file_path):
-            os.remove(file_path)
         raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
 
 @resume_jd_bp.post('/analyze-jd')

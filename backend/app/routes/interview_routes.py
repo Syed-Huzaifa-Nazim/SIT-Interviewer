@@ -12,7 +12,7 @@ from app.database.db import db
 from app.models import (
     User, Token, Transaction, Interview, InterviewQuestion,
     InterviewResponse, InterviewReport, Notification, AdminLog, RecordingLog,
-    ProctorSnapshot, Feedback
+    ProctorSnapshot, Feedback, ResumeAnalysis
 )
 from app.ai.mixtral.mixtral_service import MixtralService
 from app.ai.whisper.whisper_service import WhisperService, TranscriptionError
@@ -27,6 +27,41 @@ interview_bp = APIRouter()
 # an interview's expected total question count WITHOUT counting mcq rows in the database —
 # see submit_answer's is_completed check below for why that distinction matters.
 MCQ_ROUND_SIZE = 10
+
+
+def _resume_profile_from(resume_record):
+    """The stored resume analysis, shaped for question generation (Resume §3.3).
+
+    Returns None when there is nothing usable to build an interview from, which the caller
+    treats as a hard stop rather than falling back to generic questions — a Resume-Based
+    interview that ignores the resume is not the thing the candidate signed up for.
+
+    The list columns hold JSON strings (MixtralService normalises every path to that), but a
+    row written before that normalisation, or hand-edited, could be anything — so a bad blob
+    reads as an empty list instead of taking the interview down.
+    """
+    if not resume_record:
+        return None
+
+    def as_list(blob):
+        if not blob:
+            return []
+        try:
+            parsed = json.loads(blob)
+        except (ValueError, TypeError):
+            return []
+        if not isinstance(parsed, list):
+            return []
+        return [str(item).strip() for item in parsed if str(item).strip()]
+
+    profile = {
+        'skills': as_list(resume_record.extracted_skills),
+        'projects': as_list(resume_record.extracted_projects),
+        'experience': as_list(resume_record.extracted_experience),
+    }
+    if not profile['skills'] and not profile['projects']:
+        return None
+    return profile
 
 # ---------------------------------------------------------------------------------------
 # Why every handler below is `def` and not `async def`
@@ -326,12 +361,36 @@ def start_interview(payload: dict = Body(default=None), user_id: int = Depends(g
     # Instructor interviews (Update §3): the backend is authoritative — regardless of what
     # the client sends, an Instructor account always gets the instructor competency question
     # set and skips the technical-domain classifier (its domain isn't "technical").
-    from app.utils.candidate import is_instructor_category
+    from app.utils.candidate import is_instructor_category, is_resume_category
     _requesting_user = User.query.get(user_id)
     is_instructor = bool(_requesting_user and is_instructor_category(_requesting_user.course_category))
     if is_instructor:
         interview_type = 'instructor'
         job_role = 'Instructor'
+
+    # Resume-Based interviews (Resume §3) are likewise backend-authoritative: the question
+    # set comes from this candidate's stored resume analysis, not from anything the client
+    # sends. The analysis was produced at enrolment — this only reads it, so interview start
+    # never waits on a model call.
+    is_resume_based = bool(_requesting_user and is_resume_category(_requesting_user.course_category))
+    resume_profile = None
+    if is_resume_based:
+        interview_type = 'resume_based'
+        resume_record = (
+            ResumeAnalysis.query
+            .filter_by(user_id=user_id)
+            .order_by(ResumeAnalysis.created_at.desc())
+            .first()
+        )
+        resume_profile = _resume_profile_from(resume_record)
+        if not resume_profile:
+            # Nothing to build an interview from, and a generic one would defeat the point of
+            # the category. Refused before a token is charged.
+            raise HTTPException(
+                status_code=422,
+                detail="We could not find a usable resume on your account, so your interview "
+                       "cannot be prepared. Please contact the administration."
+            )
 
     # One-time (completed-course) candidates get exactly one official interview (§3.2):
     # resume an in-progress session instead of creating another, and hard-block any
@@ -364,8 +423,11 @@ def start_interview(payload: dict = Body(default=None), user_id: int = Depends(g
     # Domain validation (§3.4): block clearly non-technical custom domains BEFORE charging a
     # token or creating the session. JD-driven interviews skip this (a JD implies a real role).
     # Instructor interviews also skip it — they use a dedicated non-technical competency set.
+    # Resume-Based interviews skip it too: the candidate never chose a domain, so job_role is
+    # a generic placeholder and classifying it would reject a session over a label the
+    # candidate did not pick.
     has_jd = bool(custom_jd and len(custom_jd.strip()) >= 30)
-    if not has_jd and not is_instructor:
+    if not has_jd and not is_instructor and not is_resume_based:
         classification = MixtralService.classify_domain(job_role)
         # Only block when we are reasonably sure the domain is non-technical.
         if not classification['is_technical'] and classification['confidence'] >= 50:
@@ -434,7 +496,8 @@ def start_interview(payload: dict = Body(default=None), user_id: int = Depends(g
             difficulty=difficulty,
             num_questions=num_questions,
             custom_jd=custom_jd,
-            custom_skills=custom_skills
+            custom_skills=custom_skills,
+            resume_profile=resume_profile
         )
 
         # Completed-course candidates open on a hands-on coding-sandbox exercise instead of
@@ -449,6 +512,9 @@ def start_interview(payload: dict = Body(default=None), user_id: int = Depends(g
                 opening_problem = pick_opening_problem(
                     job_role=job_role,
                     course_category=getattr(requesting_user, 'course_category', '') or '',
+                    # Resume-Based candidates have no chosen domain, so the problem is
+                    # matched against the skills on their CV instead (Resume §3.3).
+                    resume_skills=(resume_profile or {}).get('skills'),
                 )
             except Exception as e:
                 # Never block the interview on the sandbox opener — fall back to the
@@ -461,12 +527,17 @@ def start_interview(payload: dict = Body(default=None), user_id: int = Depends(g
             q_type = q_data.get('question_type', 'conceptual')
             sandbox_problem_id = None
             code_snippet = q_data.get('code_snippet')  # debugging-format questions only
+            # Resume-driven questions only; None everywhere else (Resume §4.2).
+            derived_from = q_data.get('derived_from')
 
             if idx == 0 and opening_problem:
                 q_type = 'coding_sandbox'
                 sandbox_problem_id = opening_problem['id']
                 q_text = opening_problem['title']
                 code_snippet = None
+                # The sandbox problem replaced whatever was generated here, so it no longer
+                # traces back to the resume entry that question came from.
+                derived_from = None
 
             question = InterviewQuestion(
                 interview_id=interview.id,
@@ -475,6 +546,7 @@ def start_interview(payload: dict = Body(default=None), user_id: int = Depends(g
                 # Only debugging-format questions carry one (Coding Formats §2.2).
                 code_snippet=code_snippet,
                 sandbox_problem_id=sandbox_problem_id,
+                derived_from=derived_from,
                 order_num=idx + 1,
                 time_limit_seconds=question_time_limit(q_type)  # per-question timer (§2)
             )
@@ -1103,7 +1175,9 @@ def _finalize_report_if_ready(interview_id):
             user_id=interview.user_id,
             title='Interview Evaluation Ready!',
             message=f"Your interview report for {interview.job_role} is complete. Overall Score: {report_data.get('overall_score', 0)}%!",
-            type='interview'
+            type='interview',
+            # Straight to the report this is about — the whole point of the notification.
+            link=f'/interview/report/{interview_id}',
         )
         db.session.add(notification)
 

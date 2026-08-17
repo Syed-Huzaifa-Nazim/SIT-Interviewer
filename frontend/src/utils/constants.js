@@ -11,11 +11,23 @@ export const COURSE_CATEGORIES = [
 // one-time-OTP official-interview flow.
 export const INSTRUCTOR_CATEGORY = 'Instructor';
 
+// Resume-Based Interview (Resume §1) — also has no course status. Instead of picking a
+// domain the candidate uploads a CV at enrolment, and the interview is generated from it.
+export const RESUME_CATEGORY = 'Resume-Based Interview';
+
 // Everything selectable in the category dropdown (signup + admin edit).
-export const SIGNUP_CATEGORIES = [...COURSE_CATEGORIES, INSTRUCTOR_CATEGORY];
+export const SIGNUP_CATEGORIES = [...COURSE_CATEGORIES, INSTRUCTOR_CATEGORY, RESUME_CATEGORY];
 
 export const isInstructorCategory = (cat) =>
   (cat || '').trim().toLowerCase() === INSTRUCTOR_CATEGORY.toLowerCase();
+
+export const isResumeCategory = (cat) =>
+  (cat || '').trim().toLowerCase() === RESUME_CATEGORY.toLowerCase();
+
+// Categories that carry no course status at all, so the enrolment form skips the field and
+// the admin views show a category chip instead of a status badge.
+export const hasCourseStatus = (cat) =>
+  !isInstructorCategory(cat) && !isResumeCategory(cat);
 
 export const COURSE_STATUS_OPTIONS = [
   { value: 'ongoing', label: 'Ongoing' },

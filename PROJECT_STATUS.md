@@ -5,10 +5,16 @@
 > done, what tech was used, what problems came up and how they were solved, what is
 > committed vs pending, and where to pick up next. **Update it at the end of every
 > working day** (add a dated entry under "Daily Log" + update the relevant sections).
+>
+> **§1–§7 below describe the project as of 2026-07-21 to 2026-07-29** (an earlier phase of
+> work) and are kept for history. **For the current architecture, read
+> `PROJECT_SUMMARY.md` first** (re-verified against the running code on 2026-08-15) — it is
+> more current than the prose below on tech stack, models, routes, and every UI page.
+> **§10 (2026-08-15) is the up-to-date git state, standing rules, and pending decisions.**
 
 ---
 
-## 1. Project Overview
+## 1. Project Overview (as of 2026-07-29 — see §10 for current)
 AI-powered mock + official proctored interview platform.
 - **Frontend:** React 19 + Vite + Tailwind CSS 4 + React Router 7 + Axios + Recharts + lucide-react (lint: oxlint)
 - **Backend:** FastAPI + SQLAlchemy + Uvicorn + PyJWT + bcrypt + pypdf + pydub
@@ -16,17 +22,24 @@ AI-powered mock + official proctored interview platform.
 - **AI:** Mixtral (LLM scoring) + Whisper (STT). Modes: mock / api.
 - **Proctoring (client-side):** MediaPipe FaceMesh (+ iris/refineLandmarks) + MediaPipe Hands + TensorFlow.js COCO-SSD (phone detection) + `@vladmandic/face-api` (identity verification), all loaded from CDN.
 - **Storage:** Supabase Storage (private buckets). Refs stored as `supabase://bucket/path`, served to admin via short-lived signed URLs.
-- **Git:** GitHub repo `SyedHuzaifaNazim/Interviewer.ai`. Working branch: `saqib-colab`. Main: `main`.
+- **Git:** GitHub repo `SyedHuzaifaNazim/Interviewer.ai`. **Working branch is now `huzaifa`** (was `saqib-colab` when this section was written — see §10). Main: `main`.
 
 ## 2. Standing Rules (IMPORTANT — always follow)
-- **Do NOT push to GitHub until the user explicitly says so.**
+- **`main` is a live production deploy (Vercel + Railway auto-deploy on push) — never push
+  it without the user explicitly saying so for that push, every time.** Approval for one
+  push is not standing approval for the next. The working branch (`huzaifa`) does not need
+  this same per-push confirmation.
 - **Do ONLY what the user asks — no self-initiated extra features/refactors.** If something extra seems useful, mention it and ask first.
 - **Communicate in Roman Urdu.**
 - **Never add a new library without asking first.** Tell the user what it is and why, get approval, then implement.
-- **Nothing may slow down or crash the live backend** (FastAPI on Render) — it is deployed from `main`.
+- **Nothing may slow down or crash the live backend** (FastAPI on Railway) — it is deployed from `main`.
 - **The interview must never hang.** Heavy ML work belongs on the pre-interview gate or deferred, never at interview start.
 - Ask before any big/ambiguous work; don't ask about deleting features during merges.
-- Commit messages must NOT contain any AI/Claude co-author line (user wants history to look team-authored). Author identity is `SAQIBKHAN1020`.
+- **Commit messages must NOT contain any AI/Claude co-author line** (Co-Authored-By,
+  "Generated with", etc.) — anywhere in the repo, including a collaborator's commits once
+  they land in a branch being pushed. This has been asked more than once; treat it as
+  non-negotiable. The project now has multiple real contributors (`SyedHuzaifaNazim`,
+  `SAQIBKHAN1020`) — commits should carry whoever actually authored them, just never an AI.
 
 ## 3. Environment / Setup Notes
 - **Two Python installs on the machine:** default `python` = Windows Store Python (deps installed here); Anaconda at `/c/Users/Texon/anaconda3/python`. Use default `python` for this project.
@@ -343,3 +356,60 @@ AI-powered mock + official proctored interview platform.
 ### Ops notes discovered on the `huzaifa` machine
 - The `py` launcher here defaults to a **broken free-threaded Python 3.13t** build (corrupt
   `pydantic_core`). Use **`py -3.13`** (regular 3.13) to run backend scripts on this machine.
+
+---
+
+## 10. Current State (2026-08-15)
+
+Everything from §1–§9 above predates a large stretch of work that isn't reflected in that
+prose. **`PROJECT_SUMMARY.md` is the accurate architecture reference** as of this date —
+this section is the status/decisions layer on top of it: git state, what's live, and what's
+still an open call.
+
+### Git state
+- **Working branch: `huzaifa`.** `main` is production (Vercel frontend, Railway backend,
+  both auto-deploy on push). A third branch, `saqib-colab`, is a collaborator's working
+  branch merged into `huzaifa` regularly (usually with real, substantive commits — recent
+  examples include the async-handler migration follow-ups, the MCQ background-generation
+  race fix, and the "Jump to Introduction" recording bookmark).
+- **Deployed:** `main` @ `167c887`, level with `huzaifa` — pushed 2026-08-15. This cleared a
+  backlog of fourteen commits, including two bugs that had been live for days (the
+  post-interview video upload booting one-time candidates to `/login`, and the MCQ-round
+  submit-button freeze) plus the whole Resume-Based Interview category. Verified live after
+  the deploy: `/health` database up, the new endpoints present and auth-guarded, the
+  refactored Resume & JD Analyzer routes returning 401 rather than 500, and 30 concurrent
+  requests all served. Check `git log origin/main..origin/huzaifa` before trusting this —
+  it drifts every session; this was last verified 2026-08-15.
+- **Not verified end-to-end:** the Resume-Based flow has never been walked against a real
+  database — signup, OTP email, login, interview. Its automated coverage is unit-level, and
+  the one bug found so far (FormData posted under the shared axios instance's JSON
+  content-type, so the server saw no fields at all) was caught by a human clicking the
+  button, not by the 427 passing tests. Worth an actual run before trusting the category.
+- **`DEVELOPMENT_LOG.md`** is the accurate day-by-day change record from 2026-08-07 onward
+  (this file's own Daily Log below stops at 2026-07-29) — read it for anything more recent
+  than that date.
+
+### Open decisions (need the user's call)
+- **Vercel production-deploy block.** Vercel refuses to build any deployment (preview or
+  production) whose tip commit's git author is not a member of the Vercel team. Saqib's
+  commits trip this every time one becomes `main`'s or `huzaifa`'s tip. The standing
+  workaround — a small, real, team-member-authored commit on top before pushing to `main` —
+  works but has to be repeated on every such merge. Two real fixes exist and are both still
+  pending: invite `sankihere1@gmail.com` to the Vercel team, or disable "Only allow
+  deployments from Git authors with access to this Vercel team" in the project's Git
+  settings. Neither can be done via CLI; both need the Vercel dashboard.
+- **`_generate_and_save_mcqs`'s row-count idempotency check** (vs. the atomic-claim pattern
+  used elsewhere in the same file) — noted 2026-08-12, not hardened. Low probability, not
+  yet observed to actually double-write.
+- **`saqib-colab`'s local-only `backup-development-jul17` branch** (a month-old uncommitted
+  snapshot rescued before `development` was reset to match `huzaifa`) is still sitting local,
+  not pushed. Ask before discarding it.
+
+### Verified working, as of the 2026-08-15 push
+- Backend: `python -m compileall` clean; `pytest` — 239 passed, 15 pre-existing failures
+  confined to `test_problem_bank.py`'s SQL problems (unrelated to anything in this session's
+  changes).
+- Frontend: `oxlint` clean; `vitest` — 139 passed across 12 files; `vite build` clean.
+- Live: Railway `/health` reports DB up; Vercel production alias resolves to the deployment
+  matching `main`'s current tip; auth guards (401 without a token) spot-checked on
+  `/api/admin/users`, `/api/feedback`, `/api/interviews/{id}/report`.

@@ -8,12 +8,13 @@ from app.database.db import db
 from app.models import (
     User, Token, Transaction, Interview, Feedback, AdminLog,
     InterviewResponse, InterviewQuestion, SecondInterviewRequest, EmailLog,
-    Notification, CodeSubmission, InterviewReport, RecordingLog, ProctorSnapshot
+    Notification, CodeSubmission, InterviewReport, RecordingLog, ProctorSnapshot,
+    ResumeAnalysis
 )
 from app.utils.security import admin_required, get_current_user_id
 from app.utils.candidate import (
     COURSE_CATEGORIES, COURSE_STATUSES, SIGNUP_CATEGORIES, INSTRUCTOR_CATEGORY,
-    is_instructor_category, normalize_cnic, generate_otp
+    is_instructor_category, requires_course_status, normalize_cnic, generate_otp
 )
 from app.email import EmailService
 from app.email import templates as email_templates
@@ -189,6 +190,88 @@ def get_user_detail(target_user_id: int, user: User = Depends(admin_required)):
     return u_dict
 
 
+@admin_bp.get('/users/{target_user_id}/resume')
+def get_user_resume(target_user_id: int, user: User = Depends(admin_required)):
+    """Admin-only: the resume a Resume-Based candidate's interview was generated from
+    (Resume §4.2).
+
+    Without this an admin reviewing the report has no way to judge whether the questions
+    actually matched the CV — which is the one thing that can go wrong in this category and
+    nowhere else. The raw text is included deliberately; the original file is never retained,
+    so this is the whole document as the generator saw it.
+
+    Returns the most recent analysis, matching what start_interview reads: a candidate
+    approved for a second attempt uploads a fresh CV, and the report should be read against
+    the one their questions actually came from.
+    """
+    target = User.query.get(target_user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    record = (
+        ResumeAnalysis.query
+        .filter_by(user_id=target_user_id)
+        .order_by(ResumeAnalysis.created_at.desc())
+        .first()
+    )
+    if not record:
+        return {'has_resume': False}
+
+    flagged_by_admin = User.query.get(record.flagged_by) if record.flagged_by else None
+    return {
+        'has_resume': True,
+        'resume': record.to_dict(include_raw_text=True),
+        'flagged_by_name': flagged_by_admin.name if flagged_by_admin else None,
+    }
+
+
+@admin_bp.post('/resume-analyses/{analysis_id}/flag')
+def flag_resume_analysis(
+    analysis_id: int,
+    payload: dict = Body(default=None),
+    user: User = Depends(admin_required),
+):
+    """Admin-only: mark a resume as badly parsed, or clear that mark (Resume §4.2).
+
+    Purely an operational signal — nothing branches on it, no interview changes. It exists
+    so a garbled PDF or a missed skill set is visible as the cause of a poor interview
+    instead of being mistaken for a bad candidate, and so recurring extraction failures can
+    be seen rather than guessed at.
+    """
+    record = ResumeAnalysis.query.get(analysis_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Resume analysis not found")
+
+    data = payload or {}
+    flagged = bool(data.get('flagged', True))
+
+    if flagged:
+        reason = (data.get('reason') or '').strip()
+        if not reason:
+            raise HTTPException(
+                status_code=400,
+                detail="Please describe what the resume analysis got wrong."
+            )
+        record.flagged_at = datetime.datetime.utcnow()
+        record.flagged_by = user.id
+        record.flag_reason = reason[:500]
+        action, detail = 'FLAG_RESUME_ANALYSIS', f"Flagged resume analysis {record.id} (user {record.user_id}): {reason[:200]}"
+    else:
+        record.flagged_at = None
+        record.flagged_by = None
+        record.flag_reason = None
+        action, detail = 'UNFLAG_RESUME_ANALYSIS', f"Cleared the flag on resume analysis {record.id} (user {record.user_id})"
+
+    try:
+        db.session.add(AdminLog(admin_id=user.id, action=action, details=detail))
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        raise HTTPException(status_code=500, detail=f"Could not update the flag: {str(e)}")
+
+    return {'message': 'Flag updated', 'resume': record.to_dict()}
+
+
 @admin_bp.get('/users/{target_user_id}/proctoring')
 def get_user_proctoring(target_user_id: int, user: User = Depends(admin_required)):
     """Admin-only: the proctoring snapshot + summary for a candidate's most recent
@@ -320,10 +403,10 @@ def send_interview_invite(target_user_id: int, user: User = Depends(admin_requir
     if target.role == 'admin':
         raise HTTPException(status_code=400, detail="Cannot send an interview invite to an administrator")
 
-    # Eligible: Completed-course candidates OR Instructors (Update §3). Instructors have
-    # no course-status, so they qualify by category instead.
-    instructor = is_instructor_category(target.course_category)
-    if not instructor and target.course_status != 'completed':
+    # Eligible: Completed-course candidates, OR any category that has no course-status at
+    # all (Instructor, Resume-Based). Those qualify by category instead — requiring
+    # 'completed' of them would be requiring a field they can never have.
+    if requires_course_status(target.course_category) and target.course_status != 'completed':
         raise HTTPException(
             status_code=400,
             detail="Candidate's course status must be 'Completed' before sending an interview invite. "

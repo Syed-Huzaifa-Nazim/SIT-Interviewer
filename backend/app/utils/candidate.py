@@ -16,8 +16,21 @@ COURSE_CATEGORIES = [
 # candidates but with an instructor-specific competency question set (Update §3).
 INSTRUCTOR_CATEGORY = 'Instructor'
 
+# The Resume-Based category (Resume §1) is also NOT a course: the candidate never picks a
+# domain, so there is no course-status to collect. Their interview is driven entirely by an
+# uploaded resume — questions target the skills and projects extracted from it. Like
+# Instructor, it always follows the one-time-OTP official-interview flow.
+RESUME_CATEGORY = 'Resume-Based Interview'
+
+# Categories that carry no course-status. Every course-status check in the codebase must
+# consult this set rather than testing for one specific category, so adding another
+# statusless category later doesn't mean hunting down the same `!= 'completed'` guard in
+# auth_routes, bulk_email_routes and admin_routes independently (which is exactly what
+# happened when Instructor was added).
+STATUSLESS_CATEGORIES = {INSTRUCTOR_CATEGORY, RESUME_CATEGORY}
+
 # Everything selectable at signup / editable by an admin.
-SIGNUP_CATEGORIES = COURSE_CATEGORIES + [INSTRUCTOR_CATEGORY]
+SIGNUP_CATEGORIES = COURSE_CATEGORIES + [INSTRUCTOR_CATEGORY, RESUME_CATEGORY]
 
 # Canonical interview job role per category, used when auto-creating the official
 # interview for completed-course candidates (§3.3). Every value must be accepted
@@ -28,6 +41,10 @@ CATEGORY_JOB_ROLES = {
     'Web and Mobile App Development': 'Web & Mobile App Developer',
     'Graphics and UI/UX Design': 'UI/UX Designer',
     INSTRUCTOR_CATEGORY: 'Instructor',
+    # A resume-based candidate has no declared domain. This is only the label the session is
+    # created under — the questions themselves come from the resume, not from this role — so
+    # it stays deliberately generic rather than guessing a specialism from the CV.
+    RESUME_CATEGORY: 'Software Engineer',
 }
 
 COURSE_STATUSES = ['ongoing', 'completed']
@@ -35,6 +52,18 @@ COURSE_STATUSES = ['ongoing', 'completed']
 
 def is_instructor_category(category):
     return (category or '').strip().lower() == INSTRUCTOR_CATEGORY.lower()
+
+
+def is_resume_category(category):
+    return (category or '').strip().lower() == RESUME_CATEGORY.lower()
+
+
+def requires_course_status(category):
+    """False for categories that legitimately have no course status (Instructor,
+    Resume-Based). Those accounts keep ``course_status`` NULL, which the column has always
+    allowed — the value is simply not applicable to them."""
+    normalized = (category or '').strip().lower()
+    return normalized not in {c.lower() for c in STATUSLESS_CATEGORIES}
 
 
 # The four coding question FORMATS presented in a live interview (Coding Formats §2.2).

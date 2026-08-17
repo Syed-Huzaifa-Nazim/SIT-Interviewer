@@ -253,11 +253,124 @@ class MixtralService:
         ],
     }
 
+    @staticmethod
+    def _resume_anchors(resume_profile):
+        """The skills and projects a resume-driven question is allowed to cite, longest
+        first so 'React Native' is preferred over 'React' when both would match."""
+        if not resume_profile:
+            return []
+        anchors = []
+        for key in ('projects', 'skills'):
+            for entry in (resume_profile.get(key) or []):
+                text = str(entry).strip()
+                if text:
+                    anchors.append(text)
+        return sorted(anchors, key=len, reverse=True)
+
     @classmethod
-    def generate_questions(cls, interview_type, job_role, experience_level, difficulty, num_questions, custom_jd=None, custom_skills=None):
+    def _verify_derived_from(cls, claimed, anchors):
+        """Tie a generated question back to a real line of the resume, or to nothing.
+
+        The whole point of the traceability field is catching a generator that has drifted
+        off the CV, so an unchecked string copied straight from the model would defeat it —
+        it would look traceable precisely when it is not. A claim that matches no skill and
+        no project becomes None, which the Admin Hub renders as "not traceable to the
+        resume" rather than quietly showing whatever the model wrote.
+
+        Matching is substring-based in both directions so honest near-misses survive
+        ('React.js' against a resume that says 'React'), while an invented topic does not.
+        """
+        claim = (claimed or '').strip()
+        if not claim or not anchors:
+            return None
+        needle = claim.lower()
+        for anchor in anchors:
+            hay = anchor.lower()
+            if needle in hay or hay in needle:
+                return anchor[:255]
+        return None
+
+    @classmethod
+    def generate_questions(cls, interview_type, job_role, experience_level, difficulty,
+                           num_questions, custom_jd=None, custom_skills=None, resume_profile=None):
         import uuid
         jd_mode = bool(custom_jd and len(custom_jd.strip()) >= 30)
         instructor_mode = (interview_type == 'instructor')
+        # Resume-Based Interview (Resume §3.3): questions come from this candidate's own
+        # skills and projects rather than from a domain or a pasted JD. Checked before
+        # jd_mode because the two are mutually exclusive — this flow never has a JD.
+        resume_mode = bool(resume_profile and cls._resume_anchors(resume_profile))
+
+        if resume_mode:
+            anchors = cls._resume_anchors(resume_profile)
+            skills = [str(s).strip() for s in (resume_profile.get('skills') or []) if str(s).strip()]
+            projects = [str(p).strip() for p in (resume_profile.get('projects') or []) if str(p).strip()]
+
+            resume_system = (
+                "You are an experienced technical interviewer who has just read this candidate's "
+                "resume and is interviewing them about their own work. Return ONLY a JSON object of "
+                'the form {"questions": [{"question_text": string, "question_type": string, '
+                '"code_snippet": string, "derived_from": string}]} '
+                f"containing EXACTLY {num_questions} questions. "
+                "'question_type' must be one of: 'conceptual', 'scenario', 'behavioral', "
+                "'coding_scenario', 'coding_logic', 'coding_concept', 'coding_debug'. "
+                "'derived_from' MUST be copied VERBATIM from the skills or projects list you are "
+                "given — it names the resume entry the question came from. Never write a "
+                "'derived_from' value that is not in those lists. "
+                "GROUNDING RULE: every question must be answerable only by someone who actually did "
+                "the work on this resume. Ask about THEIR listed projects and THEIR listed "
+                "technologies — the decisions they made, what broke, what they would change. Do not "
+                "ask generic role-based questions that any candidate could answer, and never "
+                "reference a technology or project that is not in the lists below. "
+                "Answers are spoken aloud, so ask them to explain and reason; do not require them to "
+                "type out full code. "
+                "For 'coding_debug' ONLY, put a SHORT buggy snippet in 'code_snippet' (plain code, no "
+                "markdown fences) and keep 'question_text' as the spoken prompt with NO code in it. "
+                "Leave 'code_snippet' as an empty string for every other question type."
+            )
+            resume_user = (
+                f"Generate exactly {num_questions} interview questions for this candidate. "
+                f"Experience level: {experience_level}. Difficulty: {difficulty}.\n\n"
+                f"PROJECTS THEY BUILT:\n"
+                + ("\n".join(f"- {p}" for p in projects[:12]) if projects else "- (none listed)")
+                + f"\n\nSKILLS AND TECHNOLOGIES ON THEIR RESUME:\n"
+                + ("\n".join(f"- {s}" for s in skills[:25]) if skills else "- (none listed)")
+                + "\n\nWeight the set towards their projects — at least half the questions should "
+                  "be about something they specifically built. "
+                  f"Make the set fresh and non-repetitive (variation id: {str(uuid.uuid4())[:8]})."
+            )
+
+            api_result = cls._call_llm(resume_system, resume_user, temperature=0.5)
+            if api_result and isinstance(api_result.get('questions'), list) and api_result['questions']:
+                cleaned = []
+                for q in api_result['questions'][:num_questions]:
+                    text = (q.get('question_text') or '').strip() if isinstance(q, dict) else ''
+                    if not text:
+                        continue
+                    q_type = q.get('question_type', 'conceptual') if isinstance(q, dict) else 'conceptual'
+                    if q_type not in cls.ALLOWED_QUESTION_TYPES:
+                        q_type = 'conceptual'
+                    snippet = (q.get('code_snippet') or '').strip() if isinstance(q, dict) else ''
+                    if snippet:
+                        snippet = re.sub(r'^```[a-zA-Z]*\n?', '', snippet)
+                        snippet = re.sub(r'\n?```$', '', snippet).strip()
+                    if q_type not in CODING_FORMATS_WITH_SNIPPET:
+                        snippet = ''
+                    if q_type == CODING_DEBUG and not snippet:
+                        q_type = CODING_CONCEPT
+                    cleaned.append({
+                        'question_text': text,
+                        'question_type': q_type,
+                        'code_snippet': snippet or None,
+                        'derived_from': cls._verify_derived_from(
+                            q.get('derived_from') if isinstance(q, dict) else None, anchors
+                        ),
+                        'order_num': len(cleaned) + 1,
+                    })
+                if cleaned:
+                    return cleaned
+
+            return cls._generate_mock_resume_questions(resume_profile, num_questions, experience_level)
 
         # Instructor interviews assess teaching competency, not candidate-level technical
         # depth (Update §3). Distinct prompt + question bank; same scoring/report pipeline.
@@ -696,8 +809,17 @@ class MixtralService:
             "You are an ATS (Applicant Tracking System) resume analyzer. "
             "Analyze the resume and return a JSON object with these keys: "
             "'extracted_skills' (list of strings), 'extracted_experience' (list of strings/bullet points), "
-            "'extracted_education' (list of strings), 'missing_skills' (list of strings), "
-            "'resume_score' (0-100), and 'suggestions' (list of strings)."
+            "'extracted_education' (list of strings), 'extracted_projects' (list of strings), "
+            "'missing_skills' (list of strings), "
+            "'resume_score' (0-100), and 'suggestions' (list of strings). "
+            # Projects are pulled out separately because the Resume-Based Interview asks the
+            # candidate about specific things they built. Blended into the experience bullets
+            # they cannot be addressed individually, and a question generator handed a mixed
+            # list tends to ask about the employer rather than the work.
+            "For 'extracted_projects', list the candidate's named projects — one entry per "
+            "project, each as 'Project name — what it does and the technologies used'. Include "
+            "personal, academic and open-source projects, not just employed work. Return an "
+            "empty list if the resume genuinely names no projects; never invent one."
         )
 
         user_prompt = f"Resume Text:\n{resume_text}"
@@ -717,7 +839,7 @@ class MixtralService:
     # Normalising here keeps both paths identical and is the single source of truth.
     _RESUME_LIST_FIELDS = (
         'extracted_skills', 'extracted_experience',
-        'extracted_education', 'missing_skills', 'suggestions',
+        'extracted_education', 'extracted_projects', 'missing_skills', 'suggestions',
     )
 
     @classmethod
@@ -767,7 +889,82 @@ class MixtralService:
         return cls._generate_mock_jd_analysis(jd_text)
 
     # --- MOCK GENERATION HELPERS ---
-    
+
+    # Offline question shapes for the Resume-Based category. Each is a real interview
+    # question once a project or skill is substituted in, so the mock path produces a
+    # usable interview about THIS candidate rather than generic filler — the whole
+    # category is meaningless if the fallback asks about nothing they wrote down.
+    _RESUME_PROJECT_TEMPLATES = (
+        ("Walk me through {anchor}. What was the problem it solved, and what did you build?", 'scenario'),
+        ("On {anchor}, what was the hardest technical decision you had to make, and what "
+         "made you settle on the option you chose?", 'coding_scenario'),
+        ("If you were rebuilding {anchor} today, what would you do differently and why?", 'conceptual'),
+        ("Describe something that broke or did not work as expected in {anchor}, and how "
+         "you tracked it down.", 'behavioral'),
+        ("How would you scale {anchor} to handle roughly ten times its current load? Talk "
+         "through where it would strain first.", 'coding_logic'),
+    )
+    _RESUME_SKILL_TEMPLATES = (
+        ("Your resume lists {anchor}. Explain how you have actually used it and what you "
+         "understand about how it works underneath.", 'coding_concept'),
+        ("Where does {anchor} stop being the right tool, and what would you reach for instead?", 'conceptual'),
+        ("Talk me through how you would debug a performance problem in something built "
+         "with {anchor}.", 'coding_logic'),
+    )
+
+    @classmethod
+    def _generate_mock_resume_questions(cls, resume_profile, num_questions, experience_level=None):
+        """Deterministic Resume-Based question set for AI_MODE=mock or an unreachable LLM.
+
+        Projects are drawn from first and alternated with skills, matching the live prompt's
+        instruction to weight the set towards what the candidate actually built.
+        """
+        projects = [str(p).strip() for p in ((resume_profile or {}).get('projects') or []) if str(p).strip()]
+        skills = [str(s).strip() for s in ((resume_profile or {}).get('skills') or []) if str(s).strip()]
+
+        questions = []
+
+        def add(anchor, template, q_type):
+            # A whole project bullet reads badly mid-sentence; the leading name is the part
+            # that identifies it to the candidate. Resumes separate the name from the blurb
+            # with a dash or a colon, and the LLM path is asked for the dash form.
+            label = anchor
+            for sep in ('—', '–', ' - ', ':'):
+                label = label.split(sep)[0]
+            label = label.strip() or anchor
+            questions.append({
+                'question_text': template.format(anchor=label[:120]),
+                'question_type': q_type,
+                'code_snippet': None,
+                'derived_from': anchor[:255],
+                'order_num': len(questions) + 1,
+            })
+
+        p_i = s_i = 0
+        while len(questions) < num_questions and (projects or skills):
+            # 2:1 towards projects, so a candidate with plenty of both is asked mostly
+            # about their own work rather than about their tech list.
+            use_project = projects and (not skills or len(questions) % 3 != 2)
+            if use_project:
+                anchor = projects[p_i % len(projects)]
+                template, q_type = cls._RESUME_PROJECT_TEMPLATES[p_i % len(cls._RESUME_PROJECT_TEMPLATES)]
+                p_i += 1
+            else:
+                anchor = skills[s_i % len(skills)]
+                template, q_type = cls._RESUME_SKILL_TEMPLATES[s_i % len(cls._RESUME_SKILL_TEMPLATES)]
+                s_i += 1
+            add(anchor, template, q_type)
+
+        # A resume with neither projects nor skills should not reach here (resume_mode is
+        # gated on having anchors), but never hand back an empty interview.
+        if not questions:
+            return cls._generate_mock_questions(
+                'technical', 'Software Engineer', experience_level or 'Entry', 'Medium', num_questions, None
+            )
+
+        return questions[:num_questions]
+
+
     @classmethod
     def _generate_mock_questions(cls, interview_type, job_role, experience_level, difficulty, num_questions, custom_jd):
         mock_library = {
@@ -1031,6 +1228,17 @@ class MixtralService:
             "Bachelor's degree or equivalent technical certifications detected."
         ]
 
+        # Projects drive the Resume-Based Interview's questions, so the offline path reads
+        # them out of the actual document instead of returning a fixed list: a mock interview
+        # built from three invented projects the candidate has never heard of is worse than
+        # no mock at all. Falls back to the detected skills only when the resume really has
+        # no projects section to read.
+        extracted_projects = cls._scrape_project_lines(resume_text)
+        if not extracted_projects:
+            extracted_projects = [
+                f"General {skill} work described in the resume body" for skill in found_skills[:3]
+            ]
+
         suggestions = [
             "Add quantitative accomplishments (e.g., 'Optimized query efficiency by 40%').",
             "Incorporate a dedicated section highlighting experience with cloud deployments (AWS/Docker).",
@@ -1041,10 +1249,58 @@ class MixtralService:
             "extracted_skills": json.dumps(found_skills),
             "extracted_experience": json.dumps(extracted_experience),
             "extracted_education": json.dumps(extracted_education),
+            "extracted_projects": json.dumps(extracted_projects),
             "missing_skills": json.dumps(missing),
             "resume_score": resume_score,
             "suggestions": json.dumps(suggestions)
         }
+
+    # Headings a resume actually uses for its project section, lowercase.
+    _PROJECT_HEADINGS = ('projects', 'personal projects', 'academic projects',
+                         'selected projects', 'key projects', 'portfolio')
+    # Headings that end it — anything that clearly starts a different section.
+    _SECTION_HEADINGS = ('experience', 'education', 'skills', 'certifications', 'awards',
+                         'employment', 'work history', 'references', 'summary', 'objective',
+                         'languages', 'interests', 'achievements', 'publications')
+
+    @classmethod
+    def _scrape_project_lines(cls, resume_text, limit=6):
+        """Best-effort read of a resume's projects section without an LLM.
+
+        Deliberately conservative: it only reads lines under a recognised projects heading
+        and stops at the next section, so it under-reports rather than sweeping in unrelated
+        bullets. Returns [] when there is no projects section at all.
+        """
+        projects = []
+        in_section = False
+
+        for raw_line in (resume_text or '').splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+
+            # A heading is short and has no sentence punctuation — long prose that merely
+            # mentions the word "projects" must not flip the section on.
+            bare = line.lower().strip(':•-–— \t')
+            is_heading = len(bare) <= 32
+
+            if is_heading and bare in cls._PROJECT_HEADINGS:
+                in_section = True
+                continue
+            if in_section and is_heading and any(bare.startswith(h) for h in cls._SECTION_HEADINGS):
+                break
+            if not in_section:
+                continue
+
+            entry = line.lstrip('•-–—*● \t').strip()
+            # Skip bare URLs and stray one-word fragments; neither makes a usable prompt.
+            if len(entry) < 8 or entry.lower().startswith(('http://', 'https://', 'www.')):
+                continue
+            projects.append(entry[:300])
+            if len(projects) >= limit:
+                break
+
+        return projects
 
     @classmethod
     def _generate_mock_jd_analysis(cls, jd_text):

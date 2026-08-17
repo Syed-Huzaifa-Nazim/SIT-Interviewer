@@ -1,67 +1,143 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, memo } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../services/api';
-import PageHeader from '../components/ui/PageHeader';
-import Card from '../components/ui/Card';
 import Alert from '../components/ui/Alert';
-import Badge from '../components/ui/Badge';
-import Button from '../components/ui/Button';
-import EmptyState from '../components/ui/EmptyState';
-import SearchBar from '../components/ui/SearchBar';
-import Spinner from '../components/ui/Spinner';
 import Pagination from '../components/ui/Pagination';
-import { History, Filter, ArrowUpRight, Award } from 'lucide-react';
+import { timeAgo, formatDateTime } from '../utils/datetime';
+import { cn } from '@/lib/utils';
+import { Badge } from '@/components/shadcn/badge';
+import { Button } from '@/components/shadcn/button';
+import { NativeSelect } from '@/components/shadcn/input';
+import { StatCard, StatGrid } from '@/components/shadcn/stat-card';
+import { StaggerItem } from '@/components/shadcn/motion';
+import {
+  AdminPageHeader,
+  AdminSearch,
+  AdminEmpty,
+  AdminPageSkeleton,
+} from '@/components/shadcn/page';
+import { History, ArrowUpRight, Award, TrendingUp, CheckCircle2, PlayCircle } from 'lucide-react';
 
 const PAGE_SIZE = 10;
+
+/**
+ * Mock assessment history.
+ *
+ * Rebuilt on the same shared page furniture the Admin Hub uses (AdminPageHeader /
+ * AdminSearch / StatGrid / AdminEmpty) rather than the older one-off candidate widgets, so
+ * this page stops being the odd one out. The data and the filtering behaviour are unchanged.
+ */
+
+const scoreTone = (score) => {
+  if (score == null) return 'text-muted-foreground';
+  if (score >= 80) return 'text-emerald-500';
+  if (score >= 60) return 'text-primary-500';
+  return 'text-amber-500';
+};
+
+/** Memoized so re-filtering doesn't rebuild every card that didn't change. */
+const HistoryCard = memo(({ mock }) => {
+  const completed = mock.status === 'completed';
+  return (
+    <article className="group flex h-full flex-col justify-between rounded-2xl border border-border bg-card p-5 transition-colors hover:border-primary/30">
+      <div className="space-y-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Badge variant="secondary" className="capitalize">{mock.type}</Badge>
+            <Badge variant="outline" className="capitalize">{mock.difficulty}</Badge>
+          </div>
+          <time
+            className="shrink-0 text-[11px] tabular-nums text-muted-foreground"
+            dateTime={mock.created_at}
+            title={formatDateTime(mock.created_at)}
+          >
+            {timeAgo(mock.created_at)}
+          </time>
+        </div>
+
+        <div>
+          <h3 className="truncate text-base font-extrabold capitalize text-foreground">{mock.job_role}</h3>
+          <p className="mt-0.5 text-xs text-muted-foreground">{mock.experience_level} level</p>
+        </div>
+      </div>
+
+      <div className="mt-5 flex items-center justify-between gap-3 border-t border-border pt-3.5">
+        <div className="flex items-center gap-1.5">
+          <Award size={15} className={scoreTone(mock.overall_score)} />
+          <span className={cn('text-sm font-bold tabular-nums', scoreTone(mock.overall_score))}>
+            {mock.overall_score != null ? `${mock.overall_score}%` : 'Incomplete'}
+          </span>
+        </div>
+
+        {completed ? (
+          <Link
+            to={`/interview/report/${mock.id}`}
+            className="inline-flex items-center gap-1.5 text-xs font-bold text-muted-foreground transition-colors hover:text-primary"
+          >
+            View evaluation
+            <ArrowUpRight size={14} className="transition-transform group-hover:translate-x-0.5" />
+          </Link>
+        ) : (
+          <Button size="sm" variant="secondary" asChild>
+            <Link to={`/interview/setup/${mock.id}`}>Resume session</Link>
+          </Button>
+        )}
+      </div>
+    </article>
+  );
+});
+HistoryCard.displayName = 'HistoryCard';
 
 const InterviewHistory = () => {
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  // Filtering states
   const [searchTerm, setSearchTerm] = useState('');
-  const [filterType, setFilterType] = useState('all'); // all, technical, HR, behavioral, custom
-  const [sortBy, setSortBy] = useState('newest'); // newest, oldest, highest_score
+  const [filterType, setFilterType] = useState('all');
+  const [sortBy, setSortBy] = useState('newest');
   const [page, setPage] = useState(1);
 
   useEffect(() => {
-    const fetchHistory = async () => {
+    let cancelled = false;
+    (async () => {
       try {
         const res = await api.get('/interviews/history');
-        setHistory(res.data);
-      } catch (err) {
-        setError('Failed to fetch interview history logs.');
+        if (!cancelled) setHistory(res.data);
+      } catch {
+        if (!cancelled) setError('Failed to fetch interview history logs.');
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
-    };
-    fetchHistory();
+    })();
+    return () => { cancelled = true; };
   }, []);
 
-  // Filter & Sort Logic
-  const filteredHistory = history
-    .filter((mock) => {
-      // 1. Search term match (job role)
-      const matchesSearch = mock.job_role.toLowerCase().includes(searchTerm.toLowerCase());
-      
-      // 2. Type match
-      const matchesType = filterType === 'all' || mock.type.toLowerCase() === filterType.toLowerCase();
+  const stats = useMemo(() => {
+    const completed = history.filter((h) => h.status === 'completed');
+    const scored = completed.filter((h) => h.overall_score != null);
+    const best = scored.reduce((m, h) => Math.max(m, h.overall_score), 0);
+    const avg = scored.length
+      ? Math.round(scored.reduce((s, h) => s + h.overall_score, 0) / scored.length)
+      : 0;
+    return { total: history.length, completed: completed.length, best, avg };
+  }, [history]);
 
+  const filteredHistory = useMemo(() => {
+    const term = searchTerm.trim().toLowerCase();
+    const list = history.filter((mock) => {
+      const matchesSearch = !term || (mock.job_role || '').toLowerCase().includes(term);
+      const matchesType = filterType === 'all' || (mock.type || '').toLowerCase() === filterType;
       return matchesSearch && matchesType;
-    })
-    .sort((a, b) => {
-      if (sortBy === 'newest') {
-        return new Date(b.created_at) - new Date(a.created_at);
-      }
-      if (sortBy === 'oldest') {
-        return new Date(a.created_at) - new Date(b.created_at);
-      }
-      if (sortBy === 'highest_score') {
-        return (b.overall_score || 0) - (a.overall_score || 0);
-      }
-      return 0;
     });
+    // Sorted on a copy — filter() already returns one, but sorting the state array in place
+    // would mutate what React is holding.
+    return list.sort((a, b) => {
+      if (sortBy === 'oldest') return new Date(a.created_at) - new Date(b.created_at);
+      if (sortBy === 'highest_score') return (b.overall_score || 0) - (a.overall_score || 0);
+      return new Date(b.created_at) - new Date(a.created_at);
+    });
+  }, [history, searchTerm, filterType, sortBy]);
 
   // Changing a filter/search/sort re-scopes the list, so send the user back to page 1 —
   // otherwise a narrowed result set would leave them on a page that no longer exists.
@@ -69,121 +145,92 @@ const InterviewHistory = () => {
     setPage(1);
   }, [searchTerm, filterType, sortBy]);
 
-  const pagedHistory = filteredHistory.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const pagedHistory = useMemo(
+    () => filteredHistory.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
+    [filteredHistory, page]
+  );
+
+  const onSearch = useCallback((e) => setSearchTerm(e.target.value), []);
+
+  if (loading) return <AdminPageSkeleton />;
 
   return (
-    <div className="space-y-6">
-      <PageHeader
+    <div className="space-y-5">
+      <AdminPageHeader
         icon={History}
         title="Mock Assessment History"
-        subtitle="Review all mock interview sessions, check scores, and review granular speech/text answers."
-      />
+        subtitle="Every practice session you've run, with scores and full answer transcripts."
+        actions={
+          <Button size="sm" asChild>
+            <Link to="/interview/start">
+              <PlayCircle className="size-4" /> New session
+            </Link>
+          </Button>
+        }
+      >
+        <AdminSearch value={searchTerm} onChange={onSearch} placeholder="Search by job role…">
+          <div className="flex shrink-0 gap-2">
+            <NativeSelect
+              value={filterType}
+              onChange={(e) => setFilterType(e.target.value)}
+              aria-label="Filter by focus type"
+              className="h-10 w-full sm:w-40"
+            >
+              <option value="all">All focus types</option>
+              <option value="technical">Technical</option>
+              <option value="hr">HR assessment</option>
+              <option value="behavioral">Behavioral</option>
+              <option value="custom">Custom JD</option>
+            </NativeSelect>
+            <NativeSelect
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value)}
+              aria-label="Sort order"
+              className="h-10 w-full sm:w-44"
+            >
+              <option value="newest">Newest first</option>
+              <option value="oldest">Oldest first</option>
+              <option value="highest_score">Highest score</option>
+            </NativeSelect>
+          </div>
+        </AdminSearch>
+      </AdminPageHeader>
 
       {error && <Alert variant="error">{error}</Alert>}
 
-      {/* Toolbar - Search, Filter, Sort */}
-      <Card padding={false} className="p-4">
-        <div className="flex flex-col md:flex-row items-center gap-4">
-          <SearchBar
-            className="md:flex-row"
-            placeholder="Search by job role..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
+      {history.length > 0 && (
+        <StatGrid>
+          {/* value + suffix rather than a pre-joined string: StatCard counts the number up,
+              and a string would skip that animation and render as-is. */}
+          <StatCard icon={History} label="Sessions" value={stats.total} index={0} />
+          <StatCard icon={CheckCircle2} label="Completed" value={stats.completed} tone="success" index={1} />
+          <StatCard icon={TrendingUp} label="Average score" value={stats.avg} suffix="%" tone="primary" index={2} />
+          <StatCard icon={Award} label="Best score" value={stats.best} suffix="%" tone="warning" index={3} />
+        </StatGrid>
+      )}
 
-          {/* Filter */}
-          <div className="flex items-center gap-2 w-full md:w-auto">
-            <Filter size={14} className="text-slate-400 dark:text-slate-500 shrink-0" />
-            <select
-              className="glass-input py-2 px-3 text-xs w-full md:w-40 cursor-pointer bg-white dark:bg-slate-900"
-              value={filterType}
-              onChange={(e) => setFilterType(e.target.value)}
-            >
-              <option value="all">All Focus Types</option>
-              <option value="technical">Technical</option>
-              <option value="hr">HR Assessment</option>
-              <option value="behavioral">Behavioral</option>
-              <option value="custom">Custom JDs</option>
-            </select>
-          </div>
-
-          {/* Sort */}
-          <select
-            className="glass-input py-1 px-1 text-xs w-full md:w-40 cursor-pointer bg-white dark:bg-slate-900"
-            value={sortBy}
-            onChange={(e) => setSortBy(e.target.value)}
-          >
-            <option value="newest">Sort: Newest First</option>
-            <option value="oldest">Sort: Oldest First</option>
-            <option value="highest_score">Sort: Highest Score</option>
-          </select>
-        </div>
-      </Card>
-
-      {/* History Grid */}
-      {loading ? (
-        <Spinner label="Loading history logs..." className="py-12" />
-      ) : filteredHistory.length === 0 ? (
-        <EmptyState
+      {filteredHistory.length === 0 ? (
+        <AdminEmpty
           icon={History}
-          message="No interview records matched your criteria."
-          actionLabel="Launch a new session"
-          actionTo="/interview/start"
+          title={history.length === 0 ? 'No sessions yet' : 'Nothing matches those filters'}
+          message={
+            history.length === 0
+              ? 'Run a mock interview and it will show up here with its full evaluation.'
+              : 'Try a different job role, focus type, or clear the search.'
+          }
+          filtered={history.length > 0}
+          onClear={() => { setSearchTerm(''); setFilterType('all'); }}
         />
       ) : (
         <>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {pagedHistory.map((mock) => (
-            <Card key={mock.id} variant="interactive" className="flex flex-col justify-between">
-              
-              <div className="space-y-4">
-                <div className="flex items-center justify-between gap-4">
-                  <Badge variant="primary">{mock.type}</Badge>
-                  <span className="text-xs text-slate-500">
-                    {new Date(mock.created_at).toLocaleDateString()}
-                  </span>
-                </div>
-
-                <div>
-                  <h3 className="font-extrabold text-lg text-slate-900 dark:text-white capitalize">{mock.job_role}</h3>
-                  <div className="flex items-center gap-3 text-xs text-slate-500 mt-1">
-                    <span>{mock.experience_level} Level</span>
-                    <span>&bull;</span>
-                    <span>{mock.difficulty} Difficulty</span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="mt-8 pt-4 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between gap-4">
-                {/* Score */}
-                <div className="flex items-center gap-1.5">
-                  <Award size={16} className="text-primary-500 dark:text-primary-400" />
-                  <span className={`font-bold text-sm ${mock.overall_score >= 80 ? 'text-emerald-500 dark:text-emerald-400' : mock.overall_score >= 60 ? 'text-primary-500 dark:text-primary-400' : 'text-amber-500 dark:text-amber-400'}`}>
-                    {mock.overall_score ? `${mock.overall_score}%` : 'Incomplete'}
-                  </span>
-                </div>
-
-                {/* CTA */}
-                {mock.status === 'completed' ? (
-                  <Link
-                    to={`/interview/report/${mock.id}`}
-                    className="text-xs font-bold text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white flex items-center gap-1.5 transition"
-                  >
-                    <span>View Evaluation Card</span>
-                    <ArrowUpRight size={14} />
-                  </Link>
-                ) : (
-                  <Link to={`/interview/setup/${mock.id}`}>
-                    <Button size="sm" variant="secondary">Resume Mock Session</Button>
-                  </Link>
-                )}
-              </div>
-
-            </Card>
-          ))}
-        </div>
-
-        <Pagination page={page} total={filteredHistory.length} onChange={setPage} />
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            {pagedHistory.map((mock, i) => (
+              <StaggerItem key={mock.id} index={i}>
+                <HistoryCard mock={mock} />
+              </StaggerItem>
+            ))}
+          </div>
+          <Pagination page={page} total={filteredHistory.length} onChange={setPage} />
         </>
       )}
     </div>

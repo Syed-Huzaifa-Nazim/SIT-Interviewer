@@ -706,15 +706,19 @@ def public_problem(problem):
 _DATA_HINTS = ("data", "sql", "database", "analytic", "warehouse", "etl", "bi ")
 
 
-def pick_opening_problem(job_role="", course_category="", preferred_language=None):
+def pick_opening_problem(job_role="", course_category="", preferred_language=None, resume_skills=None):
     """Choose the coding-sandbox problem to open a Completed-course interview with.
 
     SQL is preferred when the candidate's domain is data-oriented (that is where a query
     exercise is genuinely relevant); everyone else gets a standard function-implementation
     problem. Returns None when nothing suitable exists, in which case the caller simply
     leaves the generated verbal question in place.
+
+    ``resume_skills`` covers the Resume-Based category, where the candidate never selected a
+    domain — job_role is a generic placeholder for them, so their own listed skills are what
+    decides whether a query exercise is the right opener.
     """
-    haystack = f"{job_role or ''} {course_category or ''}".lower()
+    haystack = f"{job_role or ''} {course_category or ''} {' '.join(resume_skills or [])}".lower()
     wants_sql = any(hint in haystack for hint in _DATA_HINTS)
 
     sql_problems = [p for p in PROBLEMS if is_sql_problem(p)]

@@ -1,10 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, useCallback, memo } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import BrandLogo from '../components/layout/BrandLogo';
 import GlowBackground from '../components/layout/GlowBackground';
-import Badge from '../components/ui/Badge';
+import NotificationsMenu from '../components/layout/NotificationsMenu';
 import {
   LayoutDashboard,
   Mic,
@@ -16,11 +16,59 @@ import {
   LogOut,
   Sun,
   Moon,
-  Bell,
   Coins,
   Menu,
   X,
 } from 'lucide-react';
+
+/**
+ * One sidebar link.
+ *
+ * Declared at module scope and memoized, which is the whole point: this used to be inline
+ * JSX inside the nav's .map, so every DashboardLayout render rebuilt all seven links and
+ * their click handlers. Combined with the state update the old handler fired on EVERY click
+ * (see NavLinks below), Vercel's field data flagged this element with a 240ms INP — the
+ * click handler and the render it caused were blocking the next paint well past the 200ms
+ * "good" threshold.
+ *
+ * The `disabled` branch is a real anchor with the navigation suppressed rather than a
+ * removed link, so the item keeps its place in the list and remains reachable by keyboard,
+ * announcing itself as disabled instead of silently doing nothing.
+ */
+const NavLink = memo(({ item, isActive, disabled, onNavigate, onBlocked }) => {
+  const Icon = item.icon;
+  const handleClick = useCallback(
+    (e) => {
+      if (disabled) {
+        e.preventDefault();
+        onBlocked(item.name);
+        return;
+      }
+      onNavigate();
+    },
+    [disabled, onBlocked, onNavigate, item.name]
+  );
+
+  return (
+    <Link
+      to={disabled ? '#' : item.path}
+      onClick={handleClick}
+      aria-current={isActive ? 'page' : undefined}
+      aria-disabled={disabled || undefined}
+      className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-colors duration-200 select-none ${
+        disabled
+          ? 'opacity-40 cursor-not-allowed text-slate-400 dark:text-slate-500'
+          : isActive
+            ? 'bg-primary-600 text-white shadow-md shadow-primary-600/20'
+            : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-200/80 dark:hover:bg-slate-900/60'
+      }`}
+    >
+      <Icon size={18} className="shrink-0" />
+      <span className="flex-1 min-w-0 truncate whitespace-nowrap">{item.name}</span>
+    </Link>
+  );
+});
+NavLink.displayName = 'NavLink';
 
 const DashboardLayout = ({ children }) => {
   const { user, tokens, logout, notifications, readAllNotifications } = useAuth();
@@ -28,34 +76,44 @@ const DashboardLayout = ({ children }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [notifDropdownOpen, setNotifDropdownOpen] = useState(false);
+  // Replaces a blocking window.alert() in the nav click handler for the disabled Coding
+  // Sandbox link. alert() freezes the main thread until it is dismissed, which is exactly
+  // the kind of work that shows up as a bad INP score — and the rest of the app already
+  // moved off native dialogs to non-blocking UI.
+  const [blockedNotice, setBlockedNotice] = useState('');
 
-  const unreadNotifs = notifications.filter(n => !n.is_read);
+  const isAdmin = user?.role === 'admin';
 
-  const menuItems = [
-    { name: 'Dashboard', path: '/dashboard', icon: LayoutDashboard },
-    { name: 'Start Interview', path: '/interview/start', icon: Mic },
-    { name: 'Coding Sandbox', path: '/coding', icon: Code },
-    { name: 'Resume & JD Match', path: '/resume-match', icon: FileCheck },
-    { name: 'History', path: '/history', icon: History },
-    { name: 'Profile', path: '/profile', icon: User },
-  ];
+  const menuItems = useMemo(() => {
+    const items = [
+      { name: 'Dashboard', path: '/dashboard', icon: LayoutDashboard },
+      { name: 'Start Interview', path: '/interview/start', icon: Mic },
+      { name: 'Coding Sandbox', path: '/coding', icon: Code },
+      { name: 'Resume & JD Match', path: '/resume-match', icon: FileCheck },
+      { name: 'History', path: '/history', icon: History },
+      { name: 'Profile', path: '/profile', icon: User },
+    ];
+    if (isAdmin) items.push({ name: 'Admin Hub', path: '/admin', icon: ShieldAlert });
+    return items;
+  }, [isAdmin]);
 
-  if (user && user.role === 'admin') {
-    menuItems.push({ name: 'Admin Hub', path: '/admin', icon: ShieldAlert });
-  }
-
-  const handleLogout = async () => {
+  const handleLogout = useCallback(async () => {
     await logout();
     navigate('/login');
-  };
+  }, [logout, navigate]);
 
-  const handleNotifClick = () => {
-    setNotifDropdownOpen(!notifDropdownOpen);
-    if (!notifDropdownOpen && unreadNotifs.length > 0) {
-      readAllNotifications();
-    }
-  };
+  // Closing the drawer is only meaningful when it is actually open. Calling this
+  // unconditionally on every nav click — which is what the old handler did — queued a state
+  // update and a full layout re-render on desktop, where the drawer is never open in the
+  // first place. That render was landing in the same frame as the route change.
+  const closeSidebarIfOpen = useCallback(() => {
+    setSidebarOpen((open) => (open ? false : open));
+  }, []);
+
+  const handleBlockedNav = useCallback((name) => {
+    setBlockedNotice(`${name} is still under development and not yet available.`);
+  }, []);
+
 
   return (
     <div className="min-h-screen flex bg-slate-100 dark:bg-slate-950 text-slate-800 dark:text-slate-100 relative overflow-hidden">
@@ -96,41 +154,32 @@ const DashboardLayout = ({ children }) => {
         </div>
 
         <nav className="flex-1 px-3 py-5 space-y-1 overflow-y-auto font-sans">
-          {menuItems.map((item) => {
-            const Icon = item.icon;
-            const isActive = location.pathname === item.path || location.pathname.startsWith(item.path + '/');
-            const isSandbox = item.path === '/coding';
-            const isUser = user?.role !== 'admin';
-            const isDisabled = isSandbox && isUser;
-
-            const handleClick = (e) => {
-              if (isDisabled) {
-                e.preventDefault();
-                alert("The Coding Sandbox feature is currently under development and not yet ready for regular candidates. Please check back later!");
-              } else {
-                setSidebarOpen(false);
+          {menuItems.map((item) => (
+            <NavLink
+              key={item.name}
+              item={item}
+              isActive={
+                location.pathname === item.path || location.pathname.startsWith(`${item.path}/`)
               }
-            };
-
-            return (
-              <Link
-                key={item.name}
-                to={isDisabled ? '#' : item.path}
-                onClick={handleClick}
-                className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all duration-200 select-none ${
-                  isDisabled
-                    ? 'opacity-40 cursor-not-allowed text-slate-400 dark:text-slate-500'
-                    : isActive
-                      ? 'bg-primary-600 text-white shadow-md shadow-primary-600/20'
-                      : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-200/80 dark:hover:bg-slate-900/60'
-                }`}
-              >
-                <Icon size={18} className="shrink-0" />
-                <span className="flex-1 min-w-0 truncate whitespace-nowrap">{item.name}</span>
-              </Link>
-            );
-          })}
+              disabled={item.path === '/coding' && !isAdmin}
+              onNavigate={closeSidebarIfOpen}
+              onBlocked={handleBlockedNav}
+            />
+          ))}
         </nav>
+
+        {blockedNotice && (
+          <div className="mx-3 mb-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2">
+            <p className="text-[11px] leading-relaxed text-amber-700 dark:text-amber-300">{blockedNotice}</p>
+            <button
+              type="button"
+              onClick={() => setBlockedNotice('')}
+              className="mt-1 text-[10px] font-bold uppercase tracking-wide text-amber-700/70 hover:text-amber-700 dark:text-amber-300/70 dark:hover:text-amber-300"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
 
         <div className="p-3 border-t border-slate-200 dark:border-slate-800">
           <button
@@ -182,51 +231,7 @@ const DashboardLayout = ({ children }) => {
               {isDark ? <Sun size={19} /> : <Moon size={19} />}
             </button>
 
-            <div className="relative">
-              <button
-                onClick={handleNotifClick}
-                className="p-2 text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-slate-900 rounded-xl transition-all relative"
-                title="Notifications"
-                aria-label="Notifications"
-              >
-                <Bell size={19} />
-                {unreadNotifs.length > 0 && (
-                  <>
-                    <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full animate-ping" />
-                    <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full" />
-                  </>
-                )}
-              </button>
-
-              {notifDropdownOpen && (
-                <div className="absolute right-0 mt-2 w-80 glass-panel border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl overflow-hidden z-50 animate-slide-up">
-                  <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
-                    <h5 className="font-semibold text-sm text-slate-800 dark:text-white">Notifications</h5>
-                    {unreadNotifs.length > 0 && (
-                      <Badge variant="primary">{unreadNotifs.length} new</Badge>
-                    )}
-                  </div>
-                  <div className="max-h-64 overflow-y-auto divide-y divide-slate-200 dark:divide-slate-800">
-                    {notifications.length === 0 ? (
-                      <div className="px-4 py-8 text-center text-slate-500 text-sm">No notifications yet</div>
-                    ) : (
-                      notifications.map((notif) => (
-                        <div
-                          key={notif.id}
-                          className={`px-4 py-3 text-xs transition-colors hover:bg-slate-100 dark:hover:bg-slate-900/40 ${
-                            !notif.is_read ? 'bg-primary-500/5 border-l-2 border-primary-500' : ''
-                          }`}
-                        >
-                          <p className="font-semibold text-slate-800 dark:text-slate-200 mb-1">{notif.title}</p>
-                          <p className="text-slate-500 dark:text-slate-400 mb-1.5 line-clamp-2 leading-relaxed">{notif.message}</p>
-                          <span className="text-[10px] text-slate-400">{new Date(notif.created_at).toLocaleDateString()}</span>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
+            <NotificationsMenu notifications={notifications} onMarkAllRead={readAllNotifications} />
           </div>
         </header>
 

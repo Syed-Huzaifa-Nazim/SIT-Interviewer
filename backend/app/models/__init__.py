@@ -7,6 +7,7 @@ from app.models.models import (
     InterviewResponse,
     InterviewReport,
     ResumeAnalysis,
+    PendingResume,
     JdAnalysis,
     Notification,
     Feedback,
