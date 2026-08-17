@@ -1111,7 +1111,13 @@ const ReportDetailPage = () => {
             )}
 
             {/* -------------------------------------------------------- feedback */}
-            <Panel show={activeTab === 'feedback'}>
+            {/* no-print/print:hidden: this is an interactive input form (star buttons, a
+                textarea), not report content — printing it meant every report grew a page (or
+                more) of empty star icons and blank boxes at the end, which is what read as
+                "why is this section empty / cut off". Even the submitted-state branch only
+                ever shows a generic "thank you" message, never the actual answers, so there
+                was nothing worth printing here either way. */}
+            <Panel show={activeTab === 'feedback'} className="no-print print:hidden">
               <div className="rounded-xl border border-border bg-card p-4 print:border-slate-300">
                 {feedbackSubmitted ? (
                   <Alert variant="success" className="text-xs font-bold">
