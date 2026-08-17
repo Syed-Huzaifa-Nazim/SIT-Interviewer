@@ -1114,6 +1114,7 @@ const ReportDetailPage = () => {
                   />
                   <ToolLink
                     to={`/admin/users/${interview.user_id}`}
+                    state={{ from: 'Report' }}
                     title="Candidate Profile"
                     desc="Interviews, snapshots and approval history."
                   />
@@ -1306,9 +1307,10 @@ const PointsCard = ({ title, icon: Icon, tone, dot, items, empty }) => (
   </div>
 );
 
-const ToolLink = ({ to, title, desc }) => (
+const ToolLink = ({ to, title, desc, state }) => (
   <Link
     to={to}
+    state={state}
     className="flex flex-col gap-1 rounded-xl border border-border bg-card p-4 transition hover:border-primary hover:bg-accent/50"
   >
     <span className="text-xs font-bold text-foreground">{title}</span>

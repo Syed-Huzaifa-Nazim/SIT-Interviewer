@@ -178,7 +178,11 @@ const AdminInterviewsPage = () => {
                     className="border-b border-border transition-colors hover:bg-accent/60"
                   >
                     <TableCell>
-                      <Link to={`/admin/users/${item.user_id}`} className="block hover:underline">
+                      <Link
+                        to={`/admin/users/${item.user_id}`}
+                        state={{ from: 'Interviews' }}
+                        className="block hover:underline"
+                      >
                         <div className="font-semibold text-foreground">{item.user_name}</div>
                         <div className="text-[11px] text-muted-foreground">{item.user_email}</div>
                       </Link>
