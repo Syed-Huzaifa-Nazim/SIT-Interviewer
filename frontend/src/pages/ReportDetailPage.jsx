@@ -729,12 +729,20 @@ const ReportDetailPage = () => {
 
             {/* ------------------------------------------------------ transcript */}
             <Panel show={activeTab === 'transcript'}>
+              {/* print:break-inside-avoid used to sit on the OUTER card, forcing the whole
+                  question+answer+feedback block (easily half a page for a long answer) onto
+                  whichever page it fit on whole — a card that was, say, 60% of a page's
+                  remaining space jumped entirely to the next page instead of filling that
+                  60%, leaving it blank. Moved down to each smaller piece individually (the
+                  heading, the answer box, the feedback box) instead: each one still won't
+                  split awkwardly mid-sentence, but the page fills up properly between them,
+                  the way an ordinary printed document breaks between paragraphs. */}
               {qna.map((item, idx) => (
                 <div
                   key={idx}
-                  className="rounded-xl border border-border bg-card p-4 print:break-inside-avoid print:border-slate-300"
+                  className="rounded-xl border border-border bg-card p-4 print:p-3 print:border-slate-300"
                 >
-                  <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-start justify-between gap-3 print:break-inside-avoid">
                     <div className="min-w-0">
                       <Badge variant="secondary" size="sm">
                         Q{idx + 1}
@@ -779,7 +787,7 @@ const ReportDetailPage = () => {
                     )}
                   </div>
 
-                  <div className="mt-3 rounded-lg border border-border bg-muted/40 p-3 print:border-slate-300">
+                  <div className="mt-3 rounded-lg border border-border bg-muted/40 p-3 print:mt-2 print:break-inside-avoid print:border-slate-300 print:p-2">
                     <span className="text-[9px] font-bold uppercase tracking-wide text-muted-foreground">
                       Candidate Answer
                     </span>
@@ -789,7 +797,7 @@ const ReportDetailPage = () => {
                   </div>
 
                   {item.response && (
-                    <div className="mt-2.5">
+                    <div className="mt-2.5 print:mt-2 print:break-inside-avoid">
                       <span className="text-[9px] font-bold uppercase tracking-wide text-muted-foreground">
                         AI Grading Feedback
                       </span>
@@ -1175,7 +1183,15 @@ const ReportDetailPage = () => {
 /** Tab panels stay mounted and are hidden with CSS so switching tabs never refetches or
  *  loses form state — and `print:block` makes every panel appear in the printed record. */
 const Panel = ({ show, className, children }) => (
-  <div className={cn('space-y-3 pb-2', show ? 'block' : 'hidden print:block', className)}>{children}</div>
+  <div
+    className={cn(
+      'space-y-3 pb-2 print:space-y-2 print:pb-0',
+      show ? 'block' : 'hidden print:block',
+      className
+    )}
+  >
+    {children}
+  </div>
 );
 
 const CenteredCard = ({ children }) => (
