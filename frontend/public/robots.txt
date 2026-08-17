@@ -1,0 +1,12 @@
+User-agent: *
+Allow: /
+Disallow: /dashboard
+Disallow: /interview/
+Disallow: /coding
+Disallow: /resume-match
+Disallow: /history
+Disallow: /profile
+Disallow: /admin
+Disallow: /forgot-password
+
+Sitemap: https://sit-interviewer.vercel.app/sitemap.xml
