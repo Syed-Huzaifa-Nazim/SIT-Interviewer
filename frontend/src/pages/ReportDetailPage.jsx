@@ -1207,6 +1207,10 @@ const HScrollSlider = ({ children, className }) => {
   };
 
   const onTrackPointerDown = (e) => {
+    // Without this, dragging across the track also starts the browser's own text-selection
+    // gesture (the tab labels sit right above it) — every drag highlighted text instead of
+    // just scrolling.
+    e.preventDefault();
     const track = e.currentTarget;
     draggingRef.current = true;
     seekToClientX(e.clientX, track);
@@ -1231,14 +1235,17 @@ const HScrollSlider = ({ children, className }) => {
         {children}
       </div>
       {overflowing && (
+        // Same visual language as the app's own scrollbars (index.css's ::-webkit-scrollbar
+        // rules) — thin, neutral, green on hover — rather than a bold standalone bar, so it
+        // reads as "the scrollbar for this strip" and not an unrelated progress indicator.
         <div
           onPointerDown={onTrackPointerDown}
           role="scrollbar"
           aria-orientation="horizontal"
-          className="relative mt-1.5 h-2.5 w-full cursor-pointer rounded-full bg-slate-200 dark:bg-slate-800"
+          className="relative mt-1 h-1.5 w-full touch-none cursor-pointer select-none rounded-full bg-slate-200 dark:bg-slate-800"
         >
           <div
-            className="absolute inset-y-0 cursor-grab rounded-full bg-primary/70 transition-colors hover:bg-primary active:cursor-grabbing"
+            className="absolute inset-y-0 rounded-full bg-slate-400 transition-colors hover:bg-[#8dc63f] dark:bg-slate-600"
             style={{ width: `${thumbWidthPct}%`, left: `${thumbLeftPct}%` }}
           />
         </div>
