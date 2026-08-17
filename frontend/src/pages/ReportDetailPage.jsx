@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import InterviewFeedbackForm from '../components/feedback/InterviewFeedbackForm';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
@@ -92,14 +92,16 @@ const VIOLATION_TONE = {
 const ReportDetailPage = () => {
   const { id } = useParams();
   const navigate = useNavigate();
-  const location = useLocation();
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
-  // location.key is 'default' only for the very first history entry (a fresh tab, a
-  // bookmarked/shared link, a hard refresh) — everywhere else it means there IS somewhere to
-  // go back to, so Back returns to whatever page actually linked here (Manage Users, the
-  // Interviews list, a candidate profile, …) instead of a hardcoded destination.
-  const canGoBack = location.key !== 'default';
+  // window.history.state.idx (set by React Router's data router on every navigate/push) is
+  // > 0 whenever there's a real entry to go back to. Checked here instead of location.key
+  // ('default' vs not) because location.key resets on a hard refresh — the in-memory router
+  // re-mounts fresh — while window.history.state belongs to the browser's own session
+  // history for that specific entry and survives a reload of the same page. Back must return
+  // to wherever the admin actually came from (Manage Users, the Interviews list, a candidate
+  // profile, …) even after a refresh, not just on the very first load of the report.
+  const canGoBack = (window.history.state?.idx ?? 0) > 0;
   const backFallback = isAdmin ? '/admin/interviews' : '/history';
   const goBack = () => (canGoBack ? navigate(-1) : navigate(backFallback));
 
@@ -506,12 +508,11 @@ const ReportDetailPage = () => {
             </div>
           )}
 
-          {/* pb-2 (rather than sitting flush on the border) gives the horizontal scrollbar
-              room to actually render as a visible, grabbable slider instead of being clipped
-              against border-border below it — overflow-x-auto alone was scoping the scroll
-              correctly (it never bled into scrolling the whole dashboard), it just wasn't
-              visibly indicating there was more to scroll to. */}
-          <div className="no-print flex shrink-0 gap-1 overflow-x-auto overflow-y-hidden border-b border-border pb-2 print:hidden">
+          {/* Custom always-visible slider (see HScrollSlider) instead of relying on the
+              native scrollbar, which some browser/OS combinations hide until hovered or
+              suppress outright — the strip overflows on most screens once every tab (up to
+              Recording + Tools) is in play. */}
+          <HScrollSlider className="no-print shrink-0 border-b border-border pb-1 print:hidden">
             {tabs.map((tab) => {
               const Icon = tab.icon;
               const active = activeTab === tab.id;
@@ -542,7 +543,7 @@ const ReportDetailPage = () => {
                 </button>
               );
             })}
-          </div>
+          </HScrollSlider>
 
           <div className="min-h-0 flex-1 overflow-y-auto pt-3 pr-0.5 print:overflow-visible">
             {/* ------------------------------------------------------- analysis */}
@@ -956,6 +957,94 @@ const Fact = ({ icon: Icon, label, value, tone }) => (
     <dd className={cn('mt-0.5 text-sm font-bold text-foreground', tone)}>{value}</dd>
   </div>
 );
+
+/** A horizontally-scrolling strip with its own always-visible, draggable slider underneath —
+ *  used for the tab bar, which otherwise relies on the OS/browser's native scrollbar to hint
+ *  that there's more to scroll to. Native scrollbars are exactly the kind of thing that's
+ *  invisible-until-hovered or entirely suppressed depending on OS settings (Windows' "only
+ *  show scrollbars while scrolling", macOS overlay scrollbars, …) — this renders its own, so
+ *  it looks and behaves the same everywhere. Hidden entirely when the content already fits. */
+const HScrollSlider = ({ children, className }) => {
+  const containerRef = useRef(null);
+  const [metrics, setMetrics] = useState({ scrollLeft: 0, scrollWidth: 0, clientWidth: 0 });
+  const draggingRef = useRef(false);
+
+  const updateMetrics = useCallback(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    setMetrics({ scrollLeft: el.scrollLeft, scrollWidth: el.scrollWidth, clientWidth: el.clientWidth });
+  }, []);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return undefined;
+    updateMetrics();
+    const ro = new ResizeObserver(updateMetrics);
+    ro.observe(el);
+    el.addEventListener('scroll', updateMetrics, { passive: true });
+    window.addEventListener('resize', updateMetrics);
+    return () => {
+      ro.disconnect();
+      el.removeEventListener('scroll', updateMetrics);
+      window.removeEventListener('resize', updateMetrics);
+    };
+    // children affects scrollWidth (e.g. the Evidence badge count changing tab widths).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [updateMetrics, children]);
+
+  const overflowing = metrics.scrollWidth > metrics.clientWidth + 1;
+  const maxScroll = Math.max(1, metrics.scrollWidth - metrics.clientWidth);
+  const thumbWidthPct = overflowing ? Math.max(10, (metrics.clientWidth / metrics.scrollWidth) * 100) : 100;
+  const thumbLeftPct = overflowing ? (metrics.scrollLeft / maxScroll) * (100 - thumbWidthPct) : 0;
+
+  const seekToClientX = (clientX, track) => {
+    const el = containerRef.current;
+    if (!el) return;
+    const rect = track.getBoundingClientRect();
+    const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+    el.scrollLeft = ratio * (el.scrollWidth - el.clientWidth);
+  };
+
+  const onTrackPointerDown = (e) => {
+    const track = e.currentTarget;
+    draggingRef.current = true;
+    seekToClientX(e.clientX, track);
+    const onMove = (ev) => {
+      if (draggingRef.current) seekToClientX(ev.clientX, track);
+    };
+    const onUp = () => {
+      draggingRef.current = false;
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  };
+
+  return (
+    <div className={className}>
+      <div
+        ref={containerRef}
+        className="flex gap-1 overflow-x-auto overflow-y-hidden [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      >
+        {children}
+      </div>
+      {overflowing && (
+        <div
+          onPointerDown={onTrackPointerDown}
+          role="scrollbar"
+          aria-orientation="horizontal"
+          className="relative mt-1.5 h-2.5 w-full cursor-pointer rounded-full bg-slate-200 dark:bg-slate-800"
+        >
+          <div
+            className="absolute inset-y-0 cursor-grab rounded-full bg-primary/70 transition-colors hover:bg-primary active:cursor-grabbing"
+            style={{ width: `${thumbWidthPct}%`, left: `${thumbLeftPct}%` }}
+          />
+        </div>
+      )}
+    </div>
+  );
+};
 
 /** Radial score gauge. The arc uses stroke-dashoffset so it animates via a plain CSS
  *  transition — no animation loop, and it prints as a static filled arc. */
