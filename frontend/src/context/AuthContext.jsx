@@ -157,14 +157,16 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  // Mark notifications as read
-  const readAllNotifications = async () => {
-    try {
-      await api.post('/notifications/read');
-      setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
-    } catch (err) {
+  // Mark notifications as read. Updates local state FIRST (optimistic) rather than after
+  // the request resolves — the bell's unread dot is purely cosmetic, so a slow response (or
+  // one that fails outright, e.g. a dropped connection) must never leave it looking like the
+  // notifications weren't actually opened. The request still goes out, so the server's own
+  // record of what's read stays in sync in the normal case.
+  const readAllNotifications = () => {
+    setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
+    api.post('/notifications/read').catch((err) => {
       console.error('Failed to read notifications:', err);
-    }
+    });
   };
 
   return (
