@@ -556,7 +556,13 @@ const ReportDetailPage = () => {
         </aside>
 
         {/* ------------------------------------------------------- evidence pane */}
-        <section className="flex min-h-0 flex-col print:block">
+        {/* min-w-0 matters here, not just min-h-0: a grid/flex item defaults to
+            min-width:auto, which refuses to shrink below its content's natural width. Without
+            it, the tab strip's overflow-x-auto never actually triggers — instead of clipping
+            and scrolling internally, this whole column just grows wider than the grid track
+            to fit every tab, so the custom slider below the tabs correctly measures "not
+            overflowing" (nothing is) even though tabs visibly run off the right edge. */}
+        <section className="flex min-h-0 min-w-0 flex-col print:block">
           {/* Post-interview feedback, asked up front rather than left in the Remarks tab.
               One-time candidates get this on their thank-you screen, but enrolled candidates
               never see that screen — they land here, and a form buried behind one of six tabs
@@ -1219,7 +1225,7 @@ const HScrollSlider = ({ children, className }) => {
     <div className={className}>
       <div
         ref={containerRef}
-        className="flex gap-1 overflow-x-auto overflow-y-hidden [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        className="flex min-w-0 gap-1 overflow-x-auto overflow-y-hidden [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       >
         {children}
       </div>
