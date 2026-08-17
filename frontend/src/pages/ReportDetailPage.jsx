@@ -452,7 +452,12 @@ const ReportDetailPage = () => {
       className={cn(
         'flex flex-col gap-3',
         'lg:h-[calc(100dvh-8rem)] lg:overflow-hidden',
-        'print:block print:h-auto print:overflow-visible'
+        // !-prefixed: Tailwind's own class ordering (not the order written here) decides
+        // which of two same-specificity rules wins when both media queries can be true at
+        // once, and print rendering frequently still satisfies the lg: breakpoint's min-width
+        // — without forcing these, lg:overflow-hidden could silently win during print and
+        // clip the report to a single page's worth of content instead of letting it flow.
+        'print:!block print:!h-auto print:!overflow-visible'
       )}
     >
       {/* --------------------------------------------------------- print header */}
