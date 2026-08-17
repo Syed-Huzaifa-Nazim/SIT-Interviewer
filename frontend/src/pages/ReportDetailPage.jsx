@@ -512,7 +512,14 @@ const ReportDetailPage = () => {
       {/* ------------------------------------------------------------ two panes */}
       <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[19rem_1fr] print:block">
         {/* ------------------------------------------------------- summary rail */}
-        <aside className="flex min-h-0 flex-col gap-3 overflow-y-auto rounded-xl border border-border bg-card p-4 print:break-inside-avoid print:overflow-visible print:border-slate-300">
+        {/* print:!flex: index.css's global print block hides every bare <aside> tag
+            unconditionally (display:none!important) — correct for the app-shell's
+            navigational sidebar, but this <aside> is the report's own score/competency
+            summary, not chrome, and that global rule was silently deleting it from every
+            printed report. This is why it read as a "gap" — nothing rendered where the score
+            card should have been, just the space around it. print:!flex (a class selector)
+            outranks the global rule's bare-tag selector even though both are !important. */}
+        <aside className="flex min-h-0 flex-col gap-3 overflow-y-auto rounded-xl border border-border bg-card p-4 print:!flex print:break-inside-avoid print:overflow-visible print:border-slate-300">
           <ScoreGauge score={report.overall_score} verdict={verdict} />
 
           <div className="space-y-1 text-center">
