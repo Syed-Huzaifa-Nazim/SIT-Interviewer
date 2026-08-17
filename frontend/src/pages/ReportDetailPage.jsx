@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
 import InterviewFeedbackForm from '../components/feedback/InterviewFeedbackForm';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
@@ -35,14 +35,32 @@ import {
  * record from taking down the whole scorecard.
  */
 const asList = (value) => {
+  if (Array.isArray(value)) return value;
+  if (!value || typeof value !== 'string') return [];
+  const trimmed = value.trim();
+  if (!trimmed) return [];
   try {
-    if (Array.isArray(value)) return value;
-    if (!value) return [];
-    let parsed = typeof value === 'string' ? JSON.parse(value || '[]') : value;
-    if (typeof parsed === 'string') parsed = JSON.parse(parsed || '[]');
-    return Array.isArray(parsed) ? parsed : [];
+    let parsed = JSON.parse(trimmed);
+    if (typeof parsed === 'string') {
+      // Double-encoded: the outer parse just unwrapped a string that is itself JSON.
+      const inner = parsed.trim();
+      if (!inner) return [];
+      try {
+        parsed = JSON.parse(inner);
+      } catch {
+        return [inner];
+      }
+    }
+    if (Array.isArray(parsed)) return parsed;
+    // Valid JSON but not an array/string (a number, an object, ...) — not a shape any
+    // caller expects, so fall through to treating the original text as one item.
+    return [trimmed];
   } catch {
-    return [];
+    // Not JSON at all — the backend stores these fields as either a JSON-encoded array OR
+    // plain prose interchangeably, depending on what the LLM returned for that report (see
+    // interview_routes.py's _as_text). Plain prose isn't a malformed record to fall back to
+    // [] for — it's real content and must still show up as one item.
+    return [trimmed];
   }
 };
 
@@ -73,8 +91,17 @@ const VIOLATION_TONE = {
 
 const ReportDetailPage = () => {
   const { id } = useParams();
+  const navigate = useNavigate();
+  const location = useLocation();
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
+  // location.key is 'default' only for the very first history entry (a fresh tab, a
+  // bookmarked/shared link, a hard refresh) — everywhere else it means there IS somewhere to
+  // go back to, so Back returns to whatever page actually linked here (Manage Users, the
+  // Interviews list, a candidate profile, …) instead of a hardcoded destination.
+  const canGoBack = location.key !== 'default';
+  const backFallback = isAdmin ? '/admin/interviews' : '/history';
+  const goBack = () => (canGoBack ? navigate(-1) : navigate(backFallback));
 
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -257,6 +284,12 @@ const ReportDetailPage = () => {
   const { interview, report, qna } = data;
   const strengths = asList(report.strengths);
   const weaknesses = asList(report.weaknesses);
+  // recommendations/missing_concepts come back from the same LLM report as either a plain
+  // string or a JSON array depending on which path generated it — asList() already handles
+  // that ambiguity for strengths/weaknesses above; these were being dumped as raw text
+  // (literally printing `["a", "b"]`) instead of going through it too.
+  const recommendations = asList(report.recommendations);
+  const missingConcepts = asList(report.missing_concepts);
 
   const verdict = interview.is_proctor_failed
     ? { label: 'Audit Fail', variant: 'destructive' }
@@ -331,20 +364,41 @@ const ReportDetailPage = () => {
       )}
     >
       {/* --------------------------------------------------------- print header */}
-      <div className="hidden print:block print:border-b print:border-slate-300 print:pb-3">
-        <h1 className="text-2xl font-black uppercase tracking-tight text-black">SMIT Assessment Scorecard</h1>
-        <p className="mt-1 text-xs text-slate-600">
-          {interview.job_role} · {new Date(interview.created_at).toLocaleDateString()} · Interview #{interview.id}
-        </p>
+      {/* A letterhead, not just a page title: brand mark, report identity, and the verdict
+          the reader actually opens this document to see — all above the fold, before they
+          scroll into the section-by-section detail below. */}
+      <div className="hidden print:mb-4 print:block">
+        <div style={{ borderBottom: '3px solid #0d6db7' }} className="flex items-end justify-between pb-2">
+          <div>
+            <span className="text-[10px] font-bold uppercase tracking-[0.2em]" style={{ color: '#0d6db7' }}>
+              SMIT Assessment Portal
+            </span>
+            <h1 className="text-2xl font-black leading-tight tracking-tight text-black">
+              Candidate Assessment Report
+            </h1>
+          </div>
+          <div className="text-right text-[10px] text-slate-500">
+            <div>Interview #{interview.id}</div>
+            <div>Generated {new Date().toLocaleDateString()}</div>
+          </div>
+        </div>
+
+        {/* Role, track, date, score and verdict are deliberately NOT repeated here — the
+            summary rail printed immediately below (ScoreGauge, via the grid's print:block)
+            already leads with all of it; restating the same facts above the fold would read
+            as padding, not polish. This band exists only for what nothing else shows: the
+            document identity. */}
       </div>
 
       {/* -------------------------------------------------------------- toolbar */}
       <div className="no-print flex shrink-0 items-center justify-between gap-3 print:hidden">
-        <Button variant="ghost" size="sm" asChild>
-          <Link to={isAdmin ? '/admin/interviews' : '/history'}>
-            <ChevronLeft />
-            {isAdmin ? 'Back to Interviews' : 'Back to History'}
-          </Link>
+        {/* Returns to wherever the admin actually came from (Manage Users, a candidate
+            profile, the Interviews list, …) instead of always landing back on Interviews —
+            a plain history back, with a sensible fallback for a direct/bookmarked visit that
+            has nowhere to go back to. */}
+        <Button variant="ghost" size="sm" onClick={goBack}>
+          <ChevronLeft />
+          Back
         </Button>
         <div className="flex items-center gap-2">
           {interview.is_proctor_failed && (
@@ -452,7 +506,12 @@ const ReportDetailPage = () => {
             </div>
           )}
 
-          <div className="no-print flex shrink-0 gap-1 overflow-x-auto border-b border-border print:hidden">
+          {/* pb-2 (rather than sitting flush on the border) gives the horizontal scrollbar
+              room to actually render as a visible, grabbable slider instead of being clipped
+              against border-border below it — overflow-x-auto alone was scoping the scroll
+              correctly (it never bled into scrolling the whole dashboard), it just wasn't
+              visibly indicating there was more to scroll to. */}
+          <div className="no-print flex shrink-0 gap-1 overflow-x-auto overflow-y-hidden border-b border-border pb-2 print:hidden">
             {tabs.map((tab) => {
               const Icon = tab.icon;
               const active = activeTab === tab.id;
@@ -521,16 +580,40 @@ const ReportDetailPage = () => {
                 <h4 className="mb-2 flex items-center gap-2 text-xs font-bold text-primary">
                   <BookOpen className="size-4" /> Growth Roadmap
                 </h4>
-                <p className="whitespace-pre-wrap text-xs leading-relaxed text-foreground/80">
-                  {report.recommendations || 'No specific improvements registered.'}
-                </p>
+                {recommendations.length === 0 ? (
+                  <p className="text-xs italic leading-relaxed text-muted-foreground">
+                    No specific improvements registered.
+                  </p>
+                ) : (
+                  <ul className="space-y-2 text-xs text-foreground/80">
+                    {recommendations.map((str, idx) => (
+                      <li key={idx} className="flex items-start gap-2 leading-relaxed">
+                        <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-primary" />
+                        <span>{str}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
                 <div className="mt-3 rounded-lg border border-border bg-muted/50 p-3 print:border-slate-300">
                   <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                     <Info className="size-3 text-primary" /> Missing Core Concepts
                   </span>
-                  <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                    {report.missing_concepts || 'No missing concepts identified.'}
-                  </p>
+                  {missingConcepts.length === 0 ? (
+                    <p className="mt-1 text-xs italic leading-relaxed text-muted-foreground">
+                      No missing concepts identified.
+                    </p>
+                  ) : (
+                    <ul className="mt-1.5 flex flex-wrap gap-1.5">
+                      {missingConcepts.map((str, idx) => (
+                        <li
+                          key={idx}
+                          className="rounded-full border border-border bg-card px-2 py-0.5 text-[10px] font-medium text-muted-foreground"
+                        >
+                          {str}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
               </div>
             </Panel>
@@ -838,6 +921,13 @@ const ReportDetailPage = () => {
             )}
           </div>
         </section>
+      </div>
+
+      {/* --------------------------------------------------------- print footer */}
+      <div className="hidden print:mt-6 print:block print:border-t print:border-slate-200 print:pt-2">
+        <p className="text-center text-[9px] uppercase tracking-widest text-slate-400">
+          Confidential — SMIT Assessment Portal · Interview #{interview.id} · For internal review only
+        </p>
       </div>
     </div>
   );
