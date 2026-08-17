@@ -103,10 +103,11 @@ const ResumeFacts = ({ title, items }) => (
         Nothing extracted — questions could not be built from this.
       </p>
     ) : (
-      <ul className="mt-1.5 space-y-1">
+      <ul className="mt-1.5 space-y-1.5">
         {items.map((item, i) => (
-          <li key={i} className="text-xs leading-relaxed text-foreground/80">
-            {item}
+          <li key={i} className="flex items-start gap-2 text-xs leading-relaxed text-foreground/80">
+            <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-primary/60" />
+            <span>{item}</span>
           </li>
         ))}
       </ul>
@@ -805,7 +806,19 @@ const ReportDetailPage = () => {
                     <h4 className="flex items-center gap-2 text-xs font-bold text-primary">
                       <FileText className="size-4" /> {resumeRecord.file_name}
                     </h4>
-                    <Badge variant="secondary" size="sm">ATS {resumeRecord.resume_score}%</Badge>
+                    {/* Colour reuses scoreColor — the same score-to-colour scale every other
+                        number in this report is judged against, so an 85 reads as the same
+                        "good" everywhere instead of ATS having its own private scale. */}
+                    <Badge
+                      size="sm"
+                      style={{
+                        color: scoreColor(resumeRecord.resume_score),
+                        backgroundColor: `color-mix(in srgb, ${scoreColor(resumeRecord.resume_score)} 15%, transparent)`,
+                        borderColor: `color-mix(in srgb, ${scoreColor(resumeRecord.resume_score)} 35%, transparent)`,
+                      }}
+                    >
+                      ATS {resumeRecord.resume_score}%
+                    </Badge>
                   </div>
 
                   <div className="mt-3 grid gap-3 sm:grid-cols-2">
@@ -821,8 +834,12 @@ const ReportDetailPage = () => {
                   <h4 className="mb-2 flex items-center gap-2 text-xs font-bold text-primary">
                     <BookOpen className="size-4" /> Resume text
                   </h4>
+                  {/* print:max-h-none + print:overflow-visible: this panel already prints
+                      (every Panel does, regardless of the active tab) — without these, the
+                      on-screen scroll box would clip the resume to whatever last fit inside
+                      24rem on paper too, rather than letting it flow across pages. */}
                   {resumeRecord.raw_text ? (
-                    <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-lg border border-border bg-muted/40 p-3 font-sans text-xs leading-relaxed text-foreground/80">
+                    <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-lg border border-border bg-muted/40 p-3 font-sans text-xs leading-relaxed text-foreground/80 print:max-h-none print:overflow-visible print:break-inside-auto">
                       {resumeRecord.raw_text}
                     </pre>
                   ) : (
