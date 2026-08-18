@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Link, useParams, useNavigate } from 'react-router-dom';
+import { Link, useParams, useNavigate, useLocation } from 'react-router-dom';
 import api from '../services/api';
 import Alert from '../components/ui/Alert';
 import { INTERVIEW_STATUS_LABELS } from '../utils/constants';
@@ -40,6 +40,18 @@ const INTERVIEW_STATUS_VARIANTS = {
 const AdminUserProfilePage = () => {
   const { userId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
+  // Same reasoning as ReportDetailPage's Back button: this profile is reachable from more
+  // than one place (Interviews, a report's Candidate Profile link, the Overview flagged-
+  // candidates panel, ...), so a hardcoded destination is wrong whenever the admin arrived
+  // from anywhere else. window.history.state.idx (set by React Router's data router on every
+  // navigate/push) survives a page refresh, unlike location.key — checked here for that
+  // reason. The label itself comes from `state.from`, which each of those links sets to its
+  // own name — falls back to a plain "Back" when it's missing (a direct/bookmarked visit, or
+  // a caller that hasn't been updated to pass it).
+  const canGoBack = (window.history.state?.idx ?? 0) > 0;
+  const backLabel = location.state?.from ? `Back to ${location.state.from}` : 'Back';
+  const goBack = () => (canGoBack ? navigate(-1) : navigate('/admin/users'));
 
   const [user, setUser] = useState(null);
   const [interviews, setInterviews] = useState([]);
@@ -120,10 +132,8 @@ const AdminUserProfilePage = () => {
 
   return (
     <div className="space-y-6">
-      <Button variant="ghost" size="sm" asChild className="-ml-2">
-        <Link to="/admin/users">
-          <ChevronLeft /> Back to Manage Users
-        </Link>
+      <Button variant="ghost" size="sm" onClick={goBack} className="-ml-2">
+        <ChevronLeft /> {backLabel}
       </Button>
 
       {/* --------------------------------------------------------- identity card */}
@@ -217,7 +227,7 @@ const AdminUserProfilePage = () => {
                     </div>
                     {itv.status === 'completed' ? (
                       <Button variant="outline" size="sm" asChild className="shrink-0">
-                        <Link to={`/interview/report/${itv.id}`}>
+                        <Link to={`/interview/report/${itv.id}`} state={{ from: 'Candidate Profile' }}>
                           View Report <ArrowRight />
                         </Link>
                       </Button>
@@ -310,7 +320,7 @@ const AdminUserProfilePage = () => {
                     </div>
                     {req.first_interview_id && (
                       <Button variant="ghost" size="sm" asChild className="shrink-0">
-                        <Link to={`/interview/report/${req.first_interview_id}`}>
+                        <Link to={`/interview/report/${req.first_interview_id}`} state={{ from: 'Candidate Profile' }}>
                           First interview <ArrowRight />
                         </Link>
                       </Button>

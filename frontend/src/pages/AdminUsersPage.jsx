@@ -636,6 +636,7 @@ const AdminUsersPage = () => {
                         {item.latest_interview_id && item.interview_status === 'interview_completed' ? (
                           <Link
                             to={`/interview/report/${item.latest_interview_id}`}
+                            state={{ from: 'Manage Users' }}
                             className="font-bold text-slate-900 dark:text-slate-200 hover:text-primary-600 dark:hover:text-primary-400 hover:underline"
                             title="View latest interview report"
                           >

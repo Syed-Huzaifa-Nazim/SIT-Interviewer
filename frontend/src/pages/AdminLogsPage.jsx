@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { Link, useSearchParams } from 'react-router-dom';
 import api from '../services/api';
 import Alert from '../components/ui/Alert';
@@ -24,9 +25,9 @@ import {
   MailWarning,
   Video,
   Image as ImageIcon,
-  ExternalLink,
   ScrollText,
   Filter,
+  X,
 } from 'lucide-react';
 
 const PAGE_SIZE = 10;
@@ -59,6 +60,10 @@ const AdminLogsPage = () => {
   // silently still be applied when the admin switches to Snapshots.
   const [filtersByTab, setFiltersByTab] = useState({});
   const [viewingId, setViewingId] = useState(null);
+  // Holds the currently open snapshot (url + metadata for the modal header), or null when
+  // the lightbox is closed. Replaces the old window.open(url, '_blank') behaviour, which
+  // bounced the admin to a whole separate tab just to look at one frame.
+  const [viewingImage, setViewingImage] = useState(null);
   const [page, setPage] = useState(1);
 
   // A deep-link from a report or profile ("show me the snapshots for THIS interview")
@@ -119,19 +124,27 @@ const AdminLogsPage = () => {
     }
   }, []);
 
-  const handleViewSnapshot = async (id) => {
+  const handleViewSnapshot = async (item) => {
     setError('');
-    setViewingId(id);
+    setViewingId(item.id);
     try {
-      const res = await api.get(`/admin/proctor-snapshots/${id}/url`);
-      // Signed URLs are short-lived, so they are opened straight into a new tab.
-      window.open(res.data.image_url, '_blank', 'noopener');
+      const res = await api.get(`/admin/proctor-snapshots/${item.id}/url`);
+      setViewingImage({ url: res.data.image_url, item });
     } catch (err) {
       setError(err.response?.data?.message || 'Could not open this snapshot.');
     } finally {
       setViewingId(null);
     }
   };
+
+  useEffect(() => {
+    if (!viewingImage) return undefined;
+    const onKey = (e) => {
+      if (e.key === 'Escape') setViewingImage(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [viewingImage]);
 
   const match = useCallback(
     (fields) => {
@@ -432,7 +445,7 @@ const AdminLogsPage = () => {
                       <TableCell className="text-center">
                         {item.interview_id ? (
                           <Button variant="link" size="sm" asChild className="h-auto p-0 font-mono">
-                            <Link to={`/interview/report/${item.interview_id}`}>#{item.interview_id}</Link>
+                            <Link to={`/interview/report/${item.interview_id}`} state={{ from: 'Logs' }}>#{item.interview_id}</Link>
                           </Button>
                         ) : (
                           <span className="text-muted-foreground">—</span>
@@ -498,7 +511,7 @@ const AdminLogsPage = () => {
                       <TableCell className="text-center">
                         {item.interview_id ? (
                           <Button variant="link" size="sm" asChild className="h-auto p-0 font-mono">
-                            <Link to={`/interview/report/${item.interview_id}`}>#{item.interview_id}</Link>
+                            <Link to={`/interview/report/${item.interview_id}`} state={{ from: 'Logs' }}>#{item.interview_id}</Link>
                           </Button>
                         ) : (
                           <span className="text-muted-foreground">—</span>
@@ -516,9 +529,9 @@ const AdminLogsPage = () => {
                             variant="outline"
                             size="sm"
                             disabled={viewingId === item.id}
-                            onClick={() => handleViewSnapshot(item.id)}
+                            onClick={() => handleViewSnapshot(item)}
                           >
-                            <ExternalLink />
+                            <ImageIcon />
                             {viewingId === item.id ? 'Opening…' : 'View'}
                           </Button>
                           <DeleteButton
@@ -547,6 +560,46 @@ const AdminLogsPage = () => {
           </>
         )}
       </AdminTableCard>
+
+      {/* Snapshot lightbox — opens in place instead of window.open()'ing the signed URL into
+          a separate tab, which used to strand the admin outside the app to look at one frame. */}
+      {viewingImage &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-50 flex flex-col bg-slate-950/95 p-4 backdrop-blur-sm"
+            onClick={() => setViewingImage(null)}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Proctoring snapshot"
+          >
+            <div className="flex shrink-0 items-center justify-between gap-3 pb-3 text-slate-200">
+              <span className="flex items-center gap-2 text-sm font-bold">
+                <ImageIcon className="size-4" />
+                <Badge variant={SNAPSHOT_KIND[viewingImage.item.kind]?.variant ?? 'info'} size="sm">
+                  {SNAPSHOT_KIND[viewingImage.item.kind]?.label ?? 'Screen'}
+                </Badge>
+                {viewingImage.item.candidate_email || 'Unknown candidate'}
+              </span>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label="Close"
+                onClick={() => setViewingImage(null)}
+                className="text-slate-200 hover:bg-slate-800"
+              >
+                <X />
+              </Button>
+            </div>
+            <div className="relative flex min-h-0 flex-1 items-center justify-center" onClick={(e) => e.stopPropagation()}>
+              <img src={viewingImage.url} alt="" className="max-h-full max-w-full object-contain" />
+            </div>
+            <div className="shrink-0 pt-3 text-center text-xs text-slate-400" onClick={(e) => e.stopPropagation()}>
+              {fmt(viewingImage.item.captured_at)}
+              {viewingImage.item.label ? ` · ${viewingImage.item.label}` : ''} · Esc to close
+            </div>
+          </div>,
+          document.body
+        )}
     </div>
   );
 };

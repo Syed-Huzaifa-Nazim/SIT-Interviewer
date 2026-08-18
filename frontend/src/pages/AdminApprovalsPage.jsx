@@ -181,7 +181,7 @@ const AdminApprovalsPage = () => {
                       {req.first_interview_id && (
                         <div>
                           <Button variant="link" size="sm" asChild className="h-auto p-0">
-                            <Link to={`/interview/report/${req.first_interview_id}`}>
+                            <Link to={`/interview/report/${req.first_interview_id}`} state={{ from: 'Approvals' }}>
                               Review first interview <ArrowRight />
                             </Link>
                           </Button>
@@ -258,7 +258,7 @@ const AdminApprovalsPage = () => {
                       <TableCell className="text-right">
                         {req.first_interview_id && (
                           <Button variant="link" size="sm" asChild className="h-auto p-0">
-                            <Link to={`/interview/report/${req.first_interview_id}`}>Report</Link>
+                            <Link to={`/interview/report/${req.first_interview_id}`} state={{ from: 'Approvals' }}>Report</Link>
                           </Button>
                         )}
                       </TableCell>

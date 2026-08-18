@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
 import InterviewFeedbackForm from '../components/feedback/InterviewFeedbackForm';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
@@ -38,14 +38,32 @@ import {
  * record from taking down the whole scorecard.
  */
 const asList = (value) => {
+  if (Array.isArray(value)) return value;
+  if (!value || typeof value !== 'string') return [];
+  const trimmed = value.trim();
+  if (!trimmed) return [];
   try {
-    if (Array.isArray(value)) return value;
-    if (!value) return [];
-    let parsed = typeof value === 'string' ? JSON.parse(value || '[]') : value;
-    if (typeof parsed === 'string') parsed = JSON.parse(parsed || '[]');
-    return Array.isArray(parsed) ? parsed : [];
+    let parsed = JSON.parse(trimmed);
+    if (typeof parsed === 'string') {
+      // Double-encoded: the outer parse just unwrapped a string that is itself JSON.
+      const inner = parsed.trim();
+      if (!inner) return [];
+      try {
+        parsed = JSON.parse(inner);
+      } catch {
+        return [inner];
+      }
+    }
+    if (Array.isArray(parsed)) return parsed;
+    // Valid JSON but not an array/string (a number, an object, ...) — not a shape any
+    // caller expects, so fall through to treating the original text as one item.
+    return [trimmed];
   } catch {
-    return [];
+    // Not JSON at all — the backend stores these fields as either a JSON-encoded array OR
+    // plain prose interchangeably, depending on what the LLM returned for that report (see
+    // interview_routes.py's _as_text). Plain prose isn't a malformed record to fall back to
+    // [] for — it's real content and must still show up as one item.
+    return [trimmed];
   }
 };
 
@@ -85,10 +103,11 @@ const ResumeFacts = ({ title, items }) => (
         Nothing extracted — questions could not be built from this.
       </p>
     ) : (
-      <ul className="mt-1.5 space-y-1">
+      <ul className="mt-1.5 space-y-1.5">
         {items.map((item, i) => (
-          <li key={i} className="text-xs leading-relaxed text-foreground/80">
-            {item}
+          <li key={i} className="flex items-start gap-2 text-xs leading-relaxed text-foreground/80">
+            <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-primary/60" />
+            <span>{item}</span>
           </li>
         ))}
       </ul>
@@ -98,8 +117,25 @@ const ResumeFacts = ({ title, items }) => (
 
 const ReportDetailPage = () => {
   const { id } = useParams();
+  const navigate = useNavigate();
+  const location = useLocation();
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
+  // window.history.state.idx (set by React Router's data router on every navigate/push) is
+  // > 0 whenever there's a real entry to go back to. Checked here instead of location.key
+  // ('default' vs not) because location.key resets on a hard refresh — the in-memory router
+  // re-mounts fresh — while window.history.state belongs to the browser's own session
+  // history for that specific entry and survives a reload of the same page. Back must return
+  // to wherever the admin actually came from (Manage Users, the Interviews list, a candidate
+  // profile, …) even after a refresh, not just on the very first load of the report.
+  const canGoBack = (window.history.state?.idx ?? 0) > 0;
+  const backFallback = isAdmin ? '/admin/interviews' : '/history';
+  const goBack = () => (canGoBack ? navigate(-1) : navigate(backFallback));
+  // Label mirrors AdminUserProfilePage's Back button: every admin-side link into this page
+  // sets state={{ from: '<page name>' }} (Manage Users, Interviews, Logs, Scoring Analytics,
+  // Approvals, Candidate Profile). Falls back to a plain "Back" for a candidate viewing their
+  // own report, or a direct/bookmarked admin visit — nothing truthful to name in either case.
+  const backLabel = location.state?.from ? `Back to ${location.state.from}` : 'Back';
 
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -329,6 +365,12 @@ const ReportDetailPage = () => {
   const { interview, report, qna } = data;
   const strengths = asList(report.strengths);
   const weaknesses = asList(report.weaknesses);
+  // recommendations/missing_concepts come back from the same LLM report as either a plain
+  // string or a JSON array depending on which path generated it — asList() already handles
+  // that ambiguity for strengths/weaknesses above; these were being dumped as raw text
+  // (literally printing `["a", "b"]`) instead of going through it too.
+  const recommendations = asList(report.recommendations);
+  const missingConcepts = asList(report.missing_concepts);
 
   const verdict = interview.is_proctor_failed
     ? { label: 'Audit Fail', variant: 'destructive' }
@@ -410,24 +452,50 @@ const ReportDetailPage = () => {
       className={cn(
         'flex flex-col gap-3',
         'lg:h-[calc(100dvh-8rem)] lg:overflow-hidden',
-        'print:block print:h-auto print:overflow-visible'
+        // !-prefixed: Tailwind's own class ordering (not the order written here) decides
+        // which of two same-specificity rules wins when both media queries can be true at
+        // once, and print rendering frequently still satisfies the lg: breakpoint's min-width
+        // — without forcing these, lg:overflow-hidden could silently win during print and
+        // clip the report to a single page's worth of content instead of letting it flow.
+        'print:!block print:!h-auto print:!overflow-visible'
       )}
     >
       {/* --------------------------------------------------------- print header */}
-      <div className="hidden print:block print:border-b print:border-slate-300 print:pb-3">
-        <h1 className="text-2xl font-black uppercase tracking-tight text-black">SMIT Assessment Scorecard</h1>
-        <p className="mt-1 text-xs text-slate-600">
-          {interview.job_role} · {new Date(interview.created_at).toLocaleDateString()} · Interview #{interview.id}
-        </p>
+      {/* A letterhead, not just a page title: brand mark, report identity, and the verdict
+          the reader actually opens this document to see — all above the fold, before they
+          scroll into the section-by-section detail below. */}
+      <div className="hidden print:mb-4 print:block">
+        <div style={{ borderBottom: '3px solid #0d6db7' }} className="flex items-end justify-between pb-2">
+          <div>
+            <span className="text-[10px] font-bold uppercase tracking-[0.2em]" style={{ color: '#0d6db7' }}>
+              SMIT Assessment Portal
+            </span>
+            <h1 className="text-2xl font-black leading-tight tracking-tight text-black">
+              Candidate Assessment Report
+            </h1>
+          </div>
+          <div className="text-right text-[10px] text-slate-500">
+            <div>Interview #{interview.id}</div>
+            <div>Generated {new Date().toLocaleDateString()}</div>
+          </div>
+        </div>
+
+        {/* Role, track, date, score and verdict are deliberately NOT repeated here — the
+            summary rail printed immediately below (ScoreGauge, via the grid's print:block)
+            already leads with all of it; restating the same facts above the fold would read
+            as padding, not polish. This band exists only for what nothing else shows: the
+            document identity. */}
       </div>
 
       {/* -------------------------------------------------------------- toolbar */}
       <div className="no-print flex shrink-0 items-center justify-between gap-3 print:hidden">
-        <Button variant="ghost" size="sm" asChild>
-          <Link to={isAdmin ? '/admin/interviews' : '/history'}>
-            <ChevronLeft />
-            {isAdmin ? 'Back to Interviews' : 'Back to History'}
-          </Link>
+        {/* Returns to wherever the admin actually came from (Manage Users, a candidate
+            profile, the Interviews list, …) instead of always landing back on Interviews —
+            a plain history back, with a sensible fallback for a direct/bookmarked visit that
+            has nowhere to go back to. */}
+        <Button variant="ghost" size="sm" onClick={goBack}>
+          <ChevronLeft />
+          {backLabel}
         </Button>
         <div className="flex items-center gap-2">
           {interview.is_proctor_failed && (
@@ -444,7 +512,14 @@ const ReportDetailPage = () => {
       {/* ------------------------------------------------------------ two panes */}
       <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[19rem_1fr] print:block">
         {/* ------------------------------------------------------- summary rail */}
-        <aside className="flex min-h-0 flex-col gap-3 overflow-y-auto rounded-xl border border-border bg-card p-4 print:break-inside-avoid print:overflow-visible print:border-slate-300">
+        {/* print:!flex: index.css's global print block hides every bare <aside> tag
+            unconditionally (display:none!important) — correct for the app-shell's
+            navigational sidebar, but this <aside> is the report's own score/competency
+            summary, not chrome, and that global rule was silently deleting it from every
+            printed report. This is why it read as a "gap" — nothing rendered where the score
+            card should have been, just the space around it. print:!flex (a class selector)
+            outranks the global rule's bare-tag selector even though both are !important. */}
+        <aside className="flex min-h-0 flex-col gap-3 overflow-y-auto rounded-xl border border-border bg-card p-4 print:!flex print:break-inside-avoid print:overflow-visible print:border-slate-300">
           <ScoreGauge score={report.overall_score} verdict={verdict} />
 
           <div className="space-y-1 text-center">
@@ -500,7 +575,13 @@ const ReportDetailPage = () => {
         </aside>
 
         {/* ------------------------------------------------------- evidence pane */}
-        <section className="flex min-h-0 flex-col print:block">
+        {/* min-w-0 matters here, not just min-h-0: a grid/flex item defaults to
+            min-width:auto, which refuses to shrink below its content's natural width. Without
+            it, the tab strip's overflow-x-auto never actually triggers — instead of clipping
+            and scrolling internally, this whole column just grows wider than the grid track
+            to fit every tab, so the custom slider below the tabs correctly measures "not
+            overflowing" (nothing is) even though tabs visibly run off the right edge. */}
+        <section className="flex min-h-0 min-w-0 flex-col print:block">
           {/* Post-interview feedback, asked up front rather than left in the Remarks tab.
               One-time candidates get this on their thank-you screen, but enrolled candidates
               never see that screen — they land here, and a form buried behind one of six tabs
@@ -535,7 +616,11 @@ const ReportDetailPage = () => {
             </div>
           )}
 
-          <div className="no-print flex shrink-0 gap-1 overflow-x-auto border-b border-border print:hidden">
+          {/* Custom always-visible slider (see HScrollSlider) instead of relying on the
+              native scrollbar, which some browser/OS combinations hide until hovered or
+              suppress outright — the strip overflows on most screens once every tab (up to
+              Recording + Tools) is in play. */}
+          <HScrollSlider className="no-print shrink-0 border-b border-border pb-1 print:hidden">
             {tabs.map((tab) => {
               const Icon = tab.icon;
               const active = activeTab === tab.id;
@@ -566,7 +651,7 @@ const ReportDetailPage = () => {
                 </button>
               );
             })}
-          </div>
+          </HScrollSlider>
 
           <div className="min-h-0 flex-1 overflow-y-auto pt-3 pr-0.5 print:overflow-visible">
             {/* ------------------------------------------------------- analysis */}
@@ -604,28 +689,60 @@ const ReportDetailPage = () => {
                 <h4 className="mb-2 flex items-center gap-2 text-xs font-bold text-primary">
                   <BookOpen className="size-4" /> Growth Roadmap
                 </h4>
-                <p className="whitespace-pre-wrap text-xs leading-relaxed text-foreground/80">
-                  {report.recommendations || 'No specific improvements registered.'}
-                </p>
+                {recommendations.length === 0 ? (
+                  <p className="text-xs italic leading-relaxed text-muted-foreground">
+                    No specific improvements registered.
+                  </p>
+                ) : (
+                  <ul className="space-y-2 text-xs text-foreground/80">
+                    {recommendations.map((str, idx) => (
+                      <li key={idx} className="flex items-start gap-2 leading-relaxed">
+                        <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-primary" />
+                        <span>{str}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
                 <div className="mt-3 rounded-lg border border-border bg-muted/50 p-3 print:border-slate-300">
                   <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                     <Info className="size-3 text-primary" /> Missing Core Concepts
                   </span>
-                  <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                    {report.missing_concepts || 'No missing concepts identified.'}
-                  </p>
+                  {missingConcepts.length === 0 ? (
+                    <p className="mt-1 text-xs italic leading-relaxed text-muted-foreground">
+                      No missing concepts identified.
+                    </p>
+                  ) : (
+                    <ul className="mt-1.5 flex flex-wrap gap-1.5">
+                      {missingConcepts.map((str, idx) => (
+                        <li
+                          key={idx}
+                          className="rounded-full border border-border bg-card px-2 py-0.5 text-[10px] font-medium text-muted-foreground"
+                        >
+                          {str}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
               </div>
             </Panel>
 
             {/* ------------------------------------------------------ transcript */}
             <Panel show={activeTab === 'transcript'}>
+              {/* print:break-inside-avoid used to sit on the OUTER card, forcing the whole
+                  question+answer+feedback block (easily half a page for a long answer) onto
+                  whichever page it fit on whole — a card that was, say, 60% of a page's
+                  remaining space jumped entirely to the next page instead of filling that
+                  60%, leaving it blank. Moved down to each smaller piece individually (the
+                  heading, the answer box, the feedback box) instead: each one still won't
+                  split awkwardly mid-sentence, but the page fills up properly between them,
+                  the way an ordinary printed document breaks between paragraphs. */}
               {qna.map((item, idx) => (
                 <div
                   key={idx}
-                  className="rounded-xl border border-border bg-card p-4 print:break-inside-avoid print:border-slate-300"
+                  className="rounded-xl border border-border bg-card p-4 print:p-3 print:border-slate-300"
                 >
-                  <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-start justify-between gap-3 print:break-inside-avoid">
                     <div className="min-w-0">
                       <Badge variant="secondary" size="sm">
                         Q{idx + 1}
@@ -670,7 +787,7 @@ const ReportDetailPage = () => {
                     )}
                   </div>
 
-                  <div className="mt-3 rounded-lg border border-border bg-muted/40 p-3 print:border-slate-300">
+                  <div className="mt-3 rounded-lg border border-border bg-muted/40 p-3 print:mt-2 print:break-inside-avoid print:border-slate-300 print:p-2">
                     <span className="text-[9px] font-bold uppercase tracking-wide text-muted-foreground">
                       Candidate Answer
                     </span>
@@ -680,7 +797,7 @@ const ReportDetailPage = () => {
                   </div>
 
                   {item.response && (
-                    <div className="mt-2.5">
+                    <div className="mt-2.5 print:mt-2 print:break-inside-avoid">
                       <span className="text-[9px] font-bold uppercase tracking-wide text-muted-foreground">
                         AI Grading Feedback
                       </span>
@@ -709,7 +826,19 @@ const ReportDetailPage = () => {
                     <h4 className="flex items-center gap-2 text-xs font-bold text-primary">
                       <FileText className="size-4" /> {resumeRecord.file_name}
                     </h4>
-                    <Badge variant="secondary" size="sm">ATS {resumeRecord.resume_score}%</Badge>
+                    {/* Colour reuses scoreColor — the same score-to-colour scale every other
+                        number in this report is judged against, so an 85 reads as the same
+                        "good" everywhere instead of ATS having its own private scale. */}
+                    <Badge
+                      size="sm"
+                      style={{
+                        color: scoreColor(resumeRecord.resume_score),
+                        backgroundColor: `color-mix(in srgb, ${scoreColor(resumeRecord.resume_score)} 15%, transparent)`,
+                        borderColor: `color-mix(in srgb, ${scoreColor(resumeRecord.resume_score)} 35%, transparent)`,
+                      }}
+                    >
+                      ATS {resumeRecord.resume_score}%
+                    </Badge>
                   </div>
 
                   <div className="mt-3 grid gap-3 sm:grid-cols-2">
@@ -725,8 +854,12 @@ const ReportDetailPage = () => {
                   <h4 className="mb-2 flex items-center gap-2 text-xs font-bold text-primary">
                     <BookOpen className="size-4" /> Resume text
                   </h4>
+                  {/* print:max-h-none + print:overflow-visible: this panel already prints
+                      (every Panel does, regardless of the active tab) — without these, the
+                      on-screen scroll box would clip the resume to whatever last fit inside
+                      24rem on paper too, rather than letting it flow across pages. */}
                   {resumeRecord.raw_text ? (
-                    <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-lg border border-border bg-muted/40 p-3 font-sans text-xs leading-relaxed text-foreground/80">
+                    <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-lg border border-border bg-muted/40 p-3 font-sans text-xs leading-relaxed text-foreground/80 print:max-h-none print:overflow-visible print:break-inside-auto">
                       {resumeRecord.raw_text}
                     </pre>
                   ) : (
@@ -978,7 +1111,13 @@ const ReportDetailPage = () => {
             )}
 
             {/* -------------------------------------------------------- feedback */}
-            <Panel show={activeTab === 'feedback'}>
+            {/* no-print/print:hidden: this is an interactive input form (star buttons, a
+                textarea), not report content — printing it meant every report grew a page (or
+                more) of empty star icons and blank boxes at the end, which is what read as
+                "why is this section empty / cut off". Even the submitted-state branch only
+                ever shows a generic "thank you" message, never the actual answers, so there
+                was nothing worth printing here either way. */}
+            <Panel show={activeTab === 'feedback'} className="no-print print:hidden">
               <div className="rounded-xl border border-border bg-card p-4 print:border-slate-300">
                 {feedbackSubmitted ? (
                   <Alert variant="success" className="text-xs font-bold">
@@ -1024,6 +1163,7 @@ const ReportDetailPage = () => {
                   />
                   <ToolLink
                     to={`/admin/users/${interview.user_id}`}
+                    state={{ from: 'Report' }}
                     title="Candidate Profile"
                     desc="Interviews, snapshots and approval history."
                   />
@@ -1032,6 +1172,13 @@ const ReportDetailPage = () => {
             )}
           </div>
         </section>
+      </div>
+
+      {/* --------------------------------------------------------- print footer */}
+      <div className="hidden print:mt-6 print:block print:border-t print:border-slate-200 print:pt-2">
+        <p className="text-center text-[9px] uppercase tracking-widest text-slate-400">
+          Confidential — SMIT Assessment Portal · Interview #{interview.id} · For internal review only
+        </p>
       </div>
     </div>
   );
@@ -1042,7 +1189,15 @@ const ReportDetailPage = () => {
 /** Tab panels stay mounted and are hidden with CSS so switching tabs never refetches or
  *  loses form state — and `print:block` makes every panel appear in the printed record. */
 const Panel = ({ show, className, children }) => (
-  <div className={cn('space-y-3 pb-2', show ? 'block' : 'hidden print:block', className)}>{children}</div>
+  <div
+    className={cn(
+      'space-y-3 pb-2 print:space-y-2 print:pb-0',
+      show ? 'block' : 'hidden print:block',
+      className
+    )}
+  >
+    {children}
+  </div>
 );
 
 const CenteredCard = ({ children }) => (
@@ -1060,6 +1215,101 @@ const Fact = ({ icon: Icon, label, value, tone }) => (
     <dd className={cn('mt-0.5 text-sm font-bold text-foreground', tone)}>{value}</dd>
   </div>
 );
+
+/** A horizontally-scrolling strip with its own always-visible, draggable slider underneath —
+ *  used for the tab bar, which otherwise relies on the OS/browser's native scrollbar to hint
+ *  that there's more to scroll to. Native scrollbars are exactly the kind of thing that's
+ *  invisible-until-hovered or entirely suppressed depending on OS settings (Windows' "only
+ *  show scrollbars while scrolling", macOS overlay scrollbars, …) — this renders its own, so
+ *  it looks and behaves the same everywhere. Hidden entirely when the content already fits. */
+const HScrollSlider = ({ children, className }) => {
+  const containerRef = useRef(null);
+  const [metrics, setMetrics] = useState({ scrollLeft: 0, scrollWidth: 0, clientWidth: 0 });
+  const draggingRef = useRef(false);
+
+  const updateMetrics = useCallback(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    setMetrics({ scrollLeft: el.scrollLeft, scrollWidth: el.scrollWidth, clientWidth: el.clientWidth });
+  }, []);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return undefined;
+    updateMetrics();
+    const ro = new ResizeObserver(updateMetrics);
+    ro.observe(el);
+    el.addEventListener('scroll', updateMetrics, { passive: true });
+    window.addEventListener('resize', updateMetrics);
+    return () => {
+      ro.disconnect();
+      el.removeEventListener('scroll', updateMetrics);
+      window.removeEventListener('resize', updateMetrics);
+    };
+    // children affects scrollWidth (e.g. the Evidence badge count changing tab widths).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [updateMetrics, children]);
+
+  const overflowing = metrics.scrollWidth > metrics.clientWidth + 1;
+  const maxScroll = Math.max(1, metrics.scrollWidth - metrics.clientWidth);
+  const thumbWidthPct = overflowing ? Math.max(10, (metrics.clientWidth / metrics.scrollWidth) * 100) : 100;
+  const thumbLeftPct = overflowing ? (metrics.scrollLeft / maxScroll) * (100 - thumbWidthPct) : 0;
+
+  const seekToClientX = (clientX, track) => {
+    const el = containerRef.current;
+    if (!el) return;
+    const rect = track.getBoundingClientRect();
+    const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+    el.scrollLeft = ratio * (el.scrollWidth - el.clientWidth);
+  };
+
+  const onTrackPointerDown = (e) => {
+    // Without this, dragging across the track also starts the browser's own text-selection
+    // gesture (the tab labels sit right above it) — every drag highlighted text instead of
+    // just scrolling.
+    e.preventDefault();
+    const track = e.currentTarget;
+    draggingRef.current = true;
+    seekToClientX(e.clientX, track);
+    const onMove = (ev) => {
+      if (draggingRef.current) seekToClientX(ev.clientX, track);
+    };
+    const onUp = () => {
+      draggingRef.current = false;
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  };
+
+  return (
+    <div className={className}>
+      <div
+        ref={containerRef}
+        className="flex min-w-0 gap-1 overflow-x-auto overflow-y-hidden [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      >
+        {children}
+      </div>
+      {overflowing && (
+        // Same visual language as the app's own scrollbars (index.css's ::-webkit-scrollbar
+        // rules) — thin, neutral, green on hover — rather than a bold standalone bar, so it
+        // reads as "the scrollbar for this strip" and not an unrelated progress indicator.
+        <div
+          onPointerDown={onTrackPointerDown}
+          role="scrollbar"
+          aria-orientation="horizontal"
+          className="relative mt-1 h-1.5 w-full touch-none cursor-pointer select-none rounded-full bg-slate-200 dark:bg-slate-800"
+        >
+          <div
+            className="absolute inset-y-0 rounded-full bg-slate-400 transition-colors hover:bg-[#8dc63f] dark:bg-slate-600"
+            style={{ width: `${thumbWidthPct}%`, left: `${thumbLeftPct}%` }}
+          />
+        </div>
+      )}
+    </div>
+  );
+};
 
 /** Radial score gauge. The arc uses stroke-dashoffset so it animates via a plain CSS
  *  transition — no animation loop, and it prints as a static filled arc. */
@@ -1121,9 +1371,10 @@ const PointsCard = ({ title, icon: Icon, tone, dot, items, empty }) => (
   </div>
 );
 
-const ToolLink = ({ to, title, desc }) => (
+const ToolLink = ({ to, title, desc, state }) => (
   <Link
     to={to}
+    state={state}
     className="flex flex-col gap-1 rounded-xl border border-border bg-card p-4 transition hover:border-primary hover:bg-accent/50"
   >
     <span className="text-xs font-bold text-foreground">{title}</span>

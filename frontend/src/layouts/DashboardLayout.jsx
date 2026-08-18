@@ -116,7 +116,11 @@ const DashboardLayout = ({ children }) => {
 
 
   return (
-    <div className="min-h-screen flex bg-slate-100 dark:bg-slate-950 text-slate-800 dark:text-slate-100 relative overflow-hidden">
+    // print:!overflow-visible: same fix as AdminLayout — this shell's own overflow-hidden
+    // clips everything to one viewport-height page when printing (e.g. a candidate's own
+    // report from History) regardless of index.css's global <main> print reset, since a
+    // clipping ancestor wins over a child that's merely set to overflow-visible.
+    <div className="min-h-screen flex bg-slate-100 dark:bg-slate-950 text-slate-800 dark:text-slate-100 relative overflow-hidden print:!overflow-visible">
       <GlowBackground />
 
       {sidebarOpen && (
@@ -192,7 +196,7 @@ const DashboardLayout = ({ children }) => {
         </div>
       </aside>
 
-      <div className="flex-1 flex flex-col min-w-0 overflow-hidden relative z-10">
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden relative z-10 print:!overflow-visible">
         <header className="sticky top-0 z-30 flex items-center justify-between px-5 py-3.5 glass-panel border-b border-slate-200 dark:border-slate-800">
           <button
             className="lg:hidden text-slate-500 hover:text-slate-800 dark:hover:text-white p-2 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-900"

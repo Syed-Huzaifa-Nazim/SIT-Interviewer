@@ -158,7 +158,7 @@ const AdminScoringPage = () => {
             <ChevronLeft /> Back to Scoring Analytics
           </Button>
           <Button variant="outline" size="sm" asChild>
-            <Link to={`/interview/report/${interviewIdParam}`}>
+            <Link to={`/interview/report/${interviewIdParam}`} state={{ from: 'Scoring Analytics' }}>
               <FileText /> View Full Report
             </Link>
           </Button>

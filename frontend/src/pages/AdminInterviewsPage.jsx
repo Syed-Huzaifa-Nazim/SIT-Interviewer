@@ -178,7 +178,11 @@ const AdminInterviewsPage = () => {
                     className="border-b border-border transition-colors hover:bg-accent/60"
                   >
                     <TableCell>
-                      <Link to={`/admin/users/${item.user_id}`} className="block hover:underline">
+                      <Link
+                        to={`/admin/users/${item.user_id}`}
+                        state={{ from: 'Interviews' }}
+                        className="block hover:underline"
+                      >
                         <div className="font-semibold text-foreground">{item.user_name}</div>
                         <div className="text-[11px] text-muted-foreground">{item.user_email}</div>
                       </Link>
@@ -235,7 +239,7 @@ const AdminInterviewsPage = () => {
                       <div className="flex items-center justify-end gap-1.5">
                         {item.status === 'completed' ? (
                           <Button variant="outline" size="icon-sm" asChild title="Inspect scorecard">
-                            <Link to={`/interview/report/${item.id}`} aria-label="Inspect scorecard">
+                            <Link to={`/interview/report/${item.id}`} state={{ from: 'Interviews' }} aria-label="Inspect scorecard">
                               <ArrowRight />
                             </Link>
                           </Button>

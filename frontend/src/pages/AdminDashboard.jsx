@@ -589,7 +589,7 @@ const FlaggedPanel = ({ flaggedUsers, pagedFlagged, page, setPage, actionLoading
         {pagedFlagged.map((student, i) => (
           <StaggerRow key={student.id} index={i} className="border-b border-border transition-colors hover:bg-accent/60">
             <TableCell>
-              <RouterLink to={`/admin/users/${student.id}`} className="block hover:underline">
+              <RouterLink to={`/admin/users/${student.id}`} state={{ from: 'Overview' }} className="block hover:underline">
                 <span className="block font-semibold text-foreground">{student.name}</span>
                 <span className="text-[11px] text-muted-foreground">{student.email}</span>
               </RouterLink>

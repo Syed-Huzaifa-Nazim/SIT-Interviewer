@@ -261,7 +261,13 @@ const AdminLayout = ({ children }) => {
     // scroll and reads as the rail detaching and lagging behind the content.
     // dvh rather than vh so mobile browsers measure the visible area, not the area behind
     // the address bar.
-    <div className="flex h-dvh overflow-hidden bg-background font-sans">
+    // print:!h-auto/!overflow-visible: this shell is viewport-locked on screen (only <main>
+    // scrolls) with no print override at all — index.css's global print block resets <main>
+    // itself, but this OUTER wrapper's own overflow-hidden still clipped everything to one
+    // viewport-height page regardless, since a child's overflow:visible can't escape a
+    // parent that's still clipping. That's what was capping every printed report to
+    // whatever fit on screen instead of paginating across as many pages as it needs.
+    <div className="flex h-dvh overflow-hidden bg-background font-sans print:!h-auto print:!overflow-visible">
       {/* ---------------------------------------------------------- desktop sidebar */}
       <aside
         className={cn(
