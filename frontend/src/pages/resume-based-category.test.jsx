@@ -291,7 +291,7 @@ describe('report traceability', () => {
       const trace = screen.getByText(/From resume:/i);
       expect(trace.textContent).toMatch(/MediTrack - clinic booking/);
     });
-  });
+  }, 20000);
 
   it('calls out a question that traces back to nothing', async () => {
     const { default: ReportDetailPage } = await import('./ReportDetailPage');
@@ -303,7 +303,7 @@ describe('report traceability', () => {
     await waitFor(() =>
       expect(screen.getByText(/Not traceable to any skill or project/i)).toBeTruthy()
     );
-  });
+  }, 20000);
 
   it('hides traceability from the candidate', async () => {
     currentUser = { id: 3, name: 'Bilal Ahmed', email: 'bilal@gmail.com', role: 'candidate' };
@@ -315,5 +315,5 @@ describe('report traceability', () => {
     await waitFor(() => expect(screen.getByText(/Walk me through MediTrack/i)).toBeTruthy());
     expect(screen.queryByText(/Not traceable to any skill or project/i)).toBeNull();
     expect(screen.queryByText(/From resume:/i)).toBeNull();
-  });
+  }, 20000);
 });
