@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 from app.database.db import db
 from app.models import (
     User, Token, Transaction, Notification, Interview, SecondInterviewRequest,
-    ResumeAnalysis, PendingResume,
+    ResumeAnalysis, PendingResume, AdminLog,
 )
 from app.utils.security import create_access_token, create_refresh_token, JWT_SECRET
 from app.utils.candidate import (
@@ -61,6 +61,108 @@ def _throttle_resume_upload(client_ip):
             )
         hits.append(now)
         _resume_upload_hits[client_ip] = hits
+
+
+# --------------------------------------------------------------------- login throttle
+#
+# /login had no brute-force protection at all: an unlimited number of password guesses
+# could be made as fast as the network allowed. That matters more here than on a typical
+# app because the platform has exactly ONE admin account, at a predictable address
+# (admin@interviewer.com), so an attacker needs no username discovery — only the password.
+#
+# Two independent counters, because either one alone is trivially defeated:
+#   - per IP, which stops the ordinary single-host password-spray outright;
+#   - per identifier, which still bites when the attempts are spread across many hosts.
+# Both are FAILURE counters. A successful login clears them, so a legitimate user who
+# mistypes a few times and then gets it right is never left locked out.
+#
+# The identifier counter can in principle be abused to lock a known account out for the
+# window (an attacker deliberately failing against admin@interviewer.com). That is a real
+# trade-off and it is taken deliberately: fifteen minutes of denied admin login is a far
+# smaller harm than an unthrottled path to admin takeover, and the threshold is set high
+# enough that ordinary mistyping never reaches it.
+#
+# In-process and per-container, exactly like the resume-upload throttle above — a brake on
+# real attacks, not a distributed rate limiter. It resets if Railway restarts the process.
+_LOGIN_WINDOW = datetime.timedelta(minutes=15)
+_LOGIN_MAX_PER_IP = 10
+_LOGIN_MAX_PER_IDENTIFIER = 10
+_login_failures = {}
+_login_locked_logged = set()
+_login_lock = threading.Lock()
+
+
+def _login_keys(client_ip, identifier):
+    return (f'ip:{client_ip}', f'id:{(identifier or "").strip().lower()}')
+
+
+def _check_login_throttle(client_ip, identifier):
+    """Refuse the attempt outright when this IP or this account has failed too often."""
+    now = datetime.datetime.utcnow()
+    cutoff = now - _LOGIN_WINDOW
+    ip_key, id_key = _login_keys(client_ip, identifier)
+
+    with _login_lock:
+        # Sweep expired buckets so the dict cannot grow unbounded across a long uptime.
+        for key in [k for k, ts in _login_failures.items() if all(t < cutoff for t in ts)]:
+            del _login_failures[key]
+            _login_locked_logged.discard(key)
+
+        for key, limit in ((ip_key, _LOGIN_MAX_PER_IP), (id_key, _LOGIN_MAX_PER_IDENTIFIER)):
+            recent = [t for t in _login_failures.get(key, []) if t >= cutoff]
+            if len(recent) >= limit:
+                retry_after = int((min(recent) + _LOGIN_WINDOW - now).total_seconds())
+                raise HTTPException(
+                    status_code=429,
+                    detail="Too many failed sign-in attempts. Please wait a few minutes before "
+                           "trying again.",
+                    headers={'Retry-After': str(max(retry_after, 1))},
+                )
+
+
+def _record_login_failure(client_ip, identifier):
+    """Count a failed attempt, and leave an audit trail the first time a key locks.
+
+    Only the crossing is logged, not every subsequent blocked attempt — a sustained attack
+    would otherwise write thousands of rows and bury the very signal it is meant to raise.
+    """
+    now = datetime.datetime.utcnow()
+    cutoff = now - _LOGIN_WINDOW
+    ip_key, id_key = _login_keys(client_ip, identifier)
+    newly_locked = []
+
+    with _login_lock:
+        for key, limit in ((ip_key, _LOGIN_MAX_PER_IP), (id_key, _LOGIN_MAX_PER_IDENTIFIER)):
+            recent = [t for t in _login_failures.get(key, []) if t >= cutoff]
+            recent.append(now)
+            _login_failures[key] = recent
+            if len(recent) >= limit and key not in _login_locked_logged:
+                _login_locked_logged.add(key)
+                newly_locked.append(key)
+
+    for key in newly_locked:
+        try:
+            admin_user = User.query.filter_by(role='admin').first()
+            db.session.add(AdminLog(
+                admin_id=admin_user.id if admin_user else None,
+                action='LOGIN_THROTTLED',
+                details=(
+                    f"Blocked further sign-in attempts after {_LOGIN_MAX_PER_IP} failures "
+                    f"({key}). Identifier tried: {identifier!r}, source IP: {client_ip}."
+                ),
+            ))
+            db.session.commit()
+        except Exception:
+            # An audit write must never be the reason a login request errors out.
+            db.session.rollback()
+
+
+def _clear_login_failures(client_ip, identifier):
+    ip_key, id_key = _login_keys(client_ip, identifier)
+    with _login_lock:
+        for key in (ip_key, id_key):
+            _login_failures.pop(key, None)
+            _login_locked_logged.discard(key)
 
 
 def _grant_signup_tokens(user_id):
@@ -483,13 +585,19 @@ def signup_options():
 
 
 @auth_bp.post('/login')
-def login(payload: dict = Body(default=None)):
+def login(request: Request, payload: dict = Body(default=None)):
     data = payload or {}
     identifier = data.get('email') or data.get('identifier') or data.get('cnic')
     password = data.get('password')
 
     if not identifier or not password:
         raise HTTPException(status_code=400, detail="Email/CNIC and password are required")
+
+    client_ip = request.client.host if request.client else 'unknown'
+    # Checked BEFORE any credential work: a throttled caller must not even get to spend a
+    # bcrypt comparison, or the endpoint stays a CPU amplifier even while it refuses to
+    # authenticate anyone.
+    _check_login_throttle(client_ip, identifier)
 
     # The login identifier may be an email or a CNIC number (§3.1)
     user = User.query.filter_by(email=identifier).first()
@@ -501,6 +609,9 @@ def login(payload: dict = Body(default=None)):
     invalid_error = HTTPException(status_code=401, detail="Invalid credentials. Please check your email/CNIC and password.")
 
     if not user:
+        # An unknown identifier is counted too. Skipping it would leave a free, unlimited
+        # channel for probing which accounts exist before spending attempts on real ones.
+        _record_login_failure(client_ip, identifier)
         raise invalid_error
 
     if user.must_use_otp:
@@ -522,9 +633,11 @@ def login(payload: dict = Body(default=None)):
                        "Please contact the administration to be re-invited."
             )
         if not user.check_otp(password):
+            _record_login_failure(client_ip, identifier)
             raise invalid_error
     else:
         if not user.check_password(password):
+            _record_login_failure(client_ip, identifier)
             raise invalid_error
 
     if user.status == 'banned' and user.role != 'admin':
@@ -538,6 +651,10 @@ def login(payload: dict = Body(default=None)):
                 local_time = user.banned_until + datetime.timedelta(hours=5)
                 msg = f"Your account has been blocked for 30 days due to a proctoring violation during your interview. It will automatically reopen after {local_time.strftime('%Y-%m-%d %H:%M:%S')}."
             raise HTTPException(status_code=403, detail=msg)
+
+    # Correct credentials: wipe the failure counters so an earlier run of typos can never
+    # carry over and lock out the person who has just proved who they are.
+    _clear_login_failures(client_ip, identifier)
 
     one_time = bool(user.must_use_otp)
     if one_time:
