@@ -14,7 +14,12 @@ full back-office: user management with per-candidate interview deadlines, bulk-i
 cohorts, platform analytics, revenue tracking, session-recording review, and an LLM-scoring
 audit dashboard. The live UI is branded **"SMIT Assessment Portal" / "SIT Interviewer
 [Admin]"** — a bootcamp capstone project, live at **sit-interviewer.vercel.app** (frontend)
-and **interviewer-ai-backend-production.up.railway.app** (backend).
+and **interviewerai-production-b311.up.railway.app** (backend).
+
+> The backend moved to a new Railway account on 2026-08-24 when the previous account
+> expired. The service's **Root Directory must be `backend`** — the repo is a monorepo, and
+> with that unset Railway analyses the repo root, finds no application, and the build fails
+> before it starts. That is what happened on the first attempt.
 
 ---
 
