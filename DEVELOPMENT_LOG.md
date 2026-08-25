@@ -5,6 +5,13 @@ change — see git log / commit messages for full detail on any entry.
 
 ---
 
+## 2026-08-24
+- The Railway account hosting the backend expired. Set up a fresh account/project (`SIT-Interviewer`) and pointed `frontend/.env.production` + the keep-alive workflow at the new host — see PROJECT_SUMMARY for the full note
+- First deploy attempt failed outright: Root Directory was unset, so Railway analysed the monorepo's actual root (docs + two app folders) and found nothing buildable. Setting Root Directory to `backend` fixed it
+- Found the deployed frontend was still calling the dead host even after the redeploy — `VITE_API_URL` was also set as a Vercel dashboard Environment Variable, which silently overrides `.env.production` at build time. Removed the dashboard copy so the committed file is the only source of truth
+- Diagnosed a live "email not working" report as outbound SMTP being blocked on the new Railway account (`[Errno 101] Network is unreachable`) rather than the CORS error the browser displayed — the connection was dropping before any response, which is what a browser reports as a CORS failure. Switched `EMAIL_MODE` from `smtp` to the existing `gmail_api` path (HTTPS-based, built for exactly this class of host restriction) rather than touching any code
+- Decommissioned the old Railway project once the new one was confirmed stable: disconnected its GitHub source and deleted its public domain, so `interviewer-ai-backend-production.up.railway.app` now 404s and no future push can trigger a deploy there. The service itself (env vars, deployment history) was left in place rather than hard-deleted
+
 ## 2026-08-15
 - Added the **Resume-Based Interview** category: the candidate uploads a CV at enrolment instead of picking a domain, and the whole question set is generated from the skills and projects extracted from it. Like Instructor, it carries no course status — rather than adding a second `!= 'completed'` special case, the statusless categories are now a set with a `requires_course_status()` helper, since that guard lives independently in `auth_routes`, `bulk_email_routes` and `admin_routes`
 - The CV is parsed at enrolment and never again: `/auth/signup-resume` (public) analyses it and parks the result in a new `pending_resumes` table against a single-use token, which `/register` claims onto the new account. Interview start only reads the stored result, so no model call ever sits on the interview path — same rule the FaceMesh/COCO work established
