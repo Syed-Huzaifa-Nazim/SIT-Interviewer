@@ -372,14 +372,20 @@ still an open call.
   branch merged into `huzaifa` regularly (usually with real, substantive commits — recent
   examples include the async-handler migration follow-ups, the MCQ background-generation
   race fix, and the "Jump to Introduction" recording bookmark).
-- **Deployed:** `main` @ `167c887`, level with `huzaifa` — pushed 2026-08-15. This cleared a
-  backlog of fourteen commits, including two bugs that had been live for days (the
-  post-interview video upload booting one-time candidates to `/login`, and the MCQ-round
-  submit-button freeze) plus the whole Resume-Based Interview category. Verified live after
-  the deploy: `/health` database up, the new endpoints present and auth-guarded, the
-  refactored Resume & JD Analyzer routes returning 401 rather than 500, and 30 concurrent
-  requests all served. Check `git log origin/main..origin/huzaifa` before trusting this —
-  it drifts every session; this was last verified 2026-08-15.
+- **Deployed:** `main` @ `88c80c8`, level with `huzaifa` — last pushed 2026-08-25. Check
+  `git log origin/main..origin/huzaifa` before trusting this — it drifts every session.
+- **Backend moved hosts on 2026-08-24.** The Railway account behind
+  `interviewer-ai-backend-production.up.railway.app` expired. The backend now runs on a new
+  Railway account/project (`SIT-Interviewer`) at
+  `interviewerai-production-b311.up.railway.app` — both `frontend/.env.production` and the
+  keep-alive workflow point at it. The old project's GitHub source was disconnected and its
+  public domain deleted (so the old URL now 404s), but the service itself was left in place
+  rather than hard-deleted. See `DEVELOPMENT_LOG.md`'s 2026-08-24 entry for the two things
+  that broke during the move and how they were found: Root Directory had to be set to
+  `backend` (Railway couldn't build from the monorepo root), and `EMAIL_MODE` had to switch
+  from `smtp` to `gmail_api` — the new account blocks outbound SMTP entirely, which surfaced
+  as a browser-side CORS error rather than anything email-shaped, since the dropped
+  connection never got recognisable by the browser as an SMTP failure.
 - **Not verified end-to-end:** the Resume-Based flow has never been walked against a real
   database — signup, OTP email, login, interview. Its automated coverage is unit-level, and
   the one bug found so far (FormData posted under the shared axios instance's JSON
