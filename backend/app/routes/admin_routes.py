@@ -403,6 +403,10 @@ def send_interview_invite(target_user_id: int, user: User = Depends(admin_requir
     if target.role == 'admin':
         raise HTTPException(status_code=400, detail="Cannot send an interview invite to an administrator")
 
+    # Only true Instructors get the instructor-worded invite. Resume-Based candidates are
+    # also status-less but take the standard candidate wording, same as they do at signup.
+    instructor = is_instructor_category(target.course_category)
+
     # Eligible: Completed-course candidates, OR any category that has no course-status at
     # all (Instructor, Resume-Based). Those qualify by category instead — requiring
     # 'completed' of them would be requiring a field they can never have.
