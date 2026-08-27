@@ -252,6 +252,26 @@ const BulkEmailModal = ({ open, onClose, onSent }) => {
   };
   const removeRow = (idx) => setRows((prev) => prev.filter((_, i) => i !== idx));
 
+  // Auto-dashes as digits are typed (5-7-1), capped at 13 digits — the backend
+  // (normalize_cnic) already accepts a bare 13-digit string just fine, so this is pure
+  // typing convenience, not something validation depends on.
+  const formatCnicInput = (value) => {
+    const digits = value.replace(/\D/g, '').slice(0, 13);
+    if (digits.length <= 5) return digits;
+    if (digits.length <= 12) return `${digits.slice(0, 5)}-${digits.slice(5)}`;
+    return `${digits.slice(0, 5)}-${digits.slice(5, 12)}-${digits.slice(12)}`;
+  };
+
+  // Nearly every candidate signs up with a Gmail address (see the roster), so typing just
+  // the local part and moving on is the common case — appends "@gmail.com" on blur only if
+  // there's no "@" at all yet, so a fully-typed non-Gmail address is never touched.
+  const applyEmailDomainDefault = (idx, value) => {
+    const trimmed = value.trim();
+    if (trimmed && !trimmed.includes('@')) {
+      updateCell(idx, 'email', `${trimmed}@gmail.com`);
+    }
+  };
+
   const applyToAll = (key, value) => {
     if (!value) return;
     setRows((prev) => prev.map((r) => ({ ...r, [key]: value })));
@@ -562,8 +582,23 @@ const BulkEmailModal = ({ open, onClose, onSent }) => {
                               }`}>
                                 <td className="py-1.5 px-2 text-slate-400 font-mono text-center">{idx + 1}</td>
                                 <td className="py-1.5 px-1.5"><input className={inputCls} placeholder="Full name" value={r.name} onChange={(e) => updateCell(idx, 'name', e.target.value)} /></td>
-                                <td className="py-1.5 px-1.5"><input className={`${inputCls} font-mono`} placeholder="name@example.com" value={r.email} onChange={(e) => updateCell(idx, 'email', e.target.value)} /></td>
-                                <td className="py-1.5 px-1.5"><input className={`${inputCls} font-mono`} placeholder="42101-1234567-1" value={r.cnic} onChange={(e) => updateCell(idx, 'cnic', e.target.value)} /></td>
+                                <td className="py-1.5 px-1.5">
+                                  <input
+                                    className={`${inputCls} font-mono`}
+                                    placeholder="name@example.com"
+                                    value={r.email}
+                                    onChange={(e) => updateCell(idx, 'email', e.target.value)}
+                                    onBlur={(e) => applyEmailDomainDefault(idx, e.target.value)}
+                                  />
+                                </td>
+                                <td className="py-1.5 px-1.5">
+                                  <input
+                                    className={`${inputCls} font-mono`}
+                                    placeholder="42101-1234567-1"
+                                    value={r.cnic}
+                                    onChange={(e) => updateCell(idx, 'cnic', formatCnicInput(e.target.value))}
+                                  />
+                                </td>
                                 <td className="py-1.5 px-1.5">
                                   <select className={`${inputCls} cursor-pointer`} value={r.category} onChange={(e) => updateCell(idx, 'category', e.target.value)}>
                                     <option value="">Select…</option>
