@@ -3,6 +3,21 @@ import base64
 import time
 from app.config.config import Config
 
+def _delete_already_gone(response) -> bool:
+    """True when a delete response means "the object isn't there", whether Supabase said
+    so with an actual HTTP 404 or (as it does for at least one storage backend) with HTTP
+    400 wrapping a {"statusCode": "404", ...} / NoSuchKey body. Without checking the body,
+    the 400 form was being treated as a real failure, so the caller never marked the row
+    deleted and the retention-cleanup worker kept retrying the same already-gone object
+    every 6 hours, forever."""
+    if response.status_code in (200, 204, 404):
+        return True
+    if response.status_code == 400:
+        body = response.text or ''
+        return '"statusCode":"404"' in body or 'NoSuchKey' in body or 'not_found' in body
+    return False
+
+
 class SupabaseService:
     @staticmethod
     def _upload_raw(bucket: str, storage_path: str, file_bytes: bytes, content_type: str,
@@ -62,8 +77,8 @@ class SupabaseService:
         try:
             response = requests.delete(f"{url}/storage/v1/object/{bucket}/{storage_path}",
                                        headers=headers, timeout=20)
-            if response.status_code in (200, 204, 404):
-                return True  # 404 = already gone, which is the desired end state
+            if _delete_already_gone(response):
+                return True  # already gone (however Supabase phrased it), which is the desired end state
             print(f"Supabase Storage delete {bucket}/{storage_path} failed: "
                   f"HTTP {response.status_code}: {response.text[:150]}")
             return False
@@ -143,8 +158,9 @@ class SupabaseService:
         headers = {"Authorization": f"Bearer {key}", "ApiKey": key}
         try:
             response = requests.delete(delete_url, headers=headers, timeout=20)
-            # 200 = deleted; 404 = already gone (treat as success so we don't retry forever).
-            if response.status_code in (200, 404):
+            # Already gone counts as success (however Supabase phrased it) so the retention
+            # cleanup worker doesn't retry the same missing object forever.
+            if _delete_already_gone(response):
                 return True
             print(f"Supabase delete responded with code {response.status_code}: {response.text}")
             return False
