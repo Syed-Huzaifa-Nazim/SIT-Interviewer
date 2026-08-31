@@ -15,9 +15,39 @@ from app.routes.resume_jd_routes import resume_jd_bp
 from app.routes.notification_routes import notification_bp
 from app.routes.feedback_routes import feedback_bp
 from app.routes.admin_routes import admin_bp
+from app.routes.superadmin_routes import superadmin_bp
+from app.routes.v1_routes import v1_bp
 from app.routes.coding_routes import coding_bp
 from app.routes.bulk_email_routes import bulk_email_bp
 from app.routes.candidate_routes import candidate_bp
+
+
+def cors_headers_for(origin, allowed_origins):
+    """CORS headers to put on a response that never passed through CORSMiddleware.
+
+    Starlette hands the app-level ``Exception`` handler to ServerErrorMiddleware, which
+    wraps everything INCLUDING CORSMiddleware. A 500 built there is returned from outside
+    the CORS layer, so it carries no ``Access-Control-Allow-Origin`` and the browser reports
+    it as "blocked by CORS policy" — hiding the actual server error completely. That cost a
+    live debugging session: a NameError in send-interview-invite looked like a CORS
+    misconfiguration from the frontend, and the real 500 was invisible.
+
+    Returns {} for an origin that is not allowed, so this can never widen CORS beyond what
+    CORSMiddleware itself would have permitted.
+    """
+    if not origin:
+        return {}
+    if "*" not in (allowed_origins or []) and origin not in (allowed_origins or []):
+        return {}
+    return {
+        # Echo the caller's origin rather than "*" so the header is identical to the one
+        # CORSMiddleware would have set for this request.
+        'Access-Control-Allow-Origin': origin,
+        # The response body is the same for every origin, but the header is not — caches
+        # must key on Origin or one caller's rejection can be served to another.
+        'Vary': 'Origin',
+    }
+
 
 def create_app(config_class=Config):
     app = FastAPI(
@@ -80,6 +110,12 @@ def create_app(config_class=Config):
     app.include_router(notification_bp, prefix="/api/notifications", tags=["Notifications"])
     app.include_router(feedback_bp, prefix="/api/feedback", tags=["Feedback"])
     app.include_router(admin_bp, prefix="/api/admin", tags=["Admin"])
+    app.include_router(superadmin_bp, prefix="/api/superadmin", tags=["Super Admin"])
+    # Versioned public API, authenticated by an API key rather than a session. Its own
+    # prefix because its response shapes are a contract with integrations this team does
+    # not deploy — /api/admin changes whenever an admin page does, which is fine for a
+    # frontend shipped alongside it and a breaking change for anybody else.
+    app.include_router(v1_bp, prefix="/api/v1", tags=["Public API v1"])
     app.include_router(coding_bp, prefix="/api/coding", tags=["Coding Sandbox"])
     app.include_router(candidate_bp, prefix="/api/candidate", tags=["Candidate"])
     app.include_router(bulk_email_bp, prefix="/api/admin/bulk-email", tags=["Bulk Email"])
@@ -116,6 +152,7 @@ def create_app(config_class=Config):
     try:
         import secrets as _secrets
         from app.models import User, Token
+        from app.utils.security import ROLE_SUPER_ADMIN
         admin_email = config_class.ADMIN_EMAIL
         admin_password = config_class.ADMIN_PASSWORD
         admin = User.query.filter_by(email=admin_email).first()
@@ -132,7 +169,11 @@ def create_app(config_class=Config):
             admin = User(
                 name="Administrator",
                 email=admin_email,
-                role="admin",
+                # Seeded as SUPER admin: on an empty database this is the only account
+                # there will ever be until somebody creates more, and only a super admin
+                # can create them. Seeding a plain admin would produce a system nobody can
+                # add a second admin to.
+                role=ROLE_SUPER_ADMIN,
                 country="United States",
                 experience_level="Senior",
                 job_role="Platform Manager"
@@ -170,6 +211,20 @@ def create_app(config_class=Config):
                 "[SECURITY] ADMIN_PASSWORD is not set. If this admin account still uses an\n"
                 "[SECURITY] old default password, set ADMIN_PASSWORD and restart to replace it."
             )
+
+        # Bootstrap: make sure SOMEONE can reach the management surface.
+        #
+        # This database predates the super_admin role, so its one admin account is still a
+        # plain 'admin' — and only a super admin can create companies or other admins. That
+        # is a system with no way in. Promoting the configured ADMIN_EMAIL account closes it.
+        #
+        # Guarded on there being no super admin at all, so this runs exactly once, on the
+        # first boot after this change, and never touches roles again afterwards. It also
+        # never DEMOTES anyone: if a super admin already exists this block does nothing.
+        if admin and not User.query.filter_by(role=ROLE_SUPER_ADMIN).first():
+            admin.role = ROLE_SUPER_ADMIN
+            db.session.commit()
+            print(f"[SECURITY] Promoted {admin_email} to super admin (no super admin existed).")
     except Exception as e:
         db.session.rollback()
         print(f"Failed to seed admin on startup: {str(e)}")
@@ -221,6 +276,10 @@ def create_app(config_class=Config):
         return JSONResponse(
             status_code=500,
             content={'detail': 'An internal error occurred. Please try again in a moment.'},
+            # This response is built outside CORSMiddleware and would otherwise reach the
+            # browser with no CORS headers at all, which is reported as a CORS failure
+            # instead of the 500 it actually is. See cors_headers_for above.
+            headers=cors_headers_for(request.headers.get('origin'), allowed_origins),
         )
 
     # Health/diagnostics: reports whether the app can actually reach the database, so an

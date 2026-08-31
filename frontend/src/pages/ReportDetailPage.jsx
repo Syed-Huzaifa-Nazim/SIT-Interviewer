@@ -10,6 +10,7 @@ import { cn, formatScore } from '@/lib/utils';
 import { Button } from '@/components/shadcn/button';
 import { Badge } from '@/components/shadcn/badge';
 import { scoreColor } from '@/components/shadcn/chart';
+import { isAdminRole } from '../utils/constants';
 import {
   Activity,
   AlertCircle,
@@ -120,7 +121,7 @@ const ReportDetailPage = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { user } = useAuth();
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = isAdminRole(user?.role);
   // window.history.state.idx (set by React Router's data router on every navigate/push) is
   // > 0 whenever there's a real entry to go back to. Checked here instead of location.key
   // ('default' vs not) because location.key resets on a hard refresh — the in-memory router

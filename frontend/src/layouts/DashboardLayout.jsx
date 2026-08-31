@@ -20,6 +20,7 @@ import {
   Menu,
   X,
 } from 'lucide-react';
+import { isAdminRole } from '../utils/constants';
 
 /**
  * One sidebar link.
@@ -82,7 +83,7 @@ const DashboardLayout = ({ children }) => {
   // moved off native dialogs to non-blocking UI.
   const [blockedNotice, setBlockedNotice] = useState('');
 
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = isAdminRole(user?.role);
 
   const menuItems = useMemo(() => {
     const items = [

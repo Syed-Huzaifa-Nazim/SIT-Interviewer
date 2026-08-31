@@ -97,7 +97,15 @@ _HOT_INDEXES = {
     'transactions': ['user_id'],
     'second_interview_requests': ['status'],
     'code_submissions': ['user_id', 'interview_id'],
-    'users': ['status', 'banned_until'],
+    'users': ['status', 'banned_until', 'company_id'],
+    'companies': ['is_default'],
+    # Every /api/admin/* query for a non-super admin filters on this, so it is on the
+    # hottest path in the portal.
+    'admin_company_assignments': ['admin_user_id', 'company_id'],
+    'bulk_email_batches': ['admin_id', 'company_id'],
+    # key_prefix already carries a unique index; company_id is what every scoped
+    # /api/v1 query filters through.
+    'api_keys': ['company_id'],
 }
 
 

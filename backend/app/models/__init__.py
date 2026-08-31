@@ -17,5 +17,8 @@ from app.models.models import (
     EmailLog,
     RecordingLog,
     ProctorSnapshot,
-    BulkEmailBatch
+    BulkEmailBatch,
+    Company,
+    AdminCompanyAssignment,
+    ApiKey
 )

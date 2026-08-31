@@ -10,7 +10,10 @@ from app.models import (
     User, Token, Transaction, Notification, Interview, SecondInterviewRequest,
     ResumeAnalysis, PendingResume, AdminLog,
 )
-from app.utils.security import create_access_token, create_refresh_token, JWT_SECRET
+from app.utils.security import (
+    create_access_token, create_refresh_token, JWT_SECRET, ADMIN_ROLES, get_current_user
+)
+from app.utils.scope import default_company_id
 from app.utils.candidate import (
     COURSE_CATEGORIES, COURSE_STATUSES, CATEGORY_JOB_ROLES,
     SIGNUP_CATEGORIES, INSTRUCTOR_CATEGORY, RESUME_CATEGORY,
@@ -142,7 +145,11 @@ def _record_login_failure(client_ip, identifier):
 
     for key in newly_locked:
         try:
-            admin_user = User.query.filter_by(role='admin').first()
+            # in_(ADMIN_ROLES), not role='admin': admin_id is NOT NULL, so once the
+            # only privileged account became a super admin a role='admin' lookup
+            # returned None and this audit row failed to insert — silently, since the
+            # whole block swallows exceptions on purpose.
+            admin_user = User.query.filter(User.role.in_(ADMIN_ROLES)).first()
             db.session.add(AdminLog(
                 admin_id=admin_user.id if admin_user else None,
                 action='LOGIN_THROTTLED',
@@ -184,7 +191,7 @@ def _grant_signup_tokens(user_id):
 
 
 def _notify_admins(title, message, notif_type='activity'):
-    for admin in User.query.filter_by(role='admin').all():
+    for admin in User.query.filter(User.role.in_(ADMIN_ROLES)).all():
         db.session.add(Notification(
             user_id=admin.id, title=title, message=message, type=notif_type
         ))
@@ -479,7 +486,11 @@ def register(payload: dict = Body(default=None)):
             cnic=cnic,
             course_category=course_category,
             course_status=course_status,
-            interview_status='not_interviewed'
+            interview_status='not_interviewed',
+            # Whichever company the super admin nominated to receive public signups. None
+            # when no default is set, which leaves the account unassigned exactly as it was
+            # before company scoping existed.
+            company_id=default_company_id(),
         )
 
         otp = None
@@ -640,7 +651,7 @@ def login(request: Request, payload: dict = Body(default=None)):
             _record_login_failure(client_ip, identifier)
             raise invalid_error
 
-    if user.status == 'banned' and user.role != 'admin':
+    if user.status == 'banned' and user.role not in ADMIN_ROLES:
         if user.banned_until and user.banned_until <= datetime.datetime.utcnow():
             user.status = 'active'
             user.banned_until = None
@@ -661,6 +672,26 @@ def login(request: Request, payload: dict = Body(default=None)):
         user.otp_used = True  # consume the OTP on this single successful login
 
     user.last_seen_at = datetime.datetime.utcnow()
+
+    # Record every ADMIN sign-in, with where it came from.
+    #
+    # Sessions here are stateless JWTs, so there is no list of "currently signed-in devices"
+    # to show anybody — the honest thing to record is when somebody signed in and from
+    # where. That is also what makes the super admin's "end all sessions" button usable as
+    # more than a blunt instrument: without a sign-in trail there is no way to notice the
+    # login from an unfamiliar address that would make anyone want to press it.
+    #
+    # Candidates are deliberately not logged. There are far more of them, they sign in
+    # constantly, and burying a handful of admin sign-ins under thousands of candidate rows
+    # would destroy the only signal this is for.
+    if user.role in ADMIN_ROLES:
+        db.session.add(AdminLog(
+            admin_id=user.id,
+            action='ADMIN_LOGIN',
+            details=f"{user.email} signed in from {client_ip}.",
+            actor_role=user.role,
+        ))
+
     db.session.commit()
 
     access_token = create_access_token(identity=user.id)
@@ -821,6 +852,64 @@ def reset_password(payload: dict = Body(default=None)):
     except Exception as e:
         db.session.rollback()
         raise HTTPException(status_code=500, detail=f"Error resetting password: {str(e)}")
+
+
+@auth_bp.post('/change-password')
+def change_password(payload: dict = Body(default=None), user: User = Depends(get_current_user)):
+    """Replace your own password, knowing the current one.
+
+    Deliberately NOT behind admin_required. An account created by the super admin is issued
+    a generated password and is refused everything on the admin surface until it replaces it
+    — so a change-password endpoint sitting behind that same gate would be unreachable by
+    exactly the accounts that have to use it.
+
+    Distinct from /reset-password, which proves identity with an emailed code because the
+    person cannot sign in. Here they are already signed in and prove it with the old
+    password, which is what stops a borrowed session silently taking the account over.
+    """
+    data = payload or {}
+    current_password = data.get('current_password') or ''
+    new_password = data.get('new_password') or ''
+
+    if not current_password or not new_password:
+        raise HTTPException(status_code=400, detail="Both the current and new password are required")
+
+    # Admin accounts carry a longer minimum than candidates: one of them can read every
+    # candidate in its companies.
+    minimum = 12 if user.role in ADMIN_ROLES else 6
+    if len(new_password) < minimum:
+        raise HTTPException(
+            status_code=400,
+            detail=f"The new password must be at least {minimum} characters."
+        )
+    if not user.check_password(current_password):
+        raise HTTPException(status_code=401, detail="Your current password is not correct.")
+    if user.check_password(new_password):
+        raise HTTPException(
+            status_code=400,
+            detail="The new password must be different from the current one."
+        )
+
+    user.set_password(new_password)
+    user.must_change_password = False
+    # Everything issued under the old password dies, INCLUDING the token making this very
+    # request. That is the point: a password is changed because the old one may be known,
+    # and leaving sessions opened with it alive would change nothing for whoever holds it.
+    user.session_revoked_at = datetime.datetime.utcnow().replace(microsecond=0)
+
+    if user.role in ADMIN_ROLES:
+        db.session.add(AdminLog(
+            admin_id=user.id,
+            action='ADMIN_PASSWORD_CHANGED',
+            details=f"{user.email} set a new password; all previous sessions revoked.",
+            actor_role=user.role,
+        ))
+    db.session.commit()
+
+    return {
+        'message': 'Password changed. Please sign in again with your new password.',
+        'reauthentication_required': True,
+    }
 
 
 @auth_bp.post('/logout')

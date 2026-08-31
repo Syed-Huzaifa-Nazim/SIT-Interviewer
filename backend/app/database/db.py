@@ -1,7 +1,10 @@
 import contextvars
 import threading
 
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Text, ForeignKey, Boolean
+from sqlalchemy import (
+    create_engine, Column, Integer, String, Float, DateTime, Text, ForeignKey, Boolean,
+    UniqueConstraint,
+)
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, scoped_session, relationship, backref
 from app.config.config import Config
@@ -126,5 +129,6 @@ class db:
     DateTime = DateTime
     ForeignKey = ForeignKey
     Boolean = Boolean
+    UniqueConstraint = UniqueConstraint
     relationship = relationship
     backref = backref

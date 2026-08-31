@@ -286,3 +286,52 @@ been changed, and the code above expires on its own. Never share this code with 
 <p style="color:#64748b;font-size:12px;">Resetting your password signs you out of every device.</p>
 """
     return subject, _base('Password reset code', body)
+
+
+def superadmin_login_code(name, otp, ttl_minutes=10):
+    """Second factor for the super admin sign-in.
+
+    Says plainly what to do if it was not them: this code arriving unrequested means
+    somebody has the super admin password, which is the most serious thing that can happen
+    to this system, and "ignore it" would be exactly the wrong advice.
+    """
+    subject = 'Your SMIT Portal Super Admin Sign-in Code'
+    body = f"""
+<p>Dear {name},</p>
+<p>Someone signed in to the Super Admin portal with your password. Enter this code to
+finish signing in:</p>
+{_credentials_box([('Sign-in Code', otp), ('Valid for', f'{ttl_minutes} minutes')])}
+<div style="margin:16px 0;padding:12px 16px;background:#fdecea;border:1px solid #f5b5ae;border-radius:8px;color:#8a2018;font-size:12px;">
+<b>If this was not you, your password is compromised.</b> Nobody reaches this step without
+it. Change it immediately and check the audit log for anything you did not do. Do not share
+this code with anyone, including anyone claiming to be support.
+</div>
+"""
+    return subject, _base('Super admin sign-in code', body)
+
+
+def admin_account_created(name, login_email, password, portal_url):
+    """Credentials for an administrator account created by the super admin.
+
+    Sent to the person's real address, while the login identity is a generated one they will
+    never receive mail at — so the email has to state both, or they will try to sign in with
+    the address this arrived at.
+    """
+    subject = 'Your SMIT Assessment Portal Administrator Account'
+    body = f"""
+<p>Dear {name},</p>
+<p>An administrator account has been created for you on the SMIT Assessment Portal.</p>
+{_credentials_box([
+    ('Sign in with', login_email),
+    ('Temporary password', password),
+])}
+<div style="margin:16px 0;padding:12px 16px;background:#fef9ec;border:1px solid #f5d67b;border-radius:8px;color:#8a6d1a;font-size:12px;">
+<b>Sign in with the address above, not this one.</b> It is your login identity; this
+mailbox is only where we reach you. You will be asked to choose your own password before
+you can use the portal — the temporary one above stops working at that point.
+</div>
+{_button(portal_url, 'Open the Admin Portal')}
+<p style="color:#64748b;font-size:12px;">If you were not expecting this, tell whoever
+administers the portal — do not sign in.</p>
+"""
+    return subject, _base('Your administrator account', body)

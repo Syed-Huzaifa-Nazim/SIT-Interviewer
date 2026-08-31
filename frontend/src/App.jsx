@@ -33,6 +33,7 @@ import ProfilePage from './pages/ProfilePage';
 import InterviewSetup from './pages/InterviewSetup';
 import OfficialInterviewStart from './pages/OfficialInterviewStart';
 import OfficialThankYou from './pages/OfficialThankYou';
+import { isAdminRole } from './utils/constants';
 
 // The Admin Portal is code-split, and deliberately so: it pulls in the whole admin design
 // system (Radix primitives, motion, the chart layer) which a candidate never renders.
@@ -51,8 +52,17 @@ const AdminFeedbackPage = lazy(() => import('./pages/AdminFeedbackPage'));
 const AdminLogsPage = lazy(() => import('./pages/AdminLogsPage'));
 const AdminApprovalsPage = lazy(() => import('./pages/AdminApprovalsPage'));
 
+// The management portal is code-split too, and for a stronger reason than the Admin Hub:
+// almost nobody ever opens it, and it is reachable without an ordinary session at all.
+const SuperAdminLoginPage = lazy(() => import('./pages/superadmin/SuperAdminLoginPage'));
+const SuperAdminPortal = lazy(() => import('./pages/superadmin/SuperAdminPortal'));
+
+// Not lazy: it renders in place of whatever admin page was asked for, so a chunk fetch
+// here would put a spinner in front of the only thing the account is allowed to do.
+import ChangePasswordPage from './pages/ChangePasswordPage';
+
 // A one-time (completed-course) candidate: single proctored interview, no dashboard (§3.3)
-const isOneTimeCandidate = (user) => !!user && user.must_use_otp && user.role !== 'admin';
+const isOneTimeCandidate = (user) => !!user && user.must_use_otp && !isAdminRole(user.role);
 
 const FullPageSpinner = () => (
   <div className="min-h-screen bg-slate-100 dark:bg-slate-950 flex items-center justify-center">
@@ -123,7 +133,7 @@ const InterviewReportRoute = () => {
   // Portal shell (same sidebar/header) instead of switching to the candidate's
   // DashboardLayout — that swap felt like leaving the app entirely rather than a smooth
   // in-portal navigation. Candidates viewing their own report are unaffected.
-  if (user.role === 'admin') {
+  if (isAdminRole(user.role)) {
     return (
       <AdminLayout>
         <ReportDetailPage />
@@ -153,10 +163,18 @@ const AdminRoute = ({ children }) => {
     return <Navigate to="/login" replace />;
   }
 
-  if (user.role !== 'admin') {
+  if (!isAdminRole(user.role)) {
     return <Navigate to="/dashboard" replace />;
   }
-  
+
+  // An account still on its generated password reaches nothing else. Caught here rather
+  // than left to the backend's 403 so the person sees the form instead of an error: the
+  // API refuses the whole admin surface until this is done, so every page they could land
+  // on would otherwise fail at once with no way forward.
+  if (user.must_change_password) {
+    return <ChangePasswordPage />;
+  }
+
   return <AdminLayout>{children}</AdminLayout>;
 };
 
@@ -246,6 +264,15 @@ function App() {
                 </ProtectedRoute>
               } 
             />
+
+            {/* Super Admin management portal.
+                Deliberately NOT wrapped in AdminRoute/AdminLayout. It runs on its own
+                session (see services/superAdminApi.js) and the backend refuses these
+                endpoints to an ordinary admin token, so gating it on the Admin Hub's
+                session would only produce a page that looks reachable and then 403s.
+                The portal itself redirects to its own sign-in when it has no session. */}
+            <Route path="/superadmin/login" element={<SuperAdminLoginPage />} />
+            <Route path="/superadmin" element={<SuperAdminPortal />} />
 
             {/* Admin Restricted Pages */}
             <Route 

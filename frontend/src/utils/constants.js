@@ -69,3 +69,16 @@ export const FEEDBACK_CATEGORIES = [
   { key: 'platform', label: 'Platform & Interface', hint: 'Speed and ease of use of the portal' },
   { key: 'coding_sandbox', label: 'Coding Sandbox', hint: 'Skip if you had no coding exercise' },
 ];
+
+// Roles that may use the Admin Hub — must match ADMIN_ROLES in
+// backend/app/utils/security.py.
+//
+// `super_admin` is a strict superset of `admin`: it can do everything an admin can, plus
+// manage companies and other admins. Checking `role === 'admin'` anywhere in the UI would
+// therefore lock the super admin out of the very portal they administer, and the check that
+// does it is easy to write by reflex — hence one helper instead of a literal per file.
+export const ADMIN_ROLES = ['admin', 'super_admin'];
+
+export const isAdminRole = (role) => ADMIN_ROLES.includes(role);
+
+export const isSuperAdminRole = (role) => role === 'super_admin';

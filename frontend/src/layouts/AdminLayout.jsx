@@ -33,6 +33,7 @@ import {
   PanelLeftOpen,
   LayoutDashboard,
 } from 'lucide-react';
+import { isAdminRole, isSuperAdminRole } from '../utils/constants';
 
 const SIDEBAR_PREF_KEY = 'admin.sidebar.collapsed';
 
@@ -176,7 +177,7 @@ const AdminLayout = ({ children }) => {
   // In-portal pending-actions badge (Update §4) — replaces admin email alerts.
   const [pendingCount, setPendingCount] = useState(0);
 
-  const isAdmin = user && user.role === 'admin';
+  const isAdmin = user && isAdminRole(user.role);
 
   useEffect(() => {
     if (!isAdmin) return undefined;
@@ -214,7 +215,7 @@ const AdminLayout = ({ children }) => {
     navigate('/login');
   }, [logout, navigate]);
 
-  if (!user || user.role !== 'admin') {
+  if (!user || !isAdminRole(user.role)) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background p-6">
         <div className="text-center max-w-sm">
@@ -243,6 +244,13 @@ const AdminLayout = ({ children }) => {
     { name: 'Feedback', path: '/admin/feedback', icon: MessageSquare },
     { name: 'Logs', path: '/admin/logs', icon: ScrollText },
   ];
+
+  // Shown to a super admin only. /superadmin is a top-level route outside this layout, so
+  // following it leaves the Admin Hub shell entirely — which is right: the management
+  // portal runs on its own session and must not look like another tab of the Hub.
+  if (isSuperAdminRole(user.role)) {
+    adminMenu.push({ name: 'Super Admin', path: '/superadmin', icon: ShieldCheck });
+  }
 
   // Prefix match (not just exact) so a drill-in page like /admin/users/42 still highlights
   // its parent section — except for the dashboard root ('/admin'), which is a literal

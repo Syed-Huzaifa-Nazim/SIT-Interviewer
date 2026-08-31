@@ -12,6 +12,7 @@ import {
   Play, Send, RotateCcw, Terminal, Code2, CheckCircle2, XCircle,
   Clock3, AlertTriangle, ChevronLeft, ListChecks, Loader2, Database,
 } from 'lucide-react';
+import { isAdminRole } from '../utils/constants';
 
 const LANGUAGES = [
   { id: 'python', label: 'Python 3' },
@@ -202,7 +203,7 @@ const CodingInterview = () => {
   const [error, setError] = useState('');
   const [elapsed, setElapsed] = useState(0);
 
-  const isAdmin = user && user.role === 'admin';
+  const isAdmin = user && isAdminRole(user.role);
 
   // Session count-up timer.
   useEffect(() => {
