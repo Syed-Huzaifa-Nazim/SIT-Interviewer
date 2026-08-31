@@ -510,7 +510,11 @@ def start_interview(payload: dict = Body(default=None), user_id: int = Depends(g
             num_questions=num_questions,
             custom_jd=custom_jd,
             custom_skills=custom_skills,
-            resume_profile=resume_profile
+            resume_profile=resume_profile,
+            # Same list already resolved for the coding-sandbox opener above — if the live
+            # LLM call fails and this falls back to the offline mock library, that fallback
+            # must respect the invite's range too, not just the live path.
+            allowed_difficulties=sandbox_difficulties,
         )
 
         # Completed-course candidates open on a hands-on coding-sandbox exercise instead of

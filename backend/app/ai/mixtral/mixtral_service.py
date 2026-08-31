@@ -292,7 +292,8 @@ class MixtralService:
 
     @classmethod
     def generate_questions(cls, interview_type, job_role, experience_level, difficulty,
-                           num_questions, custom_jd=None, custom_skills=None, resume_profile=None):
+                           num_questions, custom_jd=None, custom_skills=None, resume_profile=None,
+                           allowed_difficulties=None):
         import uuid
         jd_mode = bool(custom_jd and len(custom_jd.strip()) >= 30)
         instructor_mode = (interview_type == 'instructor')
@@ -498,7 +499,7 @@ class MixtralService:
                 return cleaned
 
         # Fallback Mock Question Generator (domain-aware)
-        return cls._generate_mock_questions(interview_type, job_role, experience_level, difficulty, num_questions, custom_jd)
+        return cls._generate_mock_questions(interview_type, job_role, experience_level, difficulty, num_questions, custom_jd, allowed_difficulties)
 
     @classmethod
     def generate_mcqs(cls, job_role, experience_level, difficulty, num_mcqs=10):
@@ -966,7 +967,14 @@ class MixtralService:
 
 
     @classmethod
-    def _generate_mock_questions(cls, interview_type, job_role, experience_level, difficulty, num_questions, custom_jd):
+    def _generate_mock_questions(cls, interview_type, job_role, experience_level, difficulty, num_questions, custom_jd,
+                                  allowed_difficulties=None):
+        """``allowed_difficulties`` (Difficulty Range feature): an ordered low->high list
+        (e.g. ['Easy', 'Medium']) to restrict this offline pool to, same as the coding
+        sandbox's own filter. Entries written before per-question difficulty tagging existed
+        carry no 4th tuple element and are always eligible — untagged content never becomes
+        unreachable just because a range was set. None means no restriction (today's
+        behavior, and every interview type besides 'technical'/'hr'/'behavioral')."""
         mock_library = {
             "technical": {
                 "react": [
@@ -995,7 +1003,11 @@ class MixtralService:
                     ("What is a React Portal, and when would you use one (e.g. modals, tooltips)?", "conceptual"),
                     ("Write a React component that renders a list of items and highlights the one currently hovered.", "coding"),
                     ("How does React Router handle client-side navigation, and what happens to component state when you navigate away and back?", "conceptual"),
-                    ("Explain the difference between React.StrictMode's development-only double-invocation behavior and what actually happens in production.", "conceptual")
+                    ("Explain the difference between React.StrictMode's development-only double-invocation behavior and what actually happens in production.", "conceptual"),
+                    ("What is JSX, and why isn't it valid JavaScript on its own — what step converts it?", "conceptual", None, "Easy"),
+                    ("Explain how the onClick prop differs from a plain HTML onclick attribute in React.", "conceptual", None, "Easy"),
+                    ("You need to lift state up from two sibling components to a common parent. Walk through how you would refactor this.", "scenario", None, "Medium"),
+                    ("Explain React's Fiber architecture and how time-slicing lets concurrent rendering interrupt a render pass.", "conceptual", None, "Hard")
                 ],
                 "python": [
                     ("Explain the differences between list, tuple, and set in Python. In what scenarios is a set preferred?", "conceptual"),
@@ -1022,7 +1034,11 @@ class MixtralService:
                     ("Write a Python function that flattens a nested list of arbitrary depth.", "coding"),
                     ("What is the difference between @staticmethod, @classmethod, and a regular instance method?", "conceptual"),
                     ("Explain Python's *args and **kwargs. Write a function that accepts both and forwards them to another function.", "coding"),
-                    ("How would you profile a slow Python function to find out where the time is actually being spent?", "scenario")
+                    ("How would you profile a slow Python function to find out where the time is actually being spent?", "scenario"),
+                    ("What is the difference between a Python module and a package?", "conceptual", None, "Easy"),
+                    ("Write a Python function that checks if a number is even or odd.", "coding", None, "Easy"),
+                    ("Explain Python's asyncio event loop. How does async def differ from a regular function?", "conceptual", None, "Medium"),
+                    ("Explain how Python's garbage collector handles reference cycles, beyond simple reference counting.", "conceptual", None, "Hard")
                 ],
                 "node": [
                     ("Explain how the Node.js event loop works and what makes it non-blocking.", "conceptual"),
@@ -1047,7 +1063,11 @@ class MixtralService:
                     ("Explain environment variables and how you would manage secrets across development, staging, and production in a Node app.", "conceptual"),
                     ("What is the difference between dependencies and devDependencies in package.json?", "conceptual"),
                     ("How would you structure a Node.js REST API project (folders/layers) to keep it maintainable as it grows?", "scenario"),
-                    ("Explain how Node.js handles unhandled promise rejections, and what changed about this behavior in recent Node versions.", "conceptual")
+                    ("Explain how Node.js handles unhandled promise rejections, and what changed about this behavior in recent Node versions.", "conceptual"),
+                    ("What is npm, and what is the difference between a local and a global package install?", "conceptual", None, "Easy"),
+                    ("Write an Express route handler that returns a 404 JSON response for any unmatched route.", "coding", None, "Easy"),
+                    ("How would you gracefully shut down a Node.js server on SIGTERM, finishing in-flight requests first?", "scenario", None, "Medium"),
+                    ("Explain how Node.js's libuv thread pool handles file system and DNS operations differently from the event loop's own I/O.", "conceptual", None, "Hard")
                 ],
                 "database": [
                     ("What are database indexes? How do they improve query speeds, and what is the write penalty?", "conceptual"),
@@ -1072,7 +1092,11 @@ class MixtralService:
                     ("What is denormalization, and why might you deliberately introduce redundancy into a schema?", "conceptual"),
                     ("How would you design a database schema for a many-to-many relationship, such as students and courses?", "scenario"),
                     ("Explain the difference between a primary key and a unique key/constraint.", "conceptual"),
-                    ("What is a deadlock in a database, and how would you detect and resolve one in production?", "scenario")
+                    ("What is a deadlock in a database, and how would you detect and resolve one in production?", "scenario"),
+                    ("What is a foreign key constraint, and what happens if you try to insert a row that violates it?", "conceptual", None, "Easy"),
+                    ("Write an SQL query to count how many orders each customer has placed.", "coding", None, "Easy"),
+                    ("Explain the difference between INNER JOIN, LEFT JOIN, and FULL OUTER JOIN with a short example.", "conceptual", None, "Medium"),
+                    ("Explain how a query planner decides between a sequential scan and an index scan, and when its choice can go wrong.", "conceptual", None, "Hard")
                 ],
                 "ai_ml": [
                     ("What is Retrieval-Augmented Generation (RAG)? How does it mitigate Large Language Model hallucinations?", "conceptual"),
@@ -1097,7 +1121,11 @@ class MixtralService:
                     ("What is cross-validation, and why is it more reliable than a single train/test split for evaluating a model?", "conceptual"),
                     ("Write Python code that computes cosine similarity between two embedding vectors using NumPy.", "coding"),
                     ("Explain hallucination in LLMs. Name two practical mitigation strategies besides RAG.", "conceptual"),
-                    ("How would you evaluate whether a chatbot's responses are actually improving after a prompt change, without shipping blind?", "scenario")
+                    ("How would you evaluate whether a chatbot's responses are actually improving after a prompt change, without shipping blind?", "scenario"),
+                    ("What is the difference between a training set, a validation set, and a test set?", "conceptual", None, "Easy"),
+                    ("Write Python code that normalizes a list of numbers to a 0-1 range using min-max scaling.", "coding", None, "Easy"),
+                    ("Explain temperature and top-p sampling in LLM text generation. How do they affect output randomness?", "conceptual", None, "Medium"),
+                    ("Explain how mixture-of-experts (MoE) architectures reduce inference compute while keeping a large parameter count.", "conceptual", None, "Hard")
                 ]
             },
             "hr": [
@@ -1120,7 +1148,12 @@ class MixtralService:
                 ("How do you approach onboarding onto a completely unfamiliar codebase?", "hr"),
                 ("Describe your ideal team culture. What makes a workplace feel supportive to you?", "hr"),
                 ("How do you keep your technical skills current outside of work?", "hr"),
-                ("Where do you see the biggest gap between your current skills and this role's requirements, and how would you close it?", "hr")
+                ("Where do you see the biggest gap between your current skills and this role's requirements, and how would you close it?", "hr"),
+                ("What attracted you to a career in software development?", "hr", None, "Easy"),
+                ("How do you typically start your day at work?", "hr", None, "Easy"),
+                ("Describe a time you had to give difficult feedback to a peer.", "hr", None, "Medium"),
+                ("How would you handle being asked to work significantly beyond your job scope?", "hr", None, "Medium"),
+                ("Tell us about a time you had to influence a decision without having direct authority over the people involved.", "hr", None, "Hard")
             ],
             "behavioral": [
                 ("Describe a complex technical problem you solved recently. Use the STAR method (Situation, Task, Action, Result).", "behavioral"),
@@ -1138,7 +1171,12 @@ class MixtralService:
                 ("Tell me about a project that didn't go as planned. What would you do differently now?", "behavioral"),
                 ("Describe a time you had to balance technical debt against a feature deadline. How did you decide?", "behavioral"),
                 ("Tell me about a time you received a code review comment that changed how you approached the problem.", "behavioral"),
-                ("Describe how you handled a situation where a teammate wasn't pulling their weight on a shared deliverable.", "behavioral")
+                ("Describe how you handled a situation where a teammate wasn't pulling their weight on a shared deliverable.", "behavioral"),
+                ("Tell me about a project you're proud of and why.", "behavioral", None, "Easy"),
+                ("Describe a time you helped a teammate who was stuck.", "behavioral", None, "Easy"),
+                ("Tell me about a time you had to change your plan midway through a project. What triggered it?", "behavioral", None, "Medium"),
+                ("Describe a time you took initiative without being asked.", "behavioral", None, "Medium"),
+                ("Tell me about the most difficult stakeholder conflict you've navigated, and how you resolved it without escalating it further.", "behavioral", None, "Hard")
             ]
         }
 
@@ -1184,14 +1222,30 @@ class MixtralService:
             else:
                 source_pool = mock_library['technical']['react'] + mock_library['hr']
 
-        # Normalize to (text, type, snippet) — older pools are 2-tuples.
-        def _as_triple(entry):
-            if len(entry) == 3:
+        # Normalize to (text, type, snippet, difficulty) — older pools are 2- or 3-tuples
+        # (no per-question difficulty tag; treated as eligible for every range below).
+        def _as_quad(entry):
+            if len(entry) == 4:
                 return entry
+            if len(entry) == 3:
+                text, q_type, snippet = entry
+                return (text, q_type, snippet, None)
             text, q_type = entry
-            return (text, q_type, None)
+            return (text, q_type, None, None)
 
-        shuffled = [_as_triple(e) for e in source_pool]
+        normalized_pool = [_as_quad(e) for e in source_pool]
+
+        # Difficulty Range feature: restrict to the invite's allowed levels, same rule the
+        # coding sandbox uses — an untagged entry (difficulty is None) is always eligible, so
+        # older content written before per-question tagging never becomes unreachable. If the
+        # filter would empty the pool (e.g. a range with no tagged content yet), fall back to
+        # the unfiltered pool rather than returning nothing.
+        if allowed_difficulties:
+            restricted = [e for e in normalized_pool if e[3] is None or e[3] in allowed_difficulties]
+            if restricted:
+                normalized_pool = restricted
+
+        shuffled = list(normalized_pool)
         random.shuffle(shuffled)
 
         # Pick with format variety (§2.3): never take the same question_type twice in a row
@@ -1206,7 +1260,7 @@ class MixtralService:
             picked.append(entry)
             last_type = entry[1]
 
-        for i, (q_text, q_type, snippet) in enumerate(picked):
+        for i, (q_text, q_type, snippet, _difficulty) in enumerate(picked):
             questions.append({
                 "question_text": q_text,
                 "question_type": q_type,

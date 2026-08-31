@@ -156,7 +156,38 @@ def test_mock_question_generation_never_repeats_a_question_within_a_session():
     assert len(set(texts)) == len(texts)
 
 
-# ------------------------------------------------------------ scoring / anti-fabrication
+# ---------------------------------------------------------- difficulty range filtering
+
+def test_allowed_difficulties_never_empties_an_untagged_pool():
+    """Every question in the mock library predates per-question difficulty tagging, so it
+    carries no tag and must stay eligible under ANY range — a range must never make the
+    offline fallback come up short."""
+    questions = MixtralService._generate_mock_questions(
+        'technical', 'React Developer', 'Entry', 'Medium', 5, None,
+        allowed_difficulties=['Medium', 'Hard'],
+    )
+
+    assert len(questions) == 5
+    for q in questions:
+        assert q['question_text'].strip()
+
+
+def test_allowed_difficulties_filters_a_known_hard_tagged_entry():
+    """A react question tagged 'Hard' in the shipped bank must never surface when the range
+    excludes Hard. Runs enough trials that random selection would very likely have picked it
+    at least once if the filter were not actually applied."""
+    hard_snippet = "Explain React's Fiber architecture and how time-slicing lets concurrent rendering interrupt a render pass."
+
+    seen = False
+    for _ in range(60):
+        qs = MixtralService._generate_mock_questions(
+            'technical', 'React Developer', 'Entry', 'Medium', 3, None,
+            allowed_difficulties=['Easy', 'Medium'],
+        )
+        if any(hard_snippet in q['question_text'] for q in qs):
+            seen = True
+            break
+    assert not seen
 
 def test_empty_answer_scores_zero_without_a_model_call():
     """covers TC-AI-006 — a genuinely empty answer is a confident 0, not a review flag."""
