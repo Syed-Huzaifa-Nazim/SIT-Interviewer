@@ -985,7 +985,17 @@ class MixtralService:
                     ("How would you virtualize a large list of dynamic elements in React without external packages?", "scenario"),
                     ("What is the difference between useMemo and useCallback? Provide a code sample showing when to use them.", "coding"),
                     ("How does React's Context API work? What are its performance limitations regarding re-renders?", "conceptual"),
-                    ("Explain CSS modules vs styled-components in the context of React styling trade-offs.", "conceptual")
+                    ("Explain CSS modules vs styled-components in the context of React styling trade-offs.", "conceptual"),
+                    ("What are keys in React lists, and why does using an array index as a key cause bugs when the list order changes?", "conceptual"),
+                    ("Explain the difference between props and state in React with a simple example.", "conceptual"),
+                    ("Write a React functional component that toggles a boolean 'isOpen' state when a button is clicked.", "coding"),
+                    ("What is prop drilling, and what are two ways to avoid it in a medium-sized React app?", "conceptual"),
+                    ("You need to conditionally render three different UI states (loading, error, success) from a single API call. How would you structure this in a component?", "scenario"),
+                    ("Explain the purpose of the useRef hook. Give an example unrelated to accessing a DOM node.", "conceptual"),
+                    ("What is a React Portal, and when would you use one (e.g. modals, tooltips)?", "conceptual"),
+                    ("Write a React component that renders a list of items and highlights the one currently hovered.", "coding"),
+                    ("How does React Router handle client-side navigation, and what happens to component state when you navigate away and back?", "conceptual"),
+                    ("Explain the difference between React.StrictMode's development-only double-invocation behavior and what actually happens in production.", "conceptual")
                 ],
                 "python": [
                     ("Explain the differences between list, tuple, and set in Python. In what scenarios is a set preferred?", "conceptual"),
@@ -1002,7 +1012,17 @@ class MixtralService:
                     ("Write a Python script that parses a directory of JSON files and aggregates a specific nested metric.", "coding"),
                     ("Explain the concept of meta-programming and metaclasses in Python.", "conceptual"),
                     ("How do you perform unit testing in Python? Contrast the unittest library with pytest.", "conceptual"),
-                    ("What is type hinting in Python? How does it improve code quality, and what are its runtime limits?", "conceptual")
+                    ("What is type hinting in Python? How does it improve code quality, and what are its runtime limits?", "conceptual"),
+                    ("What is the difference between `is` and `==` in Python? Give an example where they produce different results.", "conceptual"),
+                    ("Write a Python function that removes duplicate elements from a list while preserving the original order.", "coding"),
+                    ("Explain how Python's `with` statement and context managers work. Write a simple custom context manager.", "coding"),
+                    ("What are list comprehensions, and when might a plain for-loop be more readable or faster?", "conceptual"),
+                    ("You are given a function that occasionally raises an unhandled exception in production. How would you add robust error handling and logging around it?", "scenario"),
+                    ("Explain mutable default arguments in Python functions. Why can they cause subtle bugs?", "conceptual"),
+                    ("Write a Python function that flattens a nested list of arbitrary depth.", "coding"),
+                    ("What is the difference between @staticmethod, @classmethod, and a regular instance method?", "conceptual"),
+                    ("Explain Python's *args and **kwargs. Write a function that accepts both and forwards them to another function.", "coding"),
+                    ("How would you profile a slow Python function to find out where the time is actually being spent?", "scenario")
                 ],
                 "node": [
                     ("Explain how the Node.js event loop works and what makes it non-blocking.", "conceptual"),
@@ -1017,7 +1037,17 @@ class MixtralService:
                     ("Explain Node.js error handling best practices. How do you handle uncaughtExceptions?", "scenario"),
                     ("What are Express routes and middleware? Write a custom JWT authorization middleware in Node.", "coding"),
                     ("Explain how WebSockets work in Node.js. How does it compare to standard HTTP polling?", "conceptual"),
-                    ("How do you prevent SQL injection or XSS vulnerabilities in Node.js REST API systems?", "scenario")
+                    ("How do you prevent SQL injection or XSS vulnerabilities in Node.js REST API systems?", "scenario"),
+                    ("What is callback hell, and how do Promises or async/await help avoid it?", "conceptual"),
+                    ("Write an async function using async/await that fetches data from two APIs in parallel and combines the results.", "coding"),
+                    ("Explain the difference between process.nextTick(), setImmediate(), and setTimeout(fn, 0).", "conceptual"),
+                    ("How would you implement rate limiting on an Express API endpoint?", "scenario"),
+                    ("What is middleware in Express, and how does the next() function control the request pipeline?", "conceptual"),
+                    ("Write a simple Express route that validates a request body and returns a 400 error if a required field is missing.", "coding"),
+                    ("Explain environment variables and how you would manage secrets across development, staging, and production in a Node app.", "conceptual"),
+                    ("What is the difference between dependencies and devDependencies in package.json?", "conceptual"),
+                    ("How would you structure a Node.js REST API project (folders/layers) to keep it maintainable as it grows?", "scenario"),
+                    ("Explain how Node.js handles unhandled promise rejections, and what changed about this behavior in recent Node versions.", "conceptual")
                 ],
                 "database": [
                     ("What are database indexes? How do they improve query speeds, and what is the write penalty?", "conceptual"),
@@ -1032,7 +1062,17 @@ class MixtralService:
                     ("Explain Database Sharding vs Replication. What are the read/write scaling differences?", "scenario"),
                     ("What is the CAP Theorem? Explain the trade-offs between Consistency, Availability, and Partition tolerance.", "conceptual"),
                     ("Write an SQL query to retrieve the second highest salary from an Employee table.", "coding"),
-                    ("How do you handle database migrations safely in a production environment with zero downtime?", "scenario")
+                    ("How do you handle database migrations safely in a production environment with zero downtime?", "scenario"),
+                    ("What is the difference between a clustered and a non-clustered index?", "conceptual"),
+                    ("Write an SQL query to find all customers who have never placed an order, given a customers and an orders table.", "coding"),
+                    ("Explain the N+1 query problem and how you would fix it in an application using an ORM.", "scenario"),
+                    ("What is a database view, and when is a materialized view preferable to a regular view?", "conceptual"),
+                    ("Explain optimistic vs pessimistic locking in a database. Give a scenario where each is appropriate.", "conceptual"),
+                    ("Write an SQL query using a window function (e.g. RANK) to find the top 3 highest-paid employees per department.", "coding"),
+                    ("What is denormalization, and why might you deliberately introduce redundancy into a schema?", "conceptual"),
+                    ("How would you design a database schema for a many-to-many relationship, such as students and courses?", "scenario"),
+                    ("Explain the difference between a primary key and a unique key/constraint.", "conceptual"),
+                    ("What is a deadlock in a database, and how would you detect and resolve one in production?", "scenario")
                 ],
                 "ai_ml": [
                     ("What is Retrieval-Augmented Generation (RAG)? How does it mitigate Large Language Model hallucinations?", "conceptual"),
@@ -1047,7 +1087,17 @@ class MixtralService:
                     ("You are experiencing model drift in production. How would you detect, monitor, and mitigate it?", "scenario"),
                     ("What are tokens in LLMs? How do subword tokenizers like BPE or WordPiece handle out-of-vocabulary words?", "conceptual"),
                     ("Explain bias and variance in machine learning. How do you recognize overfitting from train/val curves?", "scenario"),
-                    ("Write PyTorch code to implement a custom dataset loader for training a model.", "coding")
+                    ("Write PyTorch code to implement a custom dataset loader for training a model.", "coding"),
+                    ("What is prompt engineering, and what are two techniques (e.g. few-shot examples, chain-of-thought) that improve LLM output quality?", "conceptual"),
+                    ("Explain the difference between precision and recall. When would you optimize for one over the other?", "conceptual"),
+                    ("Write a Python function using scikit-learn to split a dataset into training and test sets and train a simple logistic regression model.", "coding"),
+                    ("What is embedding drift, and how does it affect a semantic search system over time?", "conceptual"),
+                    ("You need to reduce the cost of running an LLM in production without a major quality drop. What options would you consider?", "scenario"),
+                    ("Explain the difference between a foundation model and a fine-tuned model. When is fine-tuning worth the cost?", "conceptual"),
+                    ("What is cross-validation, and why is it more reliable than a single train/test split for evaluating a model?", "conceptual"),
+                    ("Write Python code that computes cosine similarity between two embedding vectors using NumPy.", "coding"),
+                    ("Explain hallucination in LLMs. Name two practical mitigation strategies besides RAG.", "conceptual"),
+                    ("How would you evaluate whether a chatbot's responses are actually improving after a prompt change, without shipping blind?", "scenario")
                 ]
             },
             "hr": [
@@ -1060,7 +1110,17 @@ class MixtralService:
                 ("What do you think makes a software engineer successful in a collaborative remote team?", "hr"),
                 ("Describe your experience with mentoring junior developers or conducting code reviews.", "hr"),
                 ("How do you handle constructive criticism on your code from peer engineers?", "hr"),
-                ("What are your salary expectations for this role, and what is your current notice period?", "hr")
+                ("What are your salary expectations for this role, and what is your current notice period?", "hr"),
+                ("How do you stay motivated during long, repetitive phases of a project?", "hr"),
+                ("Describe a time you had to say no to a request from a manager or client. How did you handle it?", "hr"),
+                ("What does work-life balance mean to you, and how do you maintain it under deadline pressure?", "hr"),
+                ("Tell us about a time you had to work with incomplete or unclear requirements. What did you do?", "hr"),
+                ("How do you handle a disagreement with a teammate about the right technical approach?", "hr"),
+                ("What would your previous manager or teammates say is your biggest area for improvement?", "hr"),
+                ("How do you approach onboarding onto a completely unfamiliar codebase?", "hr"),
+                ("Describe your ideal team culture. What makes a workplace feel supportive to you?", "hr"),
+                ("How do you keep your technical skills current outside of work?", "hr"),
+                ("Where do you see the biggest gap between your current skills and this role's requirements, and how would you close it?", "hr")
             ],
             "behavioral": [
                 ("Describe a complex technical problem you solved recently. Use the STAR method (Situation, Task, Action, Result).", "behavioral"),
@@ -1070,7 +1130,15 @@ class MixtralService:
                 ("Describe a situation where you disagreed with a manager's technical decision. How did you handle the situation?", "behavioral"),
                 ("Tell me about a time you failed to meet a deadline. What happened and how did you communicate it?", "behavioral"),
                 ("Describe a time you went above and beyond your standard duties to deliver a critical feature.", "behavioral"),
-                ("Tell me about a time you had to learn a brand new language or framework in a very short time. What was your strategy?", "behavioral")
+                ("Tell me about a time you had to learn a brand new language or framework in a very short time. What was your strategy?", "behavioral"),
+                ("Tell me about a time you had to make a decision with incomplete information. What was the outcome?", "behavioral"),
+                ("Describe a situation where you had to collaborate with a team in a different timezone or department. What made it work or not work?", "behavioral"),
+                ("Tell me about a time your code caused a production issue. Walk me through what happened and what you changed afterward.", "behavioral"),
+                ("Describe a time you had to convince a skeptical stakeholder to adopt your technical recommendation.", "behavioral"),
+                ("Tell me about a project that didn't go as planned. What would you do differently now?", "behavioral"),
+                ("Describe a time you had to balance technical debt against a feature deadline. How did you decide?", "behavioral"),
+                ("Tell me about a time you received a code review comment that changed how you approached the problem.", "behavioral"),
+                ("Describe how you handled a situation where a teammate wasn't pulling their weight on a shared deliverable.", "behavioral")
             ]
         }
 
