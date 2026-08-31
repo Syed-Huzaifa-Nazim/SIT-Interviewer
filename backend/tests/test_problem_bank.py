@@ -698,6 +698,218 @@ def longest_consecutive(nums):
             best = max(best, length)
     return best
 """,
+    "count-word-length-distribution": """
+def word_length_histogram(sentence):
+    hist = {}
+    for w in sentence.split():
+        key = str(len(w))
+        hist[key] = hist.get(key, 0) + 1
+    return hist
+""",
+    "is-perfect-square": """
+def is_perfect_square(n):
+    if n < 0:
+        return False
+    r = int(n ** 0.5)
+    return r * r == n or (r + 1) * (r + 1) == n
+""",
+    "sum-of-digits": """
+def digit_sum(n):
+    return sum(int(d) for d in str(abs(n)))
+""",
+    "is-perfect-number": """
+def is_perfect_number(n):
+    if n < 1:
+        return False
+    return sum(i for i in range(1, n) if n % i == 0) == n
+""",
+    "count-unique-words": """
+def unique_word_count(text):
+    return len(set(w.lower() for w in text.split()))
+""",
+    "validate-hex-color": """
+import re
+def is_valid_hex_color(color):
+    return bool(re.match(r'^#([0-9a-fA-F]{6}|[0-9a-fA-F]{3})$', color or ""))
+""",
+    "calculate-tip-amount": """
+def tip_amount(bill, tip_percent):
+    return round(bill * tip_percent / 100, 2)
+""",
+    "find-mode": """
+def find_mode(nums):
+    from collections import Counter
+    counts = Counter(nums)
+    best = max(counts.values())
+    candidates = [n for n, c in counts.items() if c == best]
+    return min(candidates)
+""",
+    "is-subsequence": """
+def is_subsequence(s, t):
+    it = iter(t)
+    return all(ch in it for ch in s)
+""",
+    "calculate-word-count": """
+def word_count(text):
+    return len(text.split())
+""",
+    "validate-credit-card-luhn": """
+def is_valid_luhn(number_str):
+    digits = [int(d) for d in number_str]
+    total = 0
+    for i, d in enumerate(reversed(digits)):
+        if i % 2 == 1:
+            d *= 2
+            if d > 9:
+                d -= 9
+        total += d
+    return total % 10 == 0
+""",
+    "find-duplicate-in-range": """
+def find_duplicate(nums):
+    seen = set()
+    for n in nums:
+        if n in seen:
+            return n
+        seen.add(n)
+    return -1
+""",
+    "calculate-average-word-length": """
+def average_word_length(sentence):
+    words = sentence.split()
+    if not words:
+        return 0.0
+    return round(sum(len(w) for w in words) / len(words), 2)
+""",
+    "is-power-of-two": """
+def is_power_of_two(n):
+    return n > 0 and (n & (n - 1)) == 0
+""",
+    "calculate-net-price-after-tax": """
+def price_after_tax(price, tax_percent):
+    return round(price * (1 + tax_percent / 100), 2)
+""",
+    "calculate-elapsed-days": """
+def elapsed_days(start_day_of_year, end_day_of_year):
+    return end_day_of_year - start_day_of_year
+""",
+    "remove-duplicates-preserve-order": """
+def dedupe_preserve_order(items):
+    seen = set()
+    result = []
+    for x in items:
+        if x not in seen:
+            seen.add(x)
+            result.append(x)
+    return result
+""",
+    "calculate-max-profit-multiple-transactions": """
+def max_profit_multi(prices):
+    profit = 0
+    for i in range(1, len(prices)):
+        if prices[i] > prices[i - 1]:
+            profit += prices[i] - prices[i - 1]
+    return profit
+""",
+    "group-anagrams": """
+def group_anagrams(words):
+    groups = {}
+    order = []
+    for w in words:
+        key = ''.join(sorted(w))
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(w)
+    return [sorted(groups[k]) for k in order]
+""",
+    "longest-palindromic-substring": """
+def longest_palindromic_substring(s):
+    if not s:
+        return ""
+    start, max_len = 0, 1
+    def expand(l, r):
+        while l >= 0 and r < len(s) and s[l] == s[r]:
+            l -= 1
+            r += 1
+        return l + 1, r - 1
+    for i in range(len(s)):
+        l1, r1 = expand(i, i)
+        if r1 - l1 + 1 > max_len:
+            start, max_len = l1, r1 - l1 + 1
+        l2, r2 = expand(i, i + 1)
+        if r2 - l2 + 1 > max_len:
+            start, max_len = l2, r2 - l2 + 1
+    return s[start:start + max_len]
+""",
+    "calculate-simple-moving-average": """
+def moving_average(nums, window):
+    result = []
+    for i in range(len(nums) - window + 1):
+        result.append(round(sum(nums[i:i + window]) / window, 2))
+    return result
+""",
+    "is-valid-ipv4-address": """
+def is_valid_ipv4(ip):
+    parts = ip.split('.')
+    if len(parts) != 4:
+        return False
+    for p in parts:
+        if not p.isdigit():
+            return False
+        if len(p) > 1 and p[0] == '0':
+            return False
+        if not (0 <= int(p) <= 255):
+            return False
+    return True
+""",
+    "count-occurrences-of-substring": """
+def count_substring_occurrences(s, sub):
+    return s.count(sub) if sub else 0
+""",
+    "calculate-weighted-average": """
+def weighted_average(values, weights):
+    return round(sum(v * w for v, w in zip(values, weights)) / sum(weights), 2)
+""",
+    "find-pair-with-min-difference": """
+def min_difference_pair(nums):
+    s = sorted(nums)
+    return min(s[i + 1] - s[i] for i in range(len(s) - 1))
+""",
+    "remove-vowels-from-string": """
+def remove_vowels(s):
+    return ''.join(c for c in s if c.lower() not in 'aeiou')
+""",
+    "calculate-factorial": """
+def factorial(n):
+    result = 1
+    for i in range(2, n + 1):
+        result *= i
+    return result
+""",
+    "is-happy-number": """
+def is_happy_number(n):
+    seen = set()
+    while n != 1 and n not in seen:
+        seen.add(n)
+        n = sum(int(d) ** 2 for d in str(n))
+    return n == 1
+""",
+    "find-max-consecutive-ones": """
+def max_consecutive_ones(nums):
+    best = current = 0
+    for n in nums:
+        if n == 1:
+            current += 1
+            best = max(best, current)
+        else:
+            current = 0
+    return best
+""",
+    "calculate-remaining-budget": """
+def remaining_budget(total_budget, expenses):
+    return round(total_budget - sum(expenses), 2)
+""",
 }
 
 

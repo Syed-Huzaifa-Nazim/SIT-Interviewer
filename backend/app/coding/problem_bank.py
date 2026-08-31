@@ -2597,6 +2597,770 @@ PROBLEMS = [
             {"args": [[1, 2, 0, 1]], "expected": 3},
         ],
     },
+
+    # --- Batch 5: more practical/real-world framed problems (bank expansion continues). ---
+    {
+        "id": "count-word-length-distribution",
+        "title": "Count Word Length Distribution",
+        "difficulty": "Easy",
+        "function_name": "word_length_histogram",
+        "time_limit_secs": 5,
+        "prompt": (
+            "Given a `sentence`, return a dict mapping each word length (as a STRING key, "
+            "e.g. \"3\") to how many words in the sentence have that length."
+        ),
+        "constraints": ["0 <= len(sentence) <= 10^4"],
+        "examples": [{"input": 'sentence = "the cat sat"', "output": '{"3": 3}'}],
+        "starters": {
+            "python": "def word_length_histogram(sentence):\n    # Return {str(length): count} for the words in sentence.\n    pass\n",
+            "javascript": "function word_length_histogram(sentence) {\n    // Return {String(length): count} for the words in sentence.\n}\n",
+        },
+        "sample_tests": [
+            {"args": ["the cat sat"], "expected": {"3": 3}},
+            {"args": ["a bb ccc dddd"], "expected": {"1": 1, "2": 1, "3": 1, "4": 1}},
+        ],
+        "hidden_tests": [
+            {"args": [""], "expected": {}},
+            {"args": ["hi hi hi"], "expected": {"2": 3}},
+            {"args": ["I am ok"], "expected": {"1": 1, "2": 2}},
+        ],
+    },
+    {
+        "id": "is-perfect-square",
+        "title": "Is Perfect Square",
+        "difficulty": "Easy",
+        "function_name": "is_perfect_square",
+        "time_limit_secs": 5,
+        "prompt": "Return True if `n` is a perfect square.",
+        "constraints": ["-10^9 <= n <= 10^9"],
+        "examples": [
+            {"input": "n = 16", "output": "true"},
+            {"input": "n = 15", "output": "false"},
+        ],
+        "starters": {
+            "python": "def is_perfect_square(n):\n    # Return True if n is a perfect square.\n    pass\n",
+            "javascript": "function is_perfect_square(n) {\n    // Return true if n is a perfect square.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [16], "expected": True},
+            {"args": [15], "expected": False},
+        ],
+        "hidden_tests": [
+            {"args": [0], "expected": True},
+            {"args": [1], "expected": True},
+            {"args": [1000000], "expected": True},
+            {"args": [999999], "expected": False},
+            {"args": [-4], "expected": False},
+        ],
+    },
+    {
+        "id": "sum-of-digits",
+        "title": "Sum Of Digits",
+        "difficulty": "Easy",
+        "function_name": "digit_sum",
+        "time_limit_secs": 5,
+        "prompt": "Given an integer `n`, return the sum of its digits (ignoring sign).",
+        "constraints": ["-10^9 <= n <= 10^9"],
+        "examples": [{"input": "n = 123", "output": "6"}],
+        "starters": {
+            "python": "def digit_sum(n):\n    # Return the sum of the digits of n.\n    pass\n",
+            "javascript": "function digit_sum(n) {\n    // Return the sum of the digits of n.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [123], "expected": 6},
+            {"args": [0], "expected": 0},
+        ],
+        "hidden_tests": [
+            {"args": [-45], "expected": 9},
+            {"args": [9999], "expected": 36},
+            {"args": [7], "expected": 7},
+        ],
+    },
+    {
+        "id": "is-perfect-number",
+        "title": "Is Perfect Number",
+        "difficulty": "Easy",
+        "function_name": "is_perfect_number",
+        "time_limit_secs": 5,
+        "prompt": (
+            "A perfect number equals the sum of its proper divisors (all divisors "
+            "excluding itself), e.g. 6 = 1 + 2 + 3. Return True if `n` is perfect."
+        ),
+        "constraints": ["0 <= n <= 10000"],
+        "examples": [
+            {"input": "n = 6", "output": "true"},
+            {"input": "n = 10", "output": "false"},
+        ],
+        "starters": {
+            "python": "def is_perfect_number(n):\n    # Return True if n equals the sum of its proper divisors.\n    pass\n",
+            "javascript": "function is_perfect_number(n) {\n    // Return true if n equals the sum of its proper divisors.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [6], "expected": True},
+            {"args": [10], "expected": False},
+        ],
+        "hidden_tests": [
+            {"args": [28], "expected": True},
+            {"args": [1], "expected": False},
+            {"args": [496], "expected": True},
+            {"args": [12], "expected": False},
+        ],
+    },
+    {
+        "id": "count-unique-words",
+        "title": "Count Unique Words",
+        "difficulty": "Easy",
+        "function_name": "unique_word_count",
+        "time_limit_secs": 5,
+        "prompt": "Given a `text`, return the number of distinct words, case-insensitively.",
+        "constraints": ["0 <= len(text) <= 10^4"],
+        "examples": [{"input": 'text = "the Cat sat on the mat"', "output": "5"}],
+        "starters": {
+            "python": "def unique_word_count(text):\n    # Return the number of distinct words in text, case-insensitively.\n    pass\n",
+            "javascript": "function unique_word_count(text) {\n    // Return the number of distinct words in text, case-insensitively.\n}\n",
+        },
+        "sample_tests": [
+            {"args": ["the Cat sat on the mat"], "expected": 5},
+        ],
+        "hidden_tests": [
+            {"args": [""], "expected": 0},
+            {"args": ["one one one"], "expected": 1},
+            {"args": ["A a A a B"], "expected": 2},
+        ],
+    },
+    {
+        "id": "validate-hex-color",
+        "title": "Validate Hex Color",
+        "difficulty": "Easy",
+        "function_name": "is_valid_hex_color",
+        "time_limit_secs": 5,
+        "prompt": (
+            "Return True if `color` is a valid CSS hex color: a '#' followed by exactly "
+            "3 or 6 hexadecimal digits (case-insensitive)."
+        ),
+        "constraints": ["0 <= len(color) <= 20"],
+        "examples": [
+            {"input": 'color = "#1a2b3c"', "output": "true"},
+            {"input": 'color = "1a2b3c"', "output": "false"},
+        ],
+        "starters": {
+            "python": "def is_valid_hex_color(color):\n    # Return True if color is a valid #RGB or #RRGGBB hex color.\n    pass\n",
+            "javascript": "function is_valid_hex_color(color) {\n    // Return true if color is a valid #RGB or #RRGGBB hex color.\n}\n",
+        },
+        "sample_tests": [
+            {"args": ["#1a2b3c"], "expected": True},
+            {"args": ["1a2b3c"], "expected": False},
+        ],
+        "hidden_tests": [
+            {"args": ["#fff"], "expected": True},
+            {"args": ["#ffff"], "expected": False},
+            {"args": ["#GGG"], "expected": False},
+            {"args": [""], "expected": False},
+        ],
+    },
+    {
+        "id": "calculate-tip-amount",
+        "title": "Calculate Tip Amount",
+        "difficulty": "Easy",
+        "function_name": "tip_amount",
+        "time_limit_secs": 5,
+        "prompt": "Given a restaurant `bill` and a `tip_percent`, return the tip amount rounded to 2 decimals.",
+        "constraints": ["0 <= bill <= 10^6", "0 <= tip_percent <= 100"],
+        "examples": [{"input": "bill = 100, tip_percent = 15", "output": "15.0"}],
+        "starters": {
+            "python": "def tip_amount(bill, tip_percent):\n    # Return bill * tip_percent / 100, rounded to 2 decimals.\n    pass\n",
+            "javascript": "function tip_amount(bill, tip_percent) {\n    // Return bill * tip_percent / 100, rounded to 2 decimals.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [100, 15], "expected": 15.0},
+            {"args": [50, 20], "expected": 10.0},
+        ],
+        "hidden_tests": [
+            {"args": [0, 15], "expected": 0.0},
+            {"args": [80, 0], "expected": 0.0},
+            {"args": [37.5, 10], "expected": 3.75},
+        ],
+    },
+    {
+        "id": "find-mode",
+        "title": "Find Mode",
+        "difficulty": "Medium",
+        "function_name": "find_mode",
+        "time_limit_secs": 5,
+        "prompt": "Given a list `nums`, return the most frequent value. Break a tie by returning the smallest such value.",
+        "constraints": ["1 <= len(nums) <= 10^5"],
+        "examples": [{"input": "nums = [1, 2, 2, 3, 3]", "output": "2"}],
+        "starters": {
+            "python": "def find_mode(nums):\n    # Return the most frequent value, smallest on a tie.\n    pass\n",
+            "javascript": "function find_mode(nums) {\n    // Return the most frequent value, smallest on a tie.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [[1, 2, 2, 3, 3]], "expected": 2},
+            {"args": [[5]], "expected": 5},
+        ],
+        "hidden_tests": [
+            {"args": [[1, 1, 2, 2, 3]], "expected": 1},
+            {"args": [[7, 7, 7, 8]], "expected": 7},
+            {"args": [[-1, -1, -2, -2]], "expected": -2},
+        ],
+    },
+    {
+        "id": "is-subsequence",
+        "title": "Is Subsequence",
+        "difficulty": "Medium",
+        "function_name": "is_subsequence",
+        "time_limit_secs": 5,
+        "prompt": "Given strings `s` and `t`, return True if s is a subsequence of t (characters in order, not necessarily contiguous).",
+        "constraints": ["0 <= len(s), len(t) <= 10^5"],
+        "examples": [
+            {"input": 's = "ace", t = "abcde"', "output": "true"},
+            {"input": 's = "aec", t = "abcde"', "output": "false"},
+        ],
+        "starters": {
+            "python": "def is_subsequence(s, t):\n    # Return True if s is a subsequence of t.\n    pass\n",
+            "javascript": "function is_subsequence(s, t) {\n    // Return true if s is a subsequence of t.\n}\n",
+        },
+        "sample_tests": [
+            {"args": ["ace", "abcde"], "expected": True},
+            {"args": ["aec", "abcde"], "expected": False},
+        ],
+        "hidden_tests": [
+            {"args": ["", "abc"], "expected": True},
+            {"args": ["abc", ""], "expected": False},
+            {"args": ["abc", "abc"], "expected": True},
+            {"args": ["ab", "ba"], "expected": False},
+        ],
+    },
+    {
+        "id": "calculate-word-count",
+        "title": "Calculate Word Count",
+        "difficulty": "Easy",
+        "function_name": "word_count",
+        "time_limit_secs": 5,
+        "prompt": "Return the number of whitespace-separated words in `text`.",
+        "constraints": ["0 <= len(text) <= 10^4"],
+        "examples": [{"input": 'text = "hello world"', "output": "2"}],
+        "starters": {
+            "python": "def word_count(text):\n    # Return the number of words in text.\n    pass\n",
+            "javascript": "function word_count(text) {\n    // Return the number of words in text.\n}\n",
+        },
+        "sample_tests": [
+            {"args": ["hello world"], "expected": 2},
+            {"args": [""], "expected": 0},
+        ],
+        "hidden_tests": [
+            {"args": ["   "], "expected": 0},
+            {"args": ["a b c d e"], "expected": 5},
+            {"args": ["single"], "expected": 1},
+        ],
+    },
+    {
+        "id": "validate-credit-card-luhn",
+        "title": "Validate Credit Card (Luhn)",
+        "difficulty": "Medium",
+        "function_name": "is_valid_luhn",
+        "time_limit_secs": 5,
+        "prompt": (
+            "Given a digits-only string `number_str`, validate it using the Luhn "
+            "algorithm: starting from the rightmost digit, double every second digit "
+            "(subtracting 9 if the result exceeds 9), then return True if the total sum "
+            "is a multiple of 10."
+        ),
+        "constraints": ["number_str contains only digit characters."],
+        "examples": [{"input": 'number_str = "79927398713"', "output": "true"}],
+        "starters": {
+            "python": "def is_valid_luhn(number_str):\n    # Return True if number_str passes the Luhn checksum.\n    pass\n",
+            "javascript": "function is_valid_luhn(number_str) {\n    // Return true if number_str passes the Luhn checksum.\n}\n",
+        },
+        "sample_tests": [
+            {"args": ["79927398713"], "expected": True},
+            {"args": ["79927398714"], "expected": False},
+        ],
+        "hidden_tests": [
+            {"args": ["18"], "expected": True},
+            {"args": ["4111111111111111"], "expected": True},
+            {"args": ["0"], "expected": True},
+        ],
+    },
+    {
+        "id": "find-duplicate-in-range",
+        "title": "Find Duplicate In Range",
+        "difficulty": "Medium",
+        "function_name": "find_duplicate",
+        "time_limit_secs": 5,
+        "prompt": (
+            "Given a list `nums` of n+1 integers each in [1, n] with exactly one value "
+            "repeated, return the repeated value."
+        ),
+        "constraints": ["2 <= len(nums) <= 10^5"],
+        "examples": [{"input": "nums = [1, 3, 4, 2, 2]", "output": "2"}],
+        "starters": {
+            "python": "def find_duplicate(nums):\n    # Return the one value that appears more than once in nums.\n    pass\n",
+            "javascript": "function find_duplicate(nums) {\n    // Return the one value that appears more than once in nums.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [[1, 3, 4, 2, 2]], "expected": 2},
+            {"args": [[3, 1, 3, 4, 2]], "expected": 3},
+        ],
+        "hidden_tests": [
+            {"args": [[1, 1]], "expected": 1},
+            {"args": [[2, 2, 2, 2]], "expected": 2},
+            {"args": [[1, 2, 3, 4, 4]], "expected": 4},
+        ],
+    },
+    {
+        "id": "calculate-average-word-length",
+        "title": "Calculate Average Word Length",
+        "difficulty": "Easy",
+        "function_name": "average_word_length",
+        "time_limit_secs": 5,
+        "prompt": "Given a `sentence`, return the average length of its words, rounded to 2 decimals (0.0 if there are none).",
+        "constraints": ["0 <= len(sentence) <= 10^4"],
+        "examples": [{"input": 'sentence = "cat dog bird"', "output": "3.33"}],
+        "starters": {
+            "python": "def average_word_length(sentence):\n    # Return the average word length in sentence, rounded to 2 decimals.\n    pass\n",
+            "javascript": "function average_word_length(sentence) {\n    // Return the average word length in sentence, rounded to 2 decimals.\n}\n",
+        },
+        "sample_tests": [
+            {"args": ["cat dog bird"], "expected": 3.33},
+            {"args": ["a bb"], "expected": 1.5},
+        ],
+        "hidden_tests": [
+            {"args": [""], "expected": 0.0},
+            {"args": ["same size word"], "expected": 4.0},
+            {"args": ["x"], "expected": 1.0},
+        ],
+    },
+    {
+        "id": "is-power-of-two",
+        "title": "Is Power Of Two",
+        "difficulty": "Easy",
+        "function_name": "is_power_of_two",
+        "time_limit_secs": 5,
+        "prompt": "Return True if `n` is a power of two.",
+        "constraints": ["-10^9 <= n <= 10^9"],
+        "examples": [
+            {"input": "n = 16", "output": "true"},
+            {"input": "n = 18", "output": "false"},
+        ],
+        "starters": {
+            "python": "def is_power_of_two(n):\n    # Return True if n is a power of two.\n    pass\n",
+            "javascript": "function is_power_of_two(n) {\n    // Return true if n is a power of two.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [16], "expected": True},
+            {"args": [18], "expected": False},
+        ],
+        "hidden_tests": [
+            {"args": [1], "expected": True},
+            {"args": [0], "expected": False},
+            {"args": [-8], "expected": False},
+            {"args": [1024], "expected": True},
+        ],
+    },
+    {
+        "id": "calculate-net-price-after-tax",
+        "title": "Calculate Net Price After Tax",
+        "difficulty": "Easy",
+        "function_name": "price_after_tax",
+        "time_limit_secs": 5,
+        "prompt": "Given a `price` and a `tax_percent`, return the final price including tax, rounded to 2 decimals.",
+        "constraints": ["0 <= price <= 10^6", "0 <= tax_percent <= 100"],
+        "examples": [{"input": "price = 100, tax_percent = 10", "output": "110.0"}],
+        "starters": {
+            "python": "def price_after_tax(price, tax_percent):\n    # Return price * (1 + tax_percent/100), rounded to 2 decimals.\n    pass\n",
+            "javascript": "function price_after_tax(price, tax_percent) {\n    // Return price * (1 + tax_percent/100), rounded to 2 decimals.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [100, 10], "expected": 110.0},
+            {"args": [50, 0], "expected": 50.0},
+        ],
+        "hidden_tests": [
+            {"args": [0, 20], "expected": 0.0},
+            {"args": [200, 8.5], "expected": 217.0},
+        ],
+    },
+    {
+        "id": "calculate-elapsed-days",
+        "title": "Calculate Elapsed Days",
+        "difficulty": "Easy",
+        "function_name": "elapsed_days",
+        "time_limit_secs": 5,
+        "prompt": "Given `start_day_of_year` and `end_day_of_year` (end >= start), return the number of days elapsed between them.",
+        "constraints": ["1 <= start_day_of_year <= end_day_of_year <= 366"],
+        "examples": [{"input": "start_day_of_year = 1, end_day_of_year = 365", "output": "364"}],
+        "starters": {
+            "python": "def elapsed_days(start_day_of_year, end_day_of_year):\n    # Return end_day_of_year - start_day_of_year.\n    pass\n",
+            "javascript": "function elapsed_days(start_day_of_year, end_day_of_year) {\n    // Return end_day_of_year - start_day_of_year.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [1, 365], "expected": 364},
+            {"args": [100, 100], "expected": 0},
+        ],
+        "hidden_tests": [
+            {"args": [1, 1], "expected": 0},
+            {"args": [50, 150], "expected": 100},
+            {"args": [1, 366], "expected": 365},
+        ],
+    },
+    {
+        "id": "remove-duplicates-preserve-order",
+        "title": "Remove Duplicates, Preserve Order",
+        "difficulty": "Easy",
+        "function_name": "dedupe_preserve_order",
+        "time_limit_secs": 5,
+        "prompt": "Given a list `items`, return it with duplicates removed, keeping only the first occurrence of each value in its original order.",
+        "constraints": ["0 <= len(items) <= 10^5"],
+        "examples": [{"input": "items = [1, 2, 2, 3, 1, 4]", "output": "[1, 2, 3, 4]"}],
+        "starters": {
+            "python": "def dedupe_preserve_order(items):\n    # Return items with duplicates removed, first-occurrence order kept.\n    pass\n",
+            "javascript": "function dedupe_preserve_order(items) {\n    // Return items with duplicates removed, first-occurrence order kept.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [[1, 2, 2, 3, 1, 4]], "expected": [1, 2, 3, 4]},
+        ],
+        "hidden_tests": [
+            {"args": [[]], "expected": []},
+            {"args": [["a", "a", "a"]], "expected": ["a"]},
+            {"args": [[1, 1, 2, 2, 3, 3]], "expected": [1, 2, 3]},
+        ],
+    },
+    {
+        "id": "calculate-max-profit-multiple-transactions",
+        "title": "Calculate Max Profit (Multiple Transactions)",
+        "difficulty": "Medium",
+        "function_name": "max_profit_multi",
+        "time_limit_secs": 5,
+        "prompt": (
+            "Given daily stock `prices`, you may buy and sell as many times as you like "
+            "(but hold at most one share at a time). Return the maximum total profit."
+        ),
+        "constraints": ["0 <= len(prices) <= 10^5"],
+        "examples": [{"input": "prices = [7, 1, 5, 3, 6, 4]", "output": "7"}],
+        "starters": {
+            "python": "def max_profit_multi(prices):\n    # Return the max total profit from any number of buy/sell transactions.\n    pass\n",
+            "javascript": "function max_profit_multi(prices) {\n    // Return the max total profit from any number of buy/sell transactions.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [[7, 1, 5, 3, 6, 4]], "expected": 7},
+            {"args": [[1, 2, 3, 4, 5]], "expected": 4},
+        ],
+        "hidden_tests": [
+            {"args": [[7, 6, 4, 3, 1]], "expected": 0},
+            {"args": [[1]], "expected": 0},
+            {"args": [[5, 5, 5]], "expected": 0},
+        ],
+    },
+    {
+        "id": "group-anagrams",
+        "title": "Group Anagrams",
+        "difficulty": "Medium",
+        "function_name": "group_anagrams",
+        "time_limit_secs": 5,
+        "prompt": (
+            "Given a list of `words`, group the ones that are anagrams of each other. "
+            "Return a list of groups: each group's words sorted alphabetically, and "
+            "groups ordered by which anagram-key first appeared in the input."
+        ),
+        "constraints": ["0 <= len(words) <= 10^4"],
+        "examples": [
+            {"input": 'words = ["eat", "tea", "tan", "ate", "nat", "bat"]',
+             "output": '[["ate", "eat", "tea"], ["nat", "tan"], ["bat"]]'},
+        ],
+        "starters": {
+            "python": "def group_anagrams(words):\n    # Return words grouped by anagram, each group sorted, groups in first-seen order.\n    pass\n",
+            "javascript": "function group_anagrams(words) {\n    // Return words grouped by anagram, each group sorted, groups in first-seen order.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [["eat", "tea", "tan", "ate", "nat", "bat"]],
+             "expected": [["ate", "eat", "tea"], ["nat", "tan"], ["bat"]]},
+        ],
+        "hidden_tests": [
+            {"args": [[""]], "expected": [[""]]},
+            {"args": [["a"]], "expected": [["a"]]},
+            {"args": [["abc", "bca", "cab", "xyz"]], "expected": [["abc", "bca", "cab"], ["xyz"]]},
+        ],
+    },
+    {
+        "id": "longest-palindromic-substring",
+        "title": "Longest Palindromic Substring",
+        "difficulty": "Hard",
+        "function_name": "longest_palindromic_substring",
+        "time_limit_secs": 5,
+        "prompt": (
+            "Given a string `s`, return the longest palindromic substring. If there are "
+            "multiple of the same maximum length, return the one starting earliest."
+        ),
+        "constraints": ["0 <= len(s) <= 2000"],
+        "examples": [
+            {"input": 's = "babad"', "output": '"bab"'},
+            {"input": 's = "cbbd"', "output": '"bb"'},
+        ],
+        "starters": {
+            "python": "def longest_palindromic_substring(s):\n    # Return the longest palindromic substring of s (earliest start on a tie).\n    pass\n",
+            "javascript": "function longest_palindromic_substring(s) {\n    // Return the longest palindromic substring of s (earliest start on a tie).\n}\n",
+        },
+        "sample_tests": [
+            {"args": ["babad"], "expected": "bab"},
+            {"args": ["cbbd"], "expected": "bb"},
+        ],
+        "hidden_tests": [
+            {"args": [""], "expected": ""},
+            {"args": ["a"], "expected": "a"},
+            {"args": ["ac"], "expected": "a"},
+            {"args": ["racecar"], "expected": "racecar"},
+        ],
+    },
+    {
+        "id": "calculate-simple-moving-average",
+        "title": "Calculate Simple Moving Average",
+        "difficulty": "Medium",
+        "function_name": "moving_average",
+        "time_limit_secs": 5,
+        "prompt": (
+            "Given a list `nums` and a `window` size, return a list of the average of "
+            "every consecutive window of that size, rounded to 2 decimals."
+        ),
+        "constraints": ["1 <= window <= len(nums) <= 10^5"],
+        "examples": [{"input": "nums = [1, 2, 3, 4, 5], window = 2", "output": "[1.5, 2.5, 3.5, 4.5]"}],
+        "starters": {
+            "python": "def moving_average(nums, window):\n    # Return the moving average of nums over the given window size.\n    pass\n",
+            "javascript": "function moving_average(nums, window) {\n    // Return the moving average of nums over the given window size.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [[1, 2, 3, 4, 5], 2], "expected": [1.5, 2.5, 3.5, 4.5]},
+            {"args": [[10, 20, 30], 3], "expected": [20.0]},
+        ],
+        "hidden_tests": [
+            {"args": [[5], 1], "expected": [5.0]},
+            {"args": [[1, 1, 1, 1], 2], "expected": [1.0, 1.0, 1.0]},
+            {"args": [[2, 4, 6], 1], "expected": [2.0, 4.0, 6.0]},
+        ],
+    },
+    {
+        "id": "is-valid-ipv4-address",
+        "title": "Is Valid IPv4 Address",
+        "difficulty": "Medium",
+        "function_name": "is_valid_ipv4",
+        "time_limit_secs": 5,
+        "prompt": (
+            "Return True if `ip` is a valid IPv4 address: exactly 4 dot-separated "
+            "segments, each a number 0-255 with no leading zeros (except \"0\" itself)."
+        ),
+        "constraints": ["0 <= len(ip) <= 50"],
+        "examples": [
+            {"input": 'ip = "192.168.1.1"', "output": "true"},
+            {"input": 'ip = "256.1.1.1"', "output": "false"},
+        ],
+        "starters": {
+            "python": "def is_valid_ipv4(ip):\n    # Return True if ip is a valid IPv4 address.\n    pass\n",
+            "javascript": "function is_valid_ipv4(ip) {\n    // Return true if ip is a valid IPv4 address.\n}\n",
+        },
+        "sample_tests": [
+            {"args": ["192.168.1.1"], "expected": True},
+            {"args": ["256.1.1.1"], "expected": False},
+        ],
+        "hidden_tests": [
+            {"args": ["1.1.1"], "expected": False},
+            {"args": ["1.1.1.1.1"], "expected": False},
+            {"args": ["01.1.1.1"], "expected": False},
+            {"args": ["a.b.c.d"], "expected": False},
+            {"args": ["0.0.0.0"], "expected": True},
+        ],
+    },
+    {
+        "id": "count-occurrences-of-substring",
+        "title": "Count Occurrences Of Substring",
+        "difficulty": "Easy",
+        "function_name": "count_substring_occurrences",
+        "time_limit_secs": 5,
+        "prompt": "Given strings `s` and `sub`, return the count of non-overlapping occurrences of sub in s.",
+        "constraints": ["0 <= len(s), len(sub) <= 10^4"],
+        "examples": [{"input": 's = "abcabcabc", sub = "abc"', "output": "3"}],
+        "starters": {
+            "python": "def count_substring_occurrences(s, sub):\n    # Return the count of non-overlapping occurrences of sub in s.\n    pass\n",
+            "javascript": "function count_substring_occurrences(s, sub) {\n    // Return the count of non-overlapping occurrences of sub in s.\n}\n",
+        },
+        "sample_tests": [
+            {"args": ["abcabcabc", "abc"], "expected": 3},
+            {"args": ["aaaa", "aa"], "expected": 2},
+        ],
+        "hidden_tests": [
+            {"args": ["", "x"], "expected": 0},
+            {"args": ["abc", ""], "expected": 0},
+            {"args": ["hello", "z"], "expected": 0},
+        ],
+    },
+    {
+        "id": "calculate-weighted-average",
+        "title": "Calculate Weighted Average",
+        "difficulty": "Medium",
+        "function_name": "weighted_average",
+        "time_limit_secs": 5,
+        "prompt": (
+            "Given a list of `values` (e.g. exam scores) and their integer `weights` "
+            "(e.g. credit hours), return the weighted average rounded to 2 decimals: "
+            "sum(value*weight) / sum(weights)."
+        ),
+        "constraints": ["1 <= len(values) == len(weights) <= 10^4"],
+        "examples": [{"input": "values = [90, 80, 70], weights = [2, 3, 1]", "output": "81.67"}],
+        "starters": {
+            "python": "def weighted_average(values, weights):\n    # Return the weighted average of values by weights, rounded to 2 decimals.\n    pass\n",
+            "javascript": "function weighted_average(values, weights) {\n    // Return the weighted average of values by weights, rounded to 2 decimals.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [[90, 80, 70], [2, 3, 1]], "expected": 81.67},
+            {"args": [[100, 50], [1, 1]], "expected": 75.0},
+        ],
+        "hidden_tests": [
+            {"args": [[10, 20, 30], [1, 2, 3]], "expected": 23.33},
+            {"args": [[5], [10]], "expected": 5.0},
+        ],
+    },
+    {
+        "id": "find-pair-with-min-difference",
+        "title": "Find Pair With Minimum Difference",
+        "difficulty": "Medium",
+        "function_name": "min_difference_pair",
+        "time_limit_secs": 5,
+        "prompt": "Given a list `nums` with at least 2 elements, return the smallest absolute difference between any two of its elements.",
+        "constraints": ["2 <= len(nums) <= 10^5"],
+        "examples": [{"input": "nums = [4, 9, 1, 32, 13]", "output": "3"}],
+        "starters": {
+            "python": "def min_difference_pair(nums):\n    # Return the smallest absolute difference between any two elements of nums.\n    pass\n",
+            "javascript": "function min_difference_pair(nums) {\n    // Return the smallest absolute difference between any two elements of nums.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [[4, 9, 1, 32, 13]], "expected": 3},
+            {"args": [[1, 5, 3, 19, 18, 25]], "expected": 1},
+        ],
+        "hidden_tests": [
+            {"args": [[1, 2]], "expected": 1},
+            {"args": [[10, 10]], "expected": 0},
+            {"args": [[100, 1, 50]], "expected": 49},
+        ],
+    },
+    {
+        "id": "remove-vowels-from-string",
+        "title": "Remove Vowels From String",
+        "difficulty": "Easy",
+        "function_name": "remove_vowels",
+        "time_limit_secs": 5,
+        "prompt": "Given a string `s`, return it with every vowel (a, e, i, o, u, case-insensitive) removed.",
+        "constraints": ["0 <= len(s) <= 10^4"],
+        "examples": [{"input": 's = "Hello World"', "output": '"Hll Wrld"'}],
+        "starters": {
+            "python": "def remove_vowels(s):\n    # Return s with every vowel removed.\n    pass\n",
+            "javascript": "function remove_vowels(s) {\n    // Return s with every vowel removed.\n}\n",
+        },
+        "sample_tests": [
+            {"args": ["Hello World"], "expected": "Hll Wrld"},
+        ],
+        "hidden_tests": [
+            {"args": [""], "expected": ""},
+            {"args": ["AEIOUaeiou"], "expected": ""},
+            {"args": ["xyz"], "expected": "xyz"},
+        ],
+    },
+    {
+        "id": "calculate-factorial",
+        "title": "Calculate Factorial",
+        "difficulty": "Easy",
+        "function_name": "factorial",
+        "time_limit_secs": 5,
+        "prompt": "Given a non-negative integer `n`, return n! (0! = 1).",
+        "constraints": ["0 <= n <= 20"],
+        "examples": [{"input": "n = 5", "output": "120"}],
+        "starters": {
+            "python": "def factorial(n):\n    # Return n factorial.\n    pass\n",
+            "javascript": "function factorial(n) {\n    // Return n factorial.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [5], "expected": 120},
+            {"args": [0], "expected": 1},
+        ],
+        "hidden_tests": [
+            {"args": [1], "expected": 1},
+            {"args": [10], "expected": 3628800},
+            {"args": [3], "expected": 6},
+        ],
+    },
+    {
+        "id": "is-happy-number",
+        "title": "Is Happy Number",
+        "difficulty": "Medium",
+        "function_name": "is_happy_number",
+        "time_limit_secs": 5,
+        "prompt": (
+            "Repeatedly replace `n` with the sum of the squares of its digits. Return "
+            "True if this process reaches 1; return False if it loops forever without "
+            "reaching 1."
+        ),
+        "constraints": ["1 <= n <= 10^9"],
+        "examples": [
+            {"input": "n = 19", "output": "true"},
+            {"input": "n = 2", "output": "false"},
+        ],
+        "starters": {
+            "python": "def is_happy_number(n):\n    # Return True if repeated digit-square-sum reaches 1.\n    pass\n",
+            "javascript": "function is_happy_number(n) {\n    // Return true if repeated digit-square-sum reaches 1.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [19], "expected": True},
+            {"args": [2], "expected": False},
+        ],
+        "hidden_tests": [
+            {"args": [1], "expected": True},
+            {"args": [7], "expected": True},
+            {"args": [4], "expected": False},
+        ],
+    },
+    {
+        "id": "find-max-consecutive-ones",
+        "title": "Find Max Consecutive Ones",
+        "difficulty": "Easy",
+        "function_name": "max_consecutive_ones",
+        "time_limit_secs": 5,
+        "prompt": "Given a binary list `nums` (containing only 0 and 1), return the maximum number of consecutive 1s.",
+        "constraints": ["0 <= len(nums) <= 10^5"],
+        "examples": [{"input": "nums = [1, 1, 0, 1, 1, 1]", "output": "3"}],
+        "starters": {
+            "python": "def max_consecutive_ones(nums):\n    # Return the longest run of consecutive 1s in nums.\n    pass\n",
+            "javascript": "function max_consecutive_ones(nums) {\n    // Return the longest run of consecutive 1s in nums.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [[1, 1, 0, 1, 1, 1]], "expected": 3},
+            {"args": [[1, 0, 1, 1, 0]], "expected": 2},
+        ],
+        "hidden_tests": [
+            {"args": [[]], "expected": 0},
+            {"args": [[0, 0, 0]], "expected": 0},
+            {"args": [[1, 1, 1, 1]], "expected": 4},
+        ],
+    },
+    {
+        "id": "calculate-remaining-budget",
+        "title": "Calculate Remaining Budget",
+        "difficulty": "Easy",
+        "function_name": "remaining_budget",
+        "time_limit_secs": 5,
+        "prompt": "Given a `total_budget` and a list of `expenses`, return the remaining budget rounded to 2 decimals (may be negative if overspent).",
+        "constraints": ["0 <= len(expenses) <= 10^4"],
+        "examples": [{"input": "total_budget = 1000, expenses = [200, 150, 50]", "output": "600.0"}],
+        "starters": {
+            "python": "def remaining_budget(total_budget, expenses):\n    # Return total_budget minus the sum of expenses, rounded to 2 decimals.\n    pass\n",
+            "javascript": "function remaining_budget(total_budget, expenses) {\n    // Return total_budget minus the sum of expenses, rounded to 2 decimals.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [1000, [200, 150, 50]], "expected": 600.0},
+            {"args": [500, []], "expected": 500.0},
+        ],
+        "hidden_tests": [
+            {"args": [0, [10]], "expected": -10.0},
+            {"args": [1000, [1000]], "expected": 0.0},
+            {"args": [100.5, [50.25, 25.25]], "expected": 25.0},
+        ],
+    },
 ]
 
 # SQL problems live in their own module because their test cases are shaped differently
