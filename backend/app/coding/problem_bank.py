@@ -1254,6 +1254,589 @@ PROBLEMS = [
             {"args": [[1, 1, 2], [1, 3]], "expected": [1, 1, 1, 2, 3]},
         ],
     },
+
+    # --- Batch 3: more practical/real-world framed problems (bank expansion continues). ---
+    {
+        "id": "validate-username",
+        "title": "Validate Username",
+        "difficulty": "Easy",
+        "function_name": "is_valid_username",
+        "time_limit_secs": 5,
+        "prompt": (
+            "A signup form needs a username validator. A username is VALID if it is 3-16 "
+            "characters long, starts with a letter, and contains only letters, digits, "
+            "and underscores."
+        ),
+        "constraints": ["0 <= len(username) <= 50"],
+        "examples": [
+            {"input": 'username = "john_doe123"', "output": "true"},
+            {"input": 'username = "1abc"', "output": "false"},
+        ],
+        "starters": {
+            "python": "def is_valid_username(username):\n    # Return True if username is 3-16 chars, starts with a letter, and is alnum/underscore.\n    pass\n",
+            "javascript": "function is_valid_username(username) {\n    // Return true if username is 3-16 chars, starts with a letter, and is alnum/underscore.\n}\n",
+        },
+        "sample_tests": [
+            {"args": ["john_doe123"], "expected": True},
+            {"args": ["1abc"], "expected": False},
+        ],
+        "hidden_tests": [
+            {"args": [""], "expected": False},
+            {"args": ["ab"], "expected": False},
+            {"args": ["a" * 17], "expected": False},
+            {"args": ["valid_Name"], "expected": True},
+            {"args": ["bad-name"], "expected": False},
+        ],
+    },
+    {
+        "id": "employee-of-the-month",
+        "title": "Employee Of The Month",
+        "difficulty": "Easy",
+        "function_name": "find_top_performer",
+        "time_limit_secs": 5,
+        "prompt": (
+            "Given a dict `scores` mapping employee name to their monthly score, return "
+            "the name of the top performer. Break a tie by returning the alphabetically "
+            "first name."
+        ),
+        "constraints": ["1 <= len(scores) <= 1000"],
+        "examples": [
+            {"input": 'scores = {"Ali": 90, "Sara": 95, "Bob": 95}', "output": '"Bob"'},
+        ],
+        "starters": {
+            "python": "def find_top_performer(scores):\n    # Return the name with the highest score, alphabetically first on a tie.\n    pass\n",
+            "javascript": "function find_top_performer(scores) {\n    // Return the name with the highest score, alphabetically first on a tie.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [{"Ali": 90, "Sara": 95, "Bob": 95}], "expected": "Bob"},
+            {"args": [{"X": 50}], "expected": "X"},
+        ],
+        "hidden_tests": [
+            {"args": [{"A": 10, "B": 20, "C": 15}], "expected": "B"},
+            {"args": [{"Zed": 5, "Amy": 5}], "expected": "Amy"},
+            {"args": [{"John": 100, "Jane": 100, "Jack": 100}], "expected": "Jack"},
+        ],
+    },
+    {
+        "id": "session-timeout-checker",
+        "title": "Session Timeout Checker",
+        "difficulty": "Easy",
+        "function_name": "is_session_expired",
+        "time_limit_secs": 5,
+        "prompt": (
+            "Given how many seconds ago the user was last active "
+            "(`last_activity_seconds_ago`) and the session `timeout_seconds`, return True "
+            "if the session should be considered expired."
+        ),
+        "constraints": ["0 <= last_activity_seconds_ago, timeout_seconds <= 10^7"],
+        "examples": [
+            {"input": "last_activity_seconds_ago = 400, timeout_seconds = 300", "output": "true"},
+            {"input": "last_activity_seconds_ago = 100, timeout_seconds = 300", "output": "false"},
+        ],
+        "starters": {
+            "python": "def is_session_expired(last_activity_seconds_ago, timeout_seconds):\n    # Return True if the session has been idle at or beyond the timeout.\n    pass\n",
+            "javascript": "function is_session_expired(last_activity_seconds_ago, timeout_seconds) {\n    // Return true if the session has been idle at or beyond the timeout.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [400, 300], "expected": True},
+            {"args": [100, 300], "expected": False},
+        ],
+        "hidden_tests": [
+            {"args": [300, 300], "expected": True},
+            {"args": [0, 60], "expected": False},
+            {"args": [59, 60], "expected": False},
+        ],
+    },
+    {
+        "id": "calculate-shipping-cost",
+        "title": "Calculate Shipping Cost",
+        "difficulty": "Easy",
+        "function_name": "shipping_cost",
+        "time_limit_secs": 5,
+        "prompt": (
+            "A store charges shipping by weight tier: $5 for up to and including 1kg, $10 "
+            "for up to and including 5kg, and $20 for anything heavier. Return the cost "
+            "for `weight_kg`."
+        ),
+        "constraints": ["0 < weight_kg <= 1000"],
+        "examples": [
+            {"input": "weight_kg = 0.5", "output": "5"},
+            {"input": "weight_kg = 3", "output": "10"},
+        ],
+        "starters": {
+            "python": "def shipping_cost(weight_kg):\n    # Return 5, 10, or 20 based on the weight tier.\n    pass\n",
+            "javascript": "function shipping_cost(weight_kg) {\n    // Return 5, 10, or 20 based on the weight tier.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [0.5], "expected": 5},
+            {"args": [3], "expected": 10},
+        ],
+        "hidden_tests": [
+            {"args": [1], "expected": 5},
+            {"args": [5], "expected": 10},
+            {"args": [5.1], "expected": 20},
+            {"args": [100], "expected": 20},
+        ],
+    },
+    {
+        "id": "count-vowels-consonants",
+        "title": "Count Vowels And Consonants",
+        "difficulty": "Easy",
+        "function_name": "count_letters",
+        "time_limit_secs": 5,
+        "prompt": (
+            "Given a string `s`, return a dict {\"vowels\": n, \"consonants\": n} counting "
+            "only alphabetic characters, case-insensitively (a, e, i, o, u are vowels)."
+        ),
+        "constraints": ["0 <= len(s) <= 10^4"],
+        "examples": [
+            {"input": 's = "Hello World"', "output": '{"vowels": 3, "consonants": 7}'},
+        ],
+        "starters": {
+            "python": "def count_letters(s):\n    # Return {'vowels': n, 'consonants': n} for the letters in s.\n    pass\n",
+            "javascript": "function count_letters(s) {\n    // Return {vowels: n, consonants: n} for the letters in s.\n}\n",
+        },
+        "sample_tests": [
+            {"args": ["Hello World"], "expected": {"vowels": 3, "consonants": 7}},
+            {"args": [""], "expected": {"vowels": 0, "consonants": 0}},
+        ],
+        "hidden_tests": [
+            {"args": ["123"], "expected": {"vowels": 0, "consonants": 0}},
+            {"args": ["AEIOU"], "expected": {"vowels": 5, "consonants": 0}},
+            {"args": ["xyz"], "expected": {"vowels": 0, "consonants": 3}},
+        ],
+    },
+    {
+        "id": "reverse-words-in-sentence",
+        "title": "Reverse Words In A Sentence",
+        "difficulty": "Easy",
+        "function_name": "reverse_words",
+        "time_limit_secs": 5,
+        "prompt": (
+            "Given a `sentence`, return it with the word order reversed. Collapse any "
+            "extra whitespace, and the result must have no leading or trailing spaces."
+        ),
+        "constraints": ["0 <= len(sentence) <= 10^4"],
+        "examples": [
+            {"input": 'sentence = "Hello World Foo"', "output": '"Foo World Hello"'},
+        ],
+        "starters": {
+            "python": "def reverse_words(sentence):\n    # Return sentence with its words in reverse order.\n    pass\n",
+            "javascript": "function reverse_words(sentence) {\n    // Return sentence with its words in reverse order.\n}\n",
+        },
+        "sample_tests": [
+            {"args": ["Hello World Foo"], "expected": "Foo World Hello"},
+            {"args": ["single"], "expected": "single"},
+        ],
+        "hidden_tests": [
+            {"args": [""], "expected": ""},
+            {"args": ["  extra   spaces  "], "expected": "spaces extra"},
+            {"args": ["a b c d"], "expected": "d c b a"},
+        ],
+    },
+    {
+        "id": "find-longest-word",
+        "title": "Find The Longest Word",
+        "difficulty": "Easy",
+        "function_name": "longest_word",
+        "time_limit_secs": 5,
+        "prompt": (
+            "Given a `sentence` of whitespace-separated words, return the longest word. "
+            "Break a tie by returning whichever comes first in the sentence."
+        ),
+        "constraints": ["0 <= len(sentence) <= 10^4"],
+        "examples": [
+            {"input": 'sentence = "the quick brown fox"', "output": '"quick"'},
+        ],
+        "starters": {
+            "python": "def longest_word(sentence):\n    # Return the longest word, first occurrence wins ties.\n    pass\n",
+            "javascript": "function longest_word(sentence) {\n    // Return the longest word, first occurrence wins ties.\n}\n",
+        },
+        "sample_tests": [
+            {"args": ["the quick brown fox"], "expected": "quick"},
+            {"args": [""], "expected": ""},
+        ],
+        "hidden_tests": [
+            {"args": ["a bb ccc"], "expected": "ccc"},
+            {"args": ["same size ab cd"], "expected": "same"},
+            {"args": ["one"], "expected": "one"},
+        ],
+    },
+    {
+        "id": "celsius-to-fahrenheit",
+        "title": "Celsius To Fahrenheit",
+        "difficulty": "Easy",
+        "function_name": "celsius_to_fahrenheit",
+        "time_limit_secs": 5,
+        "prompt": (
+            "A weather app stores temperatures internally in Celsius but needs to display "
+            "Fahrenheit. Given `celsius`, return the Fahrenheit value rounded to 1 decimal "
+            "place: celsius * 9/5 + 32."
+        ),
+        "constraints": ["-273 <= celsius <= 1000"],
+        "examples": [
+            {"input": "celsius = 0", "output": "32.0"},
+            {"input": "celsius = 100", "output": "212.0"},
+        ],
+        "starters": {
+            "python": "def celsius_to_fahrenheit(celsius):\n    # Return celsius converted to Fahrenheit, rounded to 1 decimal.\n    pass\n",
+            "javascript": "function celsius_to_fahrenheit(celsius) {\n    // Return celsius converted to Fahrenheit, rounded to 1 decimal.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [0], "expected": 32.0},
+            {"args": [100], "expected": 212.0},
+        ],
+        "hidden_tests": [
+            {"args": [-40], "expected": -40.0},
+            {"args": [37], "expected": 98.6},
+            {"args": [20], "expected": 68.0},
+        ],
+    },
+    {
+        "id": "leap-year-checker",
+        "title": "Leap Year Checker",
+        "difficulty": "Easy",
+        "function_name": "is_leap_year",
+        "time_limit_secs": 5,
+        "prompt": (
+            "Return True if `year` is a leap year: divisible by 4, except centuries "
+            "(divisible by 100) which must also be divisible by 400."
+        ),
+        "constraints": ["1 <= year <= 9999"],
+        "examples": [
+            {"input": "year = 2000", "output": "true"},
+            {"input": "year = 1900", "output": "false"},
+        ],
+        "starters": {
+            "python": "def is_leap_year(year):\n    # Return True if year is a leap year.\n    pass\n",
+            "javascript": "function is_leap_year(year) {\n    // Return true if year is a leap year.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [2000], "expected": True},
+            {"args": [1900], "expected": False},
+        ],
+        "hidden_tests": [
+            {"args": [2024], "expected": True},
+            {"args": [2023], "expected": False},
+            {"args": [2100], "expected": False},
+            {"args": [2400], "expected": True},
+        ],
+    },
+    {
+        "id": "chunk-array",
+        "title": "Chunk Array",
+        "difficulty": "Easy",
+        "function_name": "chunk_list",
+        "time_limit_secs": 5,
+        "prompt": (
+            "Given a list `arr` and a chunk `size`, split arr into consecutive sublists of "
+            "length size (the last chunk may be shorter)."
+        ),
+        "constraints": ["0 <= len(arr) <= 10^4", "1 <= size"],
+        "examples": [
+            {"input": "arr = [1, 2, 3, 4, 5], size = 2", "output": "[[1, 2], [3, 4], [5]]"},
+        ],
+        "starters": {
+            "python": "def chunk_list(arr, size):\n    # Return arr split into consecutive chunks of length size.\n    pass\n",
+            "javascript": "function chunk_list(arr, size) {\n    // Return arr split into consecutive chunks of length size.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [[1, 2, 3, 4, 5], 2], "expected": [[1, 2], [3, 4], [5]]},
+            {"args": [[1, 2, 3], 3], "expected": [[1, 2, 3]]},
+        ],
+        "hidden_tests": [
+            {"args": [[], 2], "expected": []},
+            {"args": [[1], 1], "expected": [[1]]},
+            {"args": [[1, 2, 3, 4], 5], "expected": [[1, 2, 3, 4]]},
+        ],
+    },
+    {
+        "id": "url-slug-generator",
+        "title": "URL Slug Generator",
+        "difficulty": "Easy",
+        "function_name": "slugify",
+        "time_limit_secs": 5,
+        "prompt": (
+            "Convert a page `title` into a URL slug: lowercase, spaces become hyphens, and "
+            "any character that isn't a letter, digit, or hyphen is removed. Collapse "
+            "consecutive hyphens into one, and strip leading/trailing hyphens."
+        ),
+        "constraints": ["0 <= len(title) <= 200"],
+        "examples": [
+            {"input": 'title = "Hello World!"', "output": '"hello-world"'},
+        ],
+        "starters": {
+            "python": "def slugify(title):\n    # Return title converted into a lowercase, hyphenated URL slug.\n    pass\n",
+            "javascript": "function slugify(title) {\n    // Return title converted into a lowercase, hyphenated URL slug.\n}\n",
+        },
+        "sample_tests": [
+            {"args": ["Hello World!"], "expected": "hello-world"},
+            {"args": ["  My   Cool Title  "], "expected": "my-cool-title"},
+        ],
+        "hidden_tests": [
+            {"args": ["Already-Slugged"], "expected": "already-slugged"},
+            {"args": ["Café Menu"], "expected": "caf-menu"},
+            {"args": ["100% Off!!"], "expected": "100-off"},
+        ],
+    },
+    {
+        "id": "bmi-category-checker",
+        "title": "BMI Category Checker",
+        "difficulty": "Easy",
+        "function_name": "bmi_category",
+        "time_limit_secs": 5,
+        "prompt": (
+            "Given `weight_kg` and `height_m`, compute BMI = weight_kg / height_m^2 and "
+            "return its category: \"Underweight\" (< 18.5), \"Normal\" (< 25), "
+            "\"Overweight\" (< 30), or \"Obese\" otherwise."
+        ),
+        "constraints": ["0 < weight_kg <= 500", "0 < height_m <= 3"],
+        "examples": [
+            {"input": "weight_kg = 70, height_m = 1.75", "output": '"Normal"'},
+        ],
+        "starters": {
+            "python": "def bmi_category(weight_kg, height_m):\n    # Return the BMI category for weight_kg and height_m.\n    pass\n",
+            "javascript": "function bmi_category(weight_kg, height_m) {\n    // Return the BMI category for weight_kg and height_m.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [70, 1.75], "expected": "Normal"},
+            {"args": [50, 1.7], "expected": "Underweight"},
+        ],
+        "hidden_tests": [
+            {"args": [90, 1.7], "expected": "Obese"},
+            {"args": [80, 1.8], "expected": "Normal"},
+            {"args": [95, 1.75], "expected": "Obese"},
+        ],
+    },
+    {
+        "id": "matrix-transpose",
+        "title": "Matrix Transpose",
+        "difficulty": "Easy",
+        "function_name": "transpose_matrix",
+        "time_limit_secs": 5,
+        "prompt": "Given a 2D list `matrix`, return its transpose (rows and columns swapped).",
+        "constraints": ["0 <= rows, cols <= 100"],
+        "examples": [
+            {"input": "matrix = [[1, 2, 3], [4, 5, 6]]", "output": "[[1, 4], [2, 5], [3, 6]]"},
+        ],
+        "starters": {
+            "python": "def transpose_matrix(matrix):\n    # Return the transpose of matrix.\n    pass\n",
+            "javascript": "function transpose_matrix(matrix) {\n    // Return the transpose of matrix.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [[[1, 2, 3], [4, 5, 6]]], "expected": [[1, 4], [2, 5], [3, 6]]},
+        ],
+        "hidden_tests": [
+            {"args": [[[1]]], "expected": [[1]]},
+            {"args": [[]], "expected": []},
+            {"args": [[[1, 2], [3, 4], [5, 6]]], "expected": [[1, 3, 5], [2, 4, 6]]},
+        ],
+    },
+    {
+        "id": "common-tags-finder",
+        "title": "Common Tags Finder",
+        "difficulty": "Easy",
+        "function_name": "common_tags",
+        "time_limit_secs": 5,
+        "prompt": (
+            "Given two lists of content tags `list1` and `list2`, return a sorted list of "
+            "the unique tags present in both."
+        ),
+        "constraints": ["0 <= len(list1), len(list2) <= 10^4"],
+        "examples": [
+            {"input": 'list1 = ["python", "react", "sql"], list2 = ["sql", "node", "python"]',
+             "output": '["python", "sql"]'},
+        ],
+        "starters": {
+            "python": "def common_tags(list1, list2):\n    # Return a sorted list of tags present in both lists.\n    pass\n",
+            "javascript": "function common_tags(list1, list2) {\n    // Return a sorted array of tags present in both lists.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [["python", "react", "sql"], ["sql", "node", "python"]], "expected": ["python", "sql"]},
+        ],
+        "hidden_tests": [
+            {"args": [[], ["a"]], "expected": []},
+            {"args": [["a", "a", "b"], ["a", "c"]], "expected": ["a"]},
+            {"args": [["x", "y"], ["z"]], "expected": []},
+        ],
+    },
+    {
+        "id": "merge-user-preferences",
+        "title": "Merge User Preferences",
+        "difficulty": "Medium",
+        "function_name": "merge_preferences",
+        "time_limit_secs": 5,
+        "prompt": (
+            "Given a `defaults` dict and an `overrides` dict of user settings, return a "
+            "merged dict containing every key from both, where a key present in both takes "
+            "its value from `overrides`."
+        ),
+        "constraints": ["0 <= len(defaults), len(overrides) <= 1000"],
+        "examples": [
+            {"input": 'defaults = {"theme": "light", "fontSize": 12}, overrides = {"theme": "dark"}',
+             "output": '{"theme": "dark", "fontSize": 12}'},
+        ],
+        "starters": {
+            "python": "def merge_preferences(defaults, overrides):\n    # Return defaults merged with overrides, overrides winning on shared keys.\n    pass\n",
+            "javascript": "function merge_preferences(defaults, overrides) {\n    // Return defaults merged with overrides, overrides winning on shared keys.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [{"theme": "light", "fontSize": 12}, {"theme": "dark"}],
+             "expected": {"theme": "dark", "fontSize": 12}},
+        ],
+        "hidden_tests": [
+            {"args": [{}, {"a": 1}], "expected": {"a": 1}},
+            {"args": [{"a": 1}, {}], "expected": {"a": 1}},
+            {"args": [{"x": 1, "y": 2}, {"y": 3, "z": 4}], "expected": {"x": 1, "y": 3, "z": 4}},
+        ],
+    },
+    {
+        "id": "peak-sales-day",
+        "title": "Peak Sales Day",
+        "difficulty": "Medium",
+        "function_name": "peak_day",
+        "time_limit_secs": 5,
+        "prompt": (
+            "Given a list of daily `sales` figures, return the 0-based index of the day "
+            "with the highest sales. Break a tie by returning the earliest such day."
+        ),
+        "constraints": ["1 <= len(sales) <= 10^5"],
+        "examples": [
+            {"input": "sales = [10, 50, 30, 50, 20]", "output": "1"},
+        ],
+        "starters": {
+            "python": "def peak_day(sales):\n    # Return the index of the highest value in sales (first occurrence on a tie).\n    pass\n",
+            "javascript": "function peak_day(sales) {\n    // Return the index of the highest value in sales (first occurrence on a tie).\n}\n",
+        },
+        "sample_tests": [
+            {"args": [[10, 50, 30, 50, 20]], "expected": 1},
+        ],
+        "hidden_tests": [
+            {"args": [[5]], "expected": 0},
+            {"args": [[1, 2, 3]], "expected": 2},
+            {"args": [[3, 3, 3]], "expected": 0},
+        ],
+    },
+    {
+        "id": "job-priority-scheduler",
+        "title": "Job Priority Scheduler",
+        "difficulty": "Medium",
+        "function_name": "next_job",
+        "time_limit_secs": 5,
+        "prompt": (
+            "Given a list of `jobs`, each as [name, priority] where a LOWER priority "
+            "number is more urgent, return the name of the job that should run next. "
+            "Break a tie by whichever job appears first in the list."
+        ),
+        "constraints": ["1 <= len(jobs) <= 10^4"],
+        "examples": [
+            {"input": 'jobs = [["deploy", 2], ["build", 1], ["test", 1]]', "output": '"build"'},
+        ],
+        "starters": {
+            "python": "def next_job(jobs):\n    # Return the name of the lowest-priority-number job (first occurrence on a tie).\n    pass\n",
+            "javascript": "function next_job(jobs) {\n    // Return the name of the lowest-priority-number job (first occurrence on a tie).\n}\n",
+        },
+        "sample_tests": [
+            {"args": [[["deploy", 2], ["build", 1], ["test", 1]]], "expected": "build"},
+            {"args": [[["a", 5]]], "expected": "a"},
+        ],
+        "hidden_tests": [
+            {"args": [[["x", 3], ["y", 3], ["z", 1]]], "expected": "z"},
+            {"args": [[["p", 1], ["q", 1], ["r", 1]]], "expected": "p"},
+            {"args": [[["only", 10]]], "expected": "only"},
+        ],
+    },
+    {
+        "id": "discount-tier-calculator",
+        "title": "Discount Tier Calculator",
+        "difficulty": "Medium",
+        "function_name": "discount_tier",
+        "time_limit_secs": 5,
+        "prompt": (
+            "A loyalty program grants a discount based on total lifetime spend: 0% below "
+            "$500, 5% from $500 up to (not including) $2000, 10% from $2000 up to (not "
+            "including) $5000, and 15% at $5000 or above. Return the discount percentage."
+        ),
+        "constraints": ["0 <= total_spent <= 10^7"],
+        "examples": [
+            {"input": "total_spent = 100", "output": "0"},
+            {"input": "total_spent = 1000", "output": "5"},
+        ],
+        "starters": {
+            "python": "def discount_tier(total_spent):\n    # Return 0, 5, 10, or 15 based on the spend tier.\n    pass\n",
+            "javascript": "function discount_tier(total_spent) {\n    // Return 0, 5, 10, or 15 based on the spend tier.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [100], "expected": 0},
+            {"args": [1000], "expected": 5},
+        ],
+        "hidden_tests": [
+            {"args": [499], "expected": 0},
+            {"args": [500], "expected": 5},
+            {"args": [2000], "expected": 10},
+            {"args": [4999], "expected": 10},
+            {"args": [5000], "expected": 15},
+        ],
+    },
+    {
+        "id": "temperature-anomaly-detector",
+        "title": "Temperature Anomaly Detector",
+        "difficulty": "Medium",
+        "function_name": "find_anomalies",
+        "time_limit_secs": 5,
+        "prompt": (
+            "Given a list of `readings` and a `threshold`, return the 0-based indices "
+            "(ascending) of every reading whose absolute deviation from the mean of ALL "
+            "readings exceeds threshold."
+        ),
+        "constraints": ["0 <= len(readings) <= 10^5"],
+        "examples": [
+            {"input": "readings = [10, 11, 9, 10, 11, 9, 10, 11, 9, 60], threshold = 8", "output": "[9]"},
+        ],
+        "starters": {
+            "python": "def find_anomalies(readings, threshold):\n    # Return indices whose deviation from the mean exceeds threshold.\n    pass\n",
+            "javascript": "function find_anomalies(readings, threshold) {\n    // Return indices whose deviation from the mean exceeds threshold.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [[10, 11, 9, 10, 11, 9, 10, 11, 9, 60], 8], "expected": [9]},
+            {"args": [[10, 12, 11, 13, 10], 5], "expected": []},
+        ],
+        "hidden_tests": [
+            {"args": [[100, 100, 100], 1], "expected": []},
+            {"args": [[1, 1, 1, 1, 100], 50], "expected": [4]},
+            {"args": [[], 5], "expected": []},
+        ],
+    },
+    {
+        "id": "count-business-days",
+        "title": "Count Business Days",
+        "difficulty": "Medium",
+        "function_name": "count_business_days",
+        "time_limit_secs": 5,
+        "prompt": (
+            "Given a `start_day_index` (0=Monday ... 6=Sunday) and `num_days` consecutive "
+            "calendar days starting from and including that day, return how many of those "
+            "days are weekdays (Monday-Friday)."
+        ),
+        "constraints": ["0 <= start_day_index <= 6", "0 <= num_days <= 10^5"],
+        "examples": [
+            {"input": "start_day_index = 0, num_days = 7", "output": "5"},
+        ],
+        "starters": {
+            "python": "def count_business_days(start_day_index, num_days):\n    # Return how many of the num_days starting at start_day_index are weekdays.\n    pass\n",
+            "javascript": "function count_business_days(start_day_index, num_days) {\n    // Return how many of the num_days starting at start_day_index are weekdays.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [0, 7], "expected": 5},
+            {"args": [5, 3], "expected": 1},
+        ],
+        "hidden_tests": [
+            {"args": [0, 5], "expected": 5},
+            {"args": [0, 1], "expected": 1},
+            {"args": [4, 3], "expected": 1},
+            {"args": [0, 14], "expected": 10},
+        ],
+    },
 ]
 
 # SQL problems live in their own module because their test cases are shaped differently

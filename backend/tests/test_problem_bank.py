@@ -354,6 +354,135 @@ def merge_sorted_lists(list1, list2):
     result.extend(list2[j:])
     return result
 """,
+    "validate-username": """
+def is_valid_username(username):
+    if not (3 <= len(username) <= 16):
+        return False
+    if not username[0].isalpha():
+        return False
+    return all(c.isalnum() or c == '_' for c in username)
+""",
+    "employee-of-the-month": """
+def find_top_performer(scores):
+    best_score = max(scores.values())
+    candidates = [name for name, s in scores.items() if s == best_score]
+    return min(candidates)
+""",
+    "session-timeout-checker": """
+def is_session_expired(last_activity_seconds_ago, timeout_seconds):
+    return last_activity_seconds_ago >= timeout_seconds
+""",
+    "calculate-shipping-cost": """
+def shipping_cost(weight_kg):
+    if weight_kg <= 1:
+        return 5
+    if weight_kg <= 5:
+        return 10
+    return 20
+""",
+    "count-vowels-consonants": """
+def count_letters(s):
+    vowels = 0
+    consonants = 0
+    for ch in s.lower():
+        if ch.isalpha():
+            if ch in 'aeiou':
+                vowels += 1
+            else:
+                consonants += 1
+    return {"vowels": vowels, "consonants": consonants}
+""",
+    "reverse-words-in-sentence": """
+def reverse_words(sentence):
+    return ' '.join(reversed(sentence.split()))
+""",
+    "find-longest-word": """
+def longest_word(sentence):
+    words = sentence.split()
+    return max(words, key=len) if words else ""
+""",
+    "celsius-to-fahrenheit": """
+def celsius_to_fahrenheit(celsius):
+    return round(celsius * 9 / 5 + 32, 1)
+""",
+    "leap-year-checker": """
+def is_leap_year(year):
+    return year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)
+""",
+    "chunk-array": """
+def chunk_list(arr, size):
+    return [arr[i:i + size] for i in range(0, len(arr), size)]
+""",
+    "url-slug-generator": """
+import re
+def slugify(title):
+    s = title.lower()
+    s = re.sub(r'[^a-z0-9\\s-]', '', s)
+    s = re.sub(r'[\\s-]+', '-', s)
+    return s.strip('-')
+""",
+    "bmi-category-checker": """
+def bmi_category(weight_kg, height_m):
+    bmi = weight_kg / (height_m ** 2)
+    if bmi < 18.5:
+        return "Underweight"
+    if bmi < 25:
+        return "Normal"
+    if bmi < 30:
+        return "Overweight"
+    return "Obese"
+""",
+    "matrix-transpose": """
+def transpose_matrix(matrix):
+    if not matrix:
+        return []
+    return [list(row) for row in zip(*matrix)]
+""",
+    "common-tags-finder": """
+def common_tags(list1, list2):
+    return sorted(set(list1) & set(list2))
+""",
+    "merge-user-preferences": """
+def merge_preferences(defaults, overrides):
+    result = dict(defaults)
+    result.update(overrides)
+    return result
+""",
+    "peak-sales-day": """
+def peak_day(sales):
+    return sales.index(max(sales))
+""",
+    "job-priority-scheduler": """
+def next_job(jobs):
+    best = min(jobs, key=lambda j: j[1])
+    return best[0]
+""",
+    "discount-tier-calculator": """
+def discount_tier(total_spent):
+    if total_spent < 500:
+        return 0
+    if total_spent < 2000:
+        return 5
+    if total_spent < 5000:
+        return 10
+    return 15
+""",
+    "temperature-anomaly-detector": """
+def find_anomalies(readings, threshold):
+    if not readings:
+        return []
+    mean = sum(readings) / len(readings)
+    return [i for i, r in enumerate(readings) if abs(r - mean) > threshold]
+""",
+    "count-business-days": """
+def count_business_days(start_day_index, num_days):
+    count = 0
+    for i in range(num_days):
+        day = (start_day_index + i) % 7
+        if day < 5:
+            count += 1
+    return count
+""",
 }
 
 
