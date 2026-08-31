@@ -29,6 +29,7 @@ const HEADER_ALIASES = {
   cnic: ['cnic', 'cnic number', 'cnic no', 'nic'],
   category: ['category', 'course category', 'domain', 'track'],
   course_status: ['course_status', 'course status', 'status'],
+  difficulty_range: ['difficulty_range', 'difficulty range', 'question difficulty', 'question difficulty range'],
 };
 
 // Refuse oversized files BEFORE handing them to a parser. The row limit only applies after
@@ -49,7 +50,7 @@ const canonicalKey = (header) => {
 const toRow = (record, defaultDeadline) => {
   const row = {
     name: '', email: '', cnic: '', category: '', course_status: '',
-    deadline_days: defaultDeadline,
+    deadline_days: defaultDeadline, difficulty_range: '',
   };
   Object.entries(record).forEach(([header, value]) => {
     const key = canonicalKey(header);
@@ -152,7 +153,7 @@ const BulkEmailModal = ({ open, onClose, onSent }) => {
     setValidation(null);
     setBatch(null);
     setError('');
-    setRows((prev) => [...prev, { name: '', email: '', cnic: '', category: '', course_status: '', deadline_days: dd }]);
+    setRows((prev) => [...prev, { name: '', email: '', cnic: '', category: '', course_status: '', deadline_days: dd, difficulty_range: '' }]);
   };
 
   const parseCsv = (file) =>
@@ -555,6 +556,11 @@ const BulkEmailModal = ({ open, onClose, onSent }) => {
                       <option value="">Deadline…</option>
                       {(config?.deadline_choices || []).map((d) => <option key={d} value={d}>{d} days</option>)}
                     </select>
+                    <select className="glass-input !text-[11px] !py-1 cursor-pointer" defaultValue=""
+                      onChange={(e) => { applyToAll('difficulty_range', e.target.value); e.target.value = ''; }}>
+                      <option value="">Difficulty range…</option>
+                      {(config?.difficulty_ranges || []).map((d) => <option key={d.value} value={d.value}>{d.label}</option>)}
+                    </select>
                   </div>
 
                   <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800">
@@ -568,6 +574,7 @@ const BulkEmailModal = ({ open, onClose, onSent }) => {
                           <th className="py-2 px-2 font-bold">Category</th>
                           <th className="py-2 px-2 font-bold">Status</th>
                           <th className="py-2 px-2 font-bold">Deadline</th>
+                          <th className="py-2 px-2 font-bold">Difficulty</th>
                           <th className="py-2 px-2 font-bold w-8" />
                         </tr>
                       </thead>
@@ -616,6 +623,12 @@ const BulkEmailModal = ({ open, onClose, onSent }) => {
                                     {(config?.deadline_choices || []).map((d) => <option key={d} value={d}>{d} Days</option>)}
                                   </select>
                                 </td>
+                                <td className="py-1.5 px-1.5">
+                                  <select className={`${inputCls} cursor-pointer`} value={r.difficulty_range || ''} onChange={(e) => updateCell(idx, 'difficulty_range', e.target.value)}>
+                                    <option value="">Candidate's choice</option>
+                                    {(config?.difficulty_ranges || []).map((d) => <option key={d.value} value={d.value}>{d.label}</option>)}
+                                  </select>
+                                </td>
                                 <td className="py-1.5 px-2">
                                   <button onClick={() => removeRow(idx)} title="Remove this row" className="text-slate-400 hover:text-red-500">
                                     <Trash2 size={13} />
@@ -625,7 +638,7 @@ const BulkEmailModal = ({ open, onClose, onSent }) => {
                               {errs.length > 0 && (
                                 <tr className="bg-red-50/70 dark:bg-red-500/5">
                                   <td />
-                                  <td colSpan={7} className="pb-1.5 px-2 text-[10px] text-red-600 dark:text-red-400">
+                                  <td colSpan={8} className="pb-1.5 px-2 text-[10px] text-red-600 dark:text-red-400">
                                     {errs.join(' · ')}
                                   </td>
                                 </tr>
@@ -634,7 +647,7 @@ const BulkEmailModal = ({ open, onClose, onSent }) => {
                           );
                         })}
                         <tr>
-                          <td colSpan={8} className="p-0">
+                          <td colSpan={9} className="p-0">
                             <button
                               type="button"
                               onClick={addManualRow}

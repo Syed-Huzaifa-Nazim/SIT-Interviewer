@@ -188,14 +188,7 @@ const AdminUsersPage = () => {
   // re-rendered this entire page (including the full user table + its filter/map below),
   // which measured at ~300ms per keystroke in Chrome's Interaction Timing panel.
   const [deleteUser, setDeleteUser] = useState(null);
-
-  // Generic non-blocking confirm dialog, replacing window.confirm() (a native call that
-  // freezes the whole tab and — as measured in Chrome's Interaction Timing panel — makes
-  // whatever time the admin spends reading it show up as multi-second "lag" on the click
-  // that triggered it). Any handler can call askConfirm(message, doAction) instead of
-  // `if (!window.confirm(...)) return;`.
-  const [confirmDialog, setConfirmDialog] = useState(null); // { message, onConfirm }
-  const askConfirm = (message, onConfirm) => setConfirmDialog({ message, onConfirm });
+  const [sendInviteUser, setSendInviteUser] = useState(null);
 
   const fetchUsers = async (silent = false) => {
     try {
@@ -304,24 +297,23 @@ const AdminUsersPage = () => {
     }
   };
 
-  const handleSendInvite = (u) => askConfirm(
-    `Send one-time interview credentials to ${u.name} (${u.email})?\n\n` +
-    'Their password login (if any) will stop working and a fresh one-time password will be emailed. It can be used to log in exactly once.',
-    async () => {
-      setActionLoading(true);
-      setError('');
-      setNotice('');
-      try {
-        const res = await api.post(`/admin/users/${u.id}/send-interview-invite`);
-        setNotice(res.data.message || 'Invite sent.');
-        fetchUsers();
-      } catch (err) {
-        setError(err.response?.data?.message || 'Failed to send the interview invite.');
-      } finally {
-        setActionLoading(false);
-      }
+  const handleSendInvite = async (u, difficultyRange) => {
+    setActionLoading(true);
+    setError('');
+    setNotice('');
+    try {
+      const res = await api.post(`/admin/users/${u.id}/send-interview-invite`, {
+        question_difficulty_range: difficultyRange || null,
+      });
+      setNotice(res.data.message || 'Invite sent.');
+      setSendInviteUser(null);
+      fetchUsers();
+    } catch (err) {
+      setError(err.response?.data?.message || 'Failed to send the interview invite.');
+    } finally {
+      setActionLoading(false);
     }
-  );
+  };
 
   // Post-interview admin email actions (Update §5). kind: 'clearance' | 'hr-invite'
   const handlePostInterviewEmail = async (u, kind) => {
@@ -725,7 +717,7 @@ const AdminUsersPage = () => {
                             variant="primary"
                             size="sm"
                             icon={Send}
-                            onClick={() => handleSendInvite(item)}
+                            onClick={() => setSendInviteUser(item)}
                             disabled={actionLoading}
                             className="!p-2 !rounded-lg"
                             title="Send One-Time Interview Invite"
@@ -1047,42 +1039,13 @@ const AdminUsersPage = () => {
         />
       )}
 
-      {/* Generic confirm dialog (replaces window.confirm() for send-invite; see askConfirm). */}
-      {confirmDialog && createPortal(
-        <div className="fixed inset-0 z-50 bg-slate-950/60 dark:bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-sm glass-panel p-6 rounded-2xl border border-primary-500/30 space-y-5 shadow-2xl">
-            <h3 className="font-extrabold text-base text-slate-900 dark:text-white flex items-center gap-2">
-              <Send className="text-primary-400" size={18} />
-              <span>Confirm</span>
-            </h3>
-            <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed whitespace-pre-line">
-              {confirmDialog.message}
-            </p>
-            <div className="flex items-center justify-end gap-3 pt-1">
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => setConfirmDialog(null)}
-                disabled={actionLoading}
-              >
-                Cancel
-              </Button>
-              <Button
-                variant="primary"
-                size="sm"
-                loading={actionLoading}
-                onClick={async () => {
-                  const action = confirmDialog.onConfirm;
-                  setConfirmDialog(null);
-                  await action();
-                }}
-              >
-                Confirm
-              </Button>
-            </div>
-          </div>
-        </div>,
-        document.body
+      {sendInviteUser !== null && (
+        <SendInviteModal
+          user={sendInviteUser}
+          loading={actionLoading}
+          onCancel={() => setSendInviteUser(null)}
+          onConfirm={handleSendInvite}
+        />
       )}
 
       {/* Batch History: surfaces the previously-unused GET /admin/bulk-email/batches
@@ -1159,6 +1122,69 @@ const AdminUsersPage = () => {
         onSent={() => { fetchUsers(true); setActiveTab('bulk'); }}
       />
     </div>
+  );
+};
+
+// Question Difficulty Range choices — kept in sync with backend/app/utils/difficulty.py's
+// DIFFICULTY_RANGES/RANGE_LABELS. No range set (the default) preserves today's behavior
+// exactly: the candidate's own difficulty choice at interview start is left alone.
+const DIFFICULTY_RANGE_CHOICES = [
+  { value: '', label: "Candidate's own choice (no range)" },
+  { value: 'EASY_TO_MEDIUM', label: 'Easy to Medium' },
+  { value: 'MEDIUM_TO_HARD', label: 'Medium to Hard' },
+  { value: 'EASY_TO_HARD', label: 'Easy to Hard' },
+];
+
+const SendInviteModal = ({ user, loading, onCancel, onConfirm }) => {
+  const [difficultyRange, setDifficultyRange] = useState(user.question_difficulty_range || '');
+
+  return createPortal(
+    <div className="fixed inset-0 z-50 bg-slate-950/60 dark:bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="w-full max-w-sm glass-panel p-6 rounded-2xl border border-primary-500/30 space-y-5 shadow-2xl">
+        <h3 className="font-extrabold text-base text-slate-900 dark:text-white flex items-center gap-2">
+          <Send className="text-primary-400" size={18} />
+          <span>Send Interview Invite</span>
+        </h3>
+        <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+          Send one-time interview credentials to <b className="text-slate-900 dark:text-white">{user.name}</b> ({user.email})?
+          Their password login (if any) will stop working and a fresh one-time password will be emailed. It can be used to log in exactly once.
+        </p>
+
+        <div className="space-y-1.5">
+          <label className="text-[11px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+            Question Difficulty Range
+          </label>
+          <select
+            className="w-full glass-input text-sm"
+            value={difficultyRange}
+            onChange={(e) => setDifficultyRange(e.target.value)}
+          >
+            {DIFFICULTY_RANGE_CHOICES.map((c) => (
+              <option key={c.value} value={c.value}>{c.label}</option>
+            ))}
+          </select>
+          <p className="text-[11px] text-slate-500 dark:text-slate-400">
+            Pins the difficulty this candidate's questions progress through. Leave as "Candidate's own choice" for today's default behavior.
+          </p>
+        </div>
+
+        <div className="flex items-center justify-end gap-3 pt-1">
+          <Button variant="secondary" size="sm" onClick={onCancel} disabled={loading}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            size="sm"
+            icon={Send}
+            loading={loading}
+            onClick={() => onConfirm(user, difficultyRange)}
+          >
+            Send Invite
+          </Button>
+        </div>
+      </div>
+    </div>,
+    document.body
   );
 };
 
