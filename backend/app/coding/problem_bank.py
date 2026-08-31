@@ -640,6 +640,620 @@ PROBLEMS = [
             {"args": ["sunday", "saturday"], "expected": 3},
         ],
     },
+
+    # --- Batch 2: practical/real-world framed problems (Difficulty Range feature —
+    # growing the sandbox bank so many simultaneous candidates don't all see the same
+    # opener). HackerRank-style: a short real scenario, not an abstract puzzle. ---
+    {
+        "id": "order-total-with-discount",
+        "title": "Order Total With Discount",
+        "difficulty": "Easy",
+        "function_name": "calculate_order_total",
+        "time_limit_secs": 5,
+        "prompt": (
+            "You're building checkout logic for an online store. Given a list of item "
+            "`prices` and a `discount_percent` (0-100) applied to the whole order, return "
+            "the final total after the discount, rounded to 2 decimal places."
+        ),
+        "constraints": ["0 <= len(prices) <= 1000", "0 <= discount_percent <= 100"],
+        "examples": [
+            {"input": "prices = [100, 50, 25], discount_percent = 10", "output": "157.5"},
+            {"input": "prices = [20], discount_percent = 0", "output": "20.0"},
+        ],
+        "starters": {
+            "python": "def calculate_order_total(prices, discount_percent):\n    # Return the total after applying discount_percent, rounded to 2 decimals.\n    pass\n",
+            "javascript": "function calculate_order_total(prices, discount_percent) {\n    // Return the total after applying discount_percent, rounded to 2 decimals.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [[100, 50, 25], 10], "expected": 157.5},
+            {"args": [[20], 0], "expected": 20.0},
+        ],
+        "hidden_tests": [
+            {"args": [[], 10], "expected": 0.0},
+            {"args": [[80, 40], 25], "expected": 90.0},
+            {"args": [[100], 100], "expected": 0.0},
+            {"args": [[10, 10, 10], 50], "expected": 15.0},
+        ],
+    },
+    {
+        "id": "password-strength-checker",
+        "title": "Password Strength Checker",
+        "difficulty": "Easy",
+        "function_name": "is_strong_password",
+        "time_limit_secs": 5,
+        "prompt": (
+            "A signup form needs server-side password validation. A password is STRONG if "
+            "it is at least 8 characters long AND contains at least one uppercase letter, "
+            "one lowercase letter, and one digit. Return True if `password` is strong."
+        ),
+        "constraints": ["0 <= len(password) <= 200"],
+        "examples": [
+            {"input": 'password = "Passw0rd"', "output": "true"},
+            {"input": 'password = "weak"', "output": "false"},
+        ],
+        "starters": {
+            "python": "def is_strong_password(password):\n    # Return True if password is at least 8 chars with upper, lower, and a digit.\n    pass\n",
+            "javascript": "function is_strong_password(password) {\n    // Return true if password is at least 8 chars with upper, lower, and a digit.\n}\n",
+        },
+        "sample_tests": [
+            {"args": ["Passw0rd"], "expected": True},
+            {"args": ["weak"], "expected": False},
+        ],
+        "hidden_tests": [
+            {"args": [""], "expected": False},
+            {"args": ["ALLUPPER1"], "expected": False},
+            {"args": ["alllower1"], "expected": False},
+            {"args": ["NoDigitsHere"], "expected": False},
+            {"args": ["Sh0rt"], "expected": False},
+            {"args": ["LongEnough123"], "expected": True},
+        ],
+    },
+    {
+        "id": "word-occurrence-counter",
+        "title": "Word Occurrence Counter",
+        "difficulty": "Easy",
+        "function_name": "count_word_occurrences",
+        "time_limit_secs": 5,
+        "prompt": (
+            "Given a block of `text` and a `word`, count how many times `word` appears, "
+            "ignoring case and surrounding punctuation. Words are separated by whitespace."
+        ),
+        "constraints": ["0 <= len(text) <= 10^4"],
+        "examples": [
+            {"input": 'text = "The cat sat on the mat. The cat was happy.", word = "cat"', "output": "2"},
+            {"input": 'text = "Hello hello HELLO!", word = "hello"', "output": "3"},
+        ],
+        "starters": {
+            "python": "def count_word_occurrences(text, word):\n    # Count case-insensitive occurrences of word in text, ignoring punctuation.\n    pass\n",
+            "javascript": "function count_word_occurrences(text, word) {\n    // Count case-insensitive occurrences of word in text, ignoring punctuation.\n}\n",
+        },
+        "sample_tests": [
+            {"args": ["The cat sat on the mat. The cat was happy.", "cat"], "expected": 2},
+            {"args": ["Hello hello HELLO!", "hello"], "expected": 3},
+        ],
+        "hidden_tests": [
+            {"args": ["", "test"], "expected": 0},
+            {"args": ["one two three", "four"], "expected": 0},
+            {"args": ["Cat cat CAT cats", "cat"], "expected": 3},
+            {"args": ["dog, dog. dog!", "dog"], "expected": 3},
+        ],
+    },
+    {
+        "id": "email-format-validator",
+        "title": "Email Format Validator",
+        "difficulty": "Easy",
+        "function_name": "is_valid_email",
+        "time_limit_secs": 5,
+        "prompt": (
+            "Write a basic email format validator for a signup form. Return True if "
+            "`email` matches local-part@domain.tld (letters, digits, `.` `_` `%` `+` `-` "
+            "in the local part; a domain with at least one dot; a 2+ letter TLD)."
+        ),
+        "constraints": ["0 <= len(email) <= 200"],
+        "examples": [
+            {"input": 'email = "user@example.com"', "output": "true"},
+            {"input": 'email = "invalid-email"', "output": "false"},
+        ],
+        "starters": {
+            "python": "def is_valid_email(email):\n    # Return True if email looks like local@domain.tld.\n    pass\n",
+            "javascript": "function is_valid_email(email) {\n    // Return true if email looks like local@domain.tld.\n}\n",
+        },
+        "sample_tests": [
+            {"args": ["user@example.com"], "expected": True},
+            {"args": ["invalid-email"], "expected": False},
+        ],
+        "hidden_tests": [
+            {"args": [""], "expected": False},
+            {"args": ["a@b.co"], "expected": True},
+            {"args": ["a@b"], "expected": False},
+            {"args": ["@example.com"], "expected": False},
+            {"args": ["user.name+tag@sub.example.com"], "expected": True},
+        ],
+    },
+    {
+        "id": "inventory-reorder-check",
+        "title": "Inventory Reorder Check",
+        "difficulty": "Easy",
+        "function_name": "needs_reorder",
+        "time_limit_secs": 5,
+        "prompt": (
+            "A warehouse system flags an item for reorder once its stock is at or below "
+            "its reorder threshold. Return True if `current_stock <= reorder_threshold`."
+        ),
+        "constraints": ["0 <= current_stock, reorder_threshold <= 10^6"],
+        "examples": [
+            {"input": "current_stock = 5, reorder_threshold = 10", "output": "true"},
+            {"input": "current_stock = 20, reorder_threshold = 10", "output": "false"},
+        ],
+        "starters": {
+            "python": "def needs_reorder(current_stock, reorder_threshold):\n    # Return True if the stock is at or below the reorder threshold.\n    pass\n",
+            "javascript": "function needs_reorder(current_stock, reorder_threshold) {\n    // Return true if the stock is at or below the reorder threshold.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [5, 10], "expected": True},
+            {"args": [20, 10], "expected": False},
+        ],
+        "hidden_tests": [
+            {"args": [10, 10], "expected": True},
+            {"args": [0, 0], "expected": True},
+            {"args": [1, 0], "expected": False},
+        ],
+    },
+    {
+        "id": "compound-interest-calculator",
+        "title": "Compound Interest Calculator",
+        "difficulty": "Easy",
+        "function_name": "compound_interest",
+        "time_limit_secs": 5,
+        "prompt": (
+            "A savings app needs to project balances. Given a `principal`, an annual "
+            "`rate` as a percentage (e.g. 10 for 10%), and a whole number of `years`, "
+            "return the compounded balance rounded to 2 decimal places: "
+            "principal * (1 + rate/100) ** years."
+        ),
+        "constraints": ["0 <= principal <= 10^7", "0 <= rate <= 100", "0 <= years <= 50"],
+        "examples": [
+            {"input": "principal = 1000, rate = 10, years = 2", "output": "1210.0"},
+            {"input": "principal = 500, rate = 0, years = 5", "output": "500.0"},
+        ],
+        "starters": {
+            "python": "def compound_interest(principal, rate, years):\n    # Return the compounded balance, rounded to 2 decimals.\n    pass\n",
+            "javascript": "function compound_interest(principal, rate, years) {\n    // Return the compounded balance, rounded to 2 decimals.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [1000, 10, 2], "expected": 1210.0},
+            {"args": [500, 0, 5], "expected": 500.0},
+        ],
+        "hidden_tests": [
+            {"args": [1000, 5, 0], "expected": 1000.0},
+            {"args": [2000, 10, 1], "expected": 2200.0},
+            {"args": [100, 100, 1], "expected": 200.0},
+        ],
+    },
+    {
+        "id": "username-anagram-check",
+        "title": "Username Anagram Check",
+        "difficulty": "Easy",
+        "function_name": "is_anagram",
+        "time_limit_secs": 5,
+        "prompt": (
+            "A username-suggestion tool flags two candidate names as too similar when "
+            "they are anagrams of each other. Return True if `a` and `b` are anagrams, "
+            "ignoring case."
+        ),
+        "constraints": ["0 <= len(a), len(b) <= 200"],
+        "examples": [
+            {"input": 'a = "listen", b = "silent"', "output": "true"},
+            {"input": 'a = "hello", b = "world"', "output": "false"},
+        ],
+        "starters": {
+            "python": "def is_anagram(a, b):\n    # Return True if a and b are anagrams of each other, ignoring case.\n    pass\n",
+            "javascript": "function is_anagram(a, b) {\n    // Return true if a and b are anagrams of each other, ignoring case.\n}\n",
+        },
+        "sample_tests": [
+            {"args": ["listen", "silent"], "expected": True},
+            {"args": ["hello", "world"], "expected": False},
+        ],
+        "hidden_tests": [
+            {"args": ["", ""], "expected": True},
+            {"args": ["A", "a"], "expected": True},
+            {"args": ["abc", "abcd"], "expected": False},
+            {"args": ["Dormitory", "DirtyRoom"], "expected": True},
+        ],
+    },
+    {
+        "id": "shift-time-difference",
+        "title": "Shift Time Difference",
+        "difficulty": "Medium",
+        "function_name": "minutes_between",
+        "time_limit_secs": 5,
+        "prompt": (
+            "A staff scheduling tool needs shift lengths. Given `start_time` and "
+            "`end_time` as 24-hour \"HH:MM\" strings on the same day (end at or after "
+            "start), return the number of minutes between them."
+        ),
+        "constraints": ["Both are valid \"HH:MM\" times, 00:00-23:59.", "end_time >= start_time"],
+        "examples": [
+            {"input": 'start_time = "09:00", end_time = "17:30"', "output": "510"},
+            {"input": 'start_time = "08:15", end_time = "08:45"', "output": "30"},
+        ],
+        "starters": {
+            "python": "def minutes_between(start_time, end_time):\n    # Return the number of minutes from start_time to end_time.\n    pass\n",
+            "javascript": "function minutes_between(start_time, end_time) {\n    // Return the number of minutes from start_time to end_time.\n}\n",
+        },
+        "sample_tests": [
+            {"args": ["09:00", "17:30"], "expected": 510},
+            {"args": ["08:15", "08:45"], "expected": 30},
+        ],
+        "hidden_tests": [
+            {"args": ["00:00", "00:00"], "expected": 0},
+            {"args": ["23:00", "23:59"], "expected": 59},
+            {"args": ["06:05", "09:00"], "expected": 175},
+        ],
+    },
+    {
+        "id": "flatten-shopping-cart",
+        "title": "Flatten Shopping Cart",
+        "difficulty": "Medium",
+        "function_name": "flatten_cart",
+        "time_limit_secs": 5,
+        "prompt": (
+            "A shopping-cart export can nest items inside bundles inside bundles. Given "
+            "an arbitrarily nested list `cart` of item name strings, return a single flat "
+            "list of item names in their original left-to-right order."
+        ),
+        "constraints": ["Nesting depth is reasonable (won't overflow recursion)."],
+        "examples": [
+            {"input": 'cart = ["a", ["b", "c"], "d"]', "output": '["a", "b", "c", "d"]'},
+            {"input": 'cart = ["shirt", ["socks", ["belt"]], "hat"]', "output": '["shirt", "socks", "belt", "hat"]'},
+        ],
+        "starters": {
+            "python": "def flatten_cart(cart):\n    # Return a flat list of every item name in cart, in order.\n    pass\n",
+            "javascript": "function flatten_cart(cart) {\n    // Return a flat array of every item name in cart, in order.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [["a", ["b", "c"], "d"]], "expected": ["a", "b", "c", "d"]},
+            {"args": [["shirt", ["socks", ["belt"]], "hat"]], "expected": ["shirt", "socks", "belt", "hat"]},
+        ],
+        "hidden_tests": [
+            {"args": [[]], "expected": []},
+            {"args": [["single"]], "expected": ["single"]},
+            {"args": [[[[["deep"]]]]], "expected": ["deep"]},
+            {"args": [["x", [], "y"]], "expected": ["x", "y"]},
+        ],
+    },
+    {
+        "id": "missing-invoice-number",
+        "title": "Missing Invoice Number",
+        "difficulty": "Easy",
+        "function_name": "find_missing_invoice",
+        "time_limit_secs": 5,
+        "prompt": (
+            "A batch of invoice numbers should be consecutive integers, but exactly one "
+            "is missing from the unsorted list `invoices`. Return the missing number."
+        ),
+        "constraints": ["2 <= len(invoices) <= 10^5"],
+        "examples": [
+            {"input": "invoices = [1001, 1002, 1004, 1005]", "output": "1003"},
+            {"input": "invoices = [5, 6, 8]", "output": "7"},
+        ],
+        "starters": {
+            "python": "def find_missing_invoice(invoices):\n    # Return the one integer missing from this otherwise-consecutive range.\n    pass\n",
+            "javascript": "function find_missing_invoice(invoices) {\n    // Return the one integer missing from this otherwise-consecutive range.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [[1001, 1002, 1004, 1005]], "expected": 1003},
+            {"args": [[5, 6, 8]], "expected": 7},
+        ],
+        "hidden_tests": [
+            {"args": [[1, 3]], "expected": 2},
+            {"args": [[100, 101, 103]], "expected": 102},
+            {"args": [[10, 12, 13, 14]], "expected": 11},
+        ],
+    },
+    {
+        "id": "group-logs-by-level",
+        "title": "Group Logs By Level",
+        "difficulty": "Medium",
+        "function_name": "group_log_entries",
+        "time_limit_secs": 5,
+        "prompt": (
+            "Given a list of log lines formatted as \"LEVEL: message\" (e.g. \"ERROR: disk "
+            "full\"), group the messages by level. Return a dict mapping each level to a "
+            "list of its messages, in their original order."
+        ),
+        "constraints": ["0 <= len(logs) <= 10^4"],
+        "examples": [
+            {"input": 'logs = ["INFO: started", "ERROR: failed", "INFO: retrying"]',
+             "output": '{"INFO": ["started", "retrying"], "ERROR": ["failed"]}'},
+        ],
+        "starters": {
+            "python": "def group_log_entries(logs):\n    # Return {level: [messages...]} grouped from 'LEVEL: message' lines.\n    pass\n",
+            "javascript": "function group_log_entries(logs) {\n    // Return {level: [messages...]} grouped from 'LEVEL: message' lines.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [["INFO: started", "ERROR: failed", "INFO: retrying"]],
+             "expected": {"INFO": ["started", "retrying"], "ERROR": ["failed"]}},
+        ],
+        "hidden_tests": [
+            {"args": [[]], "expected": {}},
+            {"args": [["WARN: low battery"]], "expected": {"WARN": ["low battery"]}},
+            {"args": [["INFO: a", "INFO: b", "INFO: c"]], "expected": {"INFO": ["a", "b", "c"]}},
+        ],
+    },
+    {
+        "id": "longest-active-streak",
+        "title": "Longest Active Streak",
+        "difficulty": "Medium",
+        "function_name": "longest_active_streak",
+        "time_limit_secs": 5,
+        "prompt": (
+            "A learning platform tracks daily activity. Given a list of booleans `days` "
+            "(True = active that day), return the length of the longest consecutive run "
+            "of active days."
+        ),
+        "constraints": ["0 <= len(days) <= 10^5"],
+        "examples": [
+            {"input": "days = [true, true, false, true, true, true]", "output": "3"},
+            {"input": "days = [false, false]", "output": "0"},
+        ],
+        "starters": {
+            "python": "def longest_active_streak(days):\n    # Return the length of the longest run of consecutive True values.\n    pass\n",
+            "javascript": "function longest_active_streak(days) {\n    // Return the length of the longest run of consecutive true values.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [[True, True, False, True, True, True]], "expected": 3},
+            {"args": [[False, False]], "expected": 0},
+        ],
+        "hidden_tests": [
+            {"args": [[]], "expected": 0},
+            {"args": [[True]], "expected": 1},
+            {"args": [[True, True, True]], "expected": 3},
+            {"args": [[True, False, True, False, True]], "expected": 1},
+        ],
+    },
+    {
+        "id": "duplicate-transaction-detector",
+        "title": "Duplicate Transaction Detector",
+        "difficulty": "Easy",
+        "function_name": "has_duplicate_transaction",
+        "time_limit_secs": 5,
+        "prompt": (
+            "A payments system wants to flag a possible double-charge. Return True if "
+            "any id in `transaction_ids` appears more than once."
+        ),
+        "constraints": ["0 <= len(transaction_ids) <= 10^5"],
+        "examples": [
+            {"input": 'transaction_ids = ["tx1", "tx2", "tx1"]', "output": "true"},
+            {"input": 'transaction_ids = ["tx1", "tx2", "tx3"]', "output": "false"},
+        ],
+        "starters": {
+            "python": "def has_duplicate_transaction(transaction_ids):\n    # Return True if any id appears more than once.\n    pass\n",
+            "javascript": "function has_duplicate_transaction(transaction_ids) {\n    // Return true if any id appears more than once.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [["tx1", "tx2", "tx1"]], "expected": True},
+            {"args": [["tx1", "tx2", "tx3"]], "expected": False},
+        ],
+        "hidden_tests": [
+            {"args": [[]], "expected": False},
+            {"args": [["a"]], "expected": False},
+            {"args": [["a", "a", "a"]], "expected": True},
+        ],
+    },
+    {
+        "id": "median-response-time",
+        "title": "Median Response Time",
+        "difficulty": "Medium",
+        "function_name": "median_response_time",
+        "time_limit_secs": 5,
+        "prompt": (
+            "A monitoring dashboard needs the median API response time. Given a list of "
+            "numbers `times`, return their median as a float — for an even count, average "
+            "the two middle values."
+        ),
+        "constraints": ["1 <= len(times) <= 10^5"],
+        "examples": [
+            {"input": "times = [3, 1, 2]", "output": "2.0"},
+            {"input": "times = [10, 20, 30, 40]", "output": "25.0"},
+        ],
+        "starters": {
+            "python": "def median_response_time(times):\n    # Return the median of times as a float.\n    pass\n",
+            "javascript": "function median_response_time(times) {\n    // Return the median of times as a number.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [[3, 1, 2]], "expected": 2.0},
+            {"args": [[10, 20, 30, 40]], "expected": 25.0},
+        ],
+        "hidden_tests": [
+            {"args": [[5]], "expected": 5.0},
+            {"args": [[1, 2]], "expected": 1.5},
+            {"args": [[7, 7, 7, 7, 7]], "expected": 7.0},
+        ],
+    },
+    {
+        "id": "parse-csv-row",
+        "title": "Parse CSV Row",
+        "difficulty": "Easy",
+        "function_name": "parse_csv_row",
+        "time_limit_secs": 5,
+        "prompt": (
+            "Given a `header` list of column names and one comma-separated `row` string "
+            "with the same number of values, return a dict mapping each header to its "
+            "value (values stripped of surrounding whitespace)."
+        ),
+        "constraints": ["len(row.split(',')) == len(header)"],
+        "examples": [
+            {"input": 'header = ["name", "age"], row = "Ali, 25"', "output": '{"name": "Ali", "age": "25"}'},
+        ],
+        "starters": {
+            "python": "def parse_csv_row(header, row):\n    # Return {header[i]: value_i} from the comma-separated row.\n    pass\n",
+            "javascript": "function parse_csv_row(header, row) {\n    // Return {header[i]: value_i} from the comma-separated row.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [["name", "age"], "Ali, 25"], "expected": {"name": "Ali", "age": "25"}},
+        ],
+        "hidden_tests": [
+            {"args": [["a", "b", "c"], "1,2,3"], "expected": {"a": "1", "b": "2", "c": "3"}},
+            {"args": [["x"], " hello "], "expected": {"x": "hello"}},
+            {"args": [[], ""], "expected": {}},
+        ],
+    },
+    {
+        "id": "top-k-error-codes",
+        "title": "Top K Error Codes",
+        "difficulty": "Medium",
+        "function_name": "top_k_frequent",
+        "time_limit_secs": 5,
+        "prompt": (
+            "Given a list of error `codes` (strings) and an integer `k`, return the `k` "
+            "most frequent codes as a list ordered by frequency descending. Break ties by "
+            "the order the code first appeared in `codes`."
+        ),
+        "constraints": ["0 <= k <= len(codes)"],
+        "examples": [
+            {"input": 'codes = ["404", "500", "404", "404", "500"], k = 2', "output": '["404", "500"]'},
+        ],
+        "starters": {
+            "python": "def top_k_frequent(codes, k):\n    # Return the k most frequent codes, ties broken by first-seen order.\n    pass\n",
+            "javascript": "function top_k_frequent(codes, k) {\n    // Return the k most frequent codes, ties broken by first-seen order.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [["404", "500", "404", "404", "500"], 2], "expected": ["404", "500"]},
+            {"args": [["A", "B", "C"], 2], "expected": ["A", "B"]},
+        ],
+        "hidden_tests": [
+            {"args": [[], 3], "expected": []},
+            {"args": [["X"], 5], "expected": ["X"]},
+            {"args": [["a", "b", "a", "c", "b", "a"], 1], "expected": ["a"]},
+            {"args": [["e1", "e2", "e1", "e2", "e3"], 3], "expected": ["e1", "e2", "e3"]},
+        ],
+    },
+    {
+        "id": "sliding-window-rate-limiter",
+        "title": "Sliding Window Rate Limiter",
+        "difficulty": "Hard",
+        "function_name": "is_request_allowed",
+        "time_limit_secs": 5,
+        "prompt": (
+            "Implement a sliding-window rate limiter. Given `existing_timestamps` (a "
+            "sorted list of ints, seconds, of previously accepted requests), a "
+            "`new_timestamp` (int), a `limit`, and `window_seconds`, return True if the "
+            "new request should be ALLOWED: the count of existing timestamps in the "
+            "half-open window (new_timestamp - window_seconds, new_timestamp] must be "
+            "strictly less than `limit`."
+        ),
+        "constraints": ["0 <= len(existing_timestamps) <= 10^4", "1 <= limit", "1 <= window_seconds"],
+        "examples": [
+            {"input": "existing_timestamps = [10, 20], new_timestamp = 35, limit = 3, window_seconds = 30",
+             "output": "true"},
+            {"input": "existing_timestamps = [10, 20, 30], new_timestamp = 35, limit = 3, window_seconds = 30",
+             "output": "false"},
+        ],
+        "starters": {
+            "python": "def is_request_allowed(existing_timestamps, new_timestamp, limit, window_seconds):\n    # Return True if fewer than limit requests fall in the trailing window.\n    pass\n",
+            "javascript": "function is_request_allowed(existing_timestamps, new_timestamp, limit, window_seconds) {\n    // Return true if fewer than limit requests fall in the trailing window.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [[10, 20], 35, 3, 30], "expected": True},
+            {"args": [[10, 20, 30], 35, 3, 30], "expected": False},
+        ],
+        "hidden_tests": [
+            {"args": [[], 5, 1, 10], "expected": True},
+            {"args": [[100], 150, 2, 50], "expected": True},
+            {"args": [[100, 120, 140], 150, 2, 50], "expected": False},
+            {"args": [[1, 2, 3, 4, 5], 10, 10, 100], "expected": True},
+        ],
+    },
+    {
+        "id": "format-phone-number",
+        "title": "Format Phone Number",
+        "difficulty": "Easy",
+        "function_name": "format_phone_number",
+        "time_limit_secs": 5,
+        "prompt": (
+            "Given a string `digits` that contains exactly 10 digit characters mixed in "
+            "with other formatting characters (spaces, dashes, parentheses, dots), return "
+            "just the digits formatted as \"XXX-XXX-XXXX\"."
+        ),
+        "constraints": ["digits contains exactly 10 digit characters."],
+        "examples": [
+            {"input": 'digits = "1234567890"', "output": '"123-456-7890"'},
+            {"input": 'digits = "(123) 456-7890"', "output": '"123-456-7890"'},
+        ],
+        "starters": {
+            "python": "def format_phone_number(digits):\n    # Return the 10 digits in digits formatted as XXX-XXX-XXXX.\n    pass\n",
+            "javascript": "function format_phone_number(digits) {\n    // Return the 10 digits in digits formatted as XXX-XXX-XXXX.\n}\n",
+        },
+        "sample_tests": [
+            {"args": ["1234567890"], "expected": "123-456-7890"},
+            {"args": ["(123) 456-7890"], "expected": "123-456-7890"},
+        ],
+        "hidden_tests": [
+            {"args": ["123.456.7890"], "expected": "123-456-7890"},
+            {"args": [" 987 654 3210 "], "expected": "987-654-3210"},
+        ],
+    },
+    {
+        "id": "average-rating-calculator",
+        "title": "Average Rating Calculator",
+        "difficulty": "Easy",
+        "function_name": "average_rating",
+        "time_limit_secs": 5,
+        "prompt": (
+            "Given a list of numeric `ratings`, return their average rounded to 1 decimal "
+            "place. Return 0.0 for an empty list."
+        ),
+        "constraints": ["0 <= len(ratings) <= 10^5"],
+        "examples": [
+            {"input": "ratings = [5, 5, 4, 4]", "output": "4.5"},
+            {"input": "ratings = [3, 3, 3]", "output": "3.0"},
+        ],
+        "starters": {
+            "python": "def average_rating(ratings):\n    # Return the average of ratings, rounded to 1 decimal, or 0.0 if empty.\n    pass\n",
+            "javascript": "function average_rating(ratings) {\n    // Return the average of ratings, rounded to 1 decimal, or 0.0 if empty.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [[5, 5, 4, 4]], "expected": 4.5},
+            {"args": [[3, 3, 3]], "expected": 3.0},
+        ],
+        "hidden_tests": [
+            {"args": [[]], "expected": 0.0},
+            {"args": [[5]], "expected": 5.0},
+            {"args": [[1, 2, 3, 4, 5]], "expected": 3.0},
+            {"args": [[4, 4, 5]], "expected": 4.3},
+        ],
+    },
+    {
+        "id": "merge-sorted-employee-ids",
+        "title": "Merge Sorted Employee ID Lists",
+        "difficulty": "Easy",
+        "function_name": "merge_sorted_lists",
+        "time_limit_secs": 5,
+        "prompt": (
+            "Two branch offices each export their employee IDs already sorted ascending. "
+            "Given `list1` and `list2`, return one merged, sorted list containing every id "
+            "from both (duplicates kept)."
+        ),
+        "constraints": ["0 <= len(list1), len(list2) <= 10^5"],
+        "examples": [
+            {"input": "list1 = [1, 3, 5], list2 = [2, 4, 6]", "output": "[1, 2, 3, 4, 5, 6]"},
+            {"input": "list1 = [], list2 = [1, 2]", "output": "[1, 2]"},
+        ],
+        "starters": {
+            "python": "def merge_sorted_lists(list1, list2):\n    # Return list1 and list2 merged into one sorted list.\n    pass\n",
+            "javascript": "function merge_sorted_lists(list1, list2) {\n    // Return list1 and list2 merged into one sorted array.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [[1, 3, 5], [2, 4, 6]], "expected": [1, 2, 3, 4, 5, 6]},
+            {"args": [[], [1, 2]], "expected": [1, 2]},
+        ],
+        "hidden_tests": [
+            {"args": [[1, 2, 3], []], "expected": [1, 2, 3]},
+            {"args": [[5], [1, 2, 3]], "expected": [1, 2, 3, 5]},
+            {"args": [[1, 1, 2], [1, 3]], "expected": [1, 1, 1, 2, 3]},
+        ],
+    },
 ]
 
 # SQL problems live in their own module because their test cases are shaped differently

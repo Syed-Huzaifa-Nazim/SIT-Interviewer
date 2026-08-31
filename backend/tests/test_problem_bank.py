@@ -213,6 +213,147 @@ def min_distance(word1, word2):
         prev = curr
     return prev[n]
 """,
+    "order-total-with-discount": """
+def calculate_order_total(prices, discount_percent):
+    total = sum(prices)
+    return round(total * (1 - discount_percent / 100), 2)
+""",
+    "password-strength-checker": """
+def is_strong_password(password):
+    if len(password) < 8:
+        return False
+    has_upper = any(c.isupper() for c in password)
+    has_lower = any(c.islower() for c in password)
+    has_digit = any(c.isdigit() for c in password)
+    return has_upper and has_lower and has_digit
+""",
+    "word-occurrence-counter": """
+def count_word_occurrences(text, word):
+    target = word.lower()
+    count = 0
+    for token in text.split():
+        cleaned = token.strip(".,!?;:'\\"()[]{}").lower()
+        if cleaned == target:
+            count += 1
+    return count
+""",
+    "email-format-validator": """
+import re
+def is_valid_email(email):
+    pattern = r'^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$'
+    return bool(re.match(pattern, email or ""))
+""",
+    "inventory-reorder-check": """
+def needs_reorder(current_stock, reorder_threshold):
+    return current_stock <= reorder_threshold
+""",
+    "compound-interest-calculator": """
+def compound_interest(principal, rate, years):
+    return round(principal * (1 + rate / 100) ** years, 2)
+""",
+    "username-anagram-check": """
+def is_anagram(a, b):
+    return sorted(a.lower()) == sorted(b.lower())
+""",
+    "shift-time-difference": """
+def minutes_between(start_time, end_time):
+    sh, sm = map(int, start_time.split(':'))
+    eh, em = map(int, end_time.split(':'))
+    return (eh * 60 + em) - (sh * 60 + sm)
+""",
+    "flatten-shopping-cart": """
+def flatten_cart(cart):
+    result = []
+    def _walk(node):
+        if isinstance(node, list):
+            for item in node:
+                _walk(item)
+        else:
+            result.append(node)
+    _walk(cart)
+    return result
+""",
+    "missing-invoice-number": """
+def find_missing_invoice(invoices):
+    lo, hi = min(invoices), max(invoices)
+    expected_sum = (hi - lo + 1) * (lo + hi) // 2
+    return expected_sum - sum(invoices)
+""",
+    "group-logs-by-level": """
+def group_log_entries(logs):
+    groups = {}
+    for line in logs:
+        level, _, message = line.partition(': ')
+        groups.setdefault(level, []).append(message)
+    return groups
+""",
+    "longest-active-streak": """
+def longest_active_streak(days):
+    best = current = 0
+    for d in days:
+        if d:
+            current += 1
+            best = max(best, current)
+        else:
+            current = 0
+    return best
+""",
+    "duplicate-transaction-detector": """
+def has_duplicate_transaction(transaction_ids):
+    return len(transaction_ids) != len(set(transaction_ids))
+""",
+    "median-response-time": """
+def median_response_time(times):
+    s = sorted(times)
+    n = len(s)
+    mid = n // 2
+    if n % 2 == 1:
+        return float(s[mid])
+    return (s[mid - 1] + s[mid]) / 2.0
+""",
+    "parse-csv-row": """
+def parse_csv_row(header, row):
+    values = [v.strip() for v in row.split(',')]
+    return dict(zip(header, values))
+""",
+    "top-k-error-codes": """
+def top_k_frequent(codes, k):
+    counts = {}
+    for c in codes:
+        counts[c] = counts.get(c, 0) + 1
+    ordered = sorted(counts.items(), key=lambda kv: -kv[1])
+    return [code for code, _ in ordered[:k]]
+""",
+    "sliding-window-rate-limiter": """
+def is_request_allowed(existing_timestamps, new_timestamp, limit, window_seconds):
+    window_start = new_timestamp - window_seconds
+    count = sum(1 for t in existing_timestamps if window_start < t <= new_timestamp)
+    return count < limit
+""",
+    "format-phone-number": """
+def format_phone_number(digits):
+    only = ''.join(c for c in digits if c.isdigit())
+    return f"{only[:3]}-{only[3:6]}-{only[6:]}"
+""",
+    "average-rating-calculator": """
+def average_rating(ratings):
+    if not ratings:
+        return 0.0
+    return round(sum(ratings) / len(ratings), 1)
+""",
+    "merge-sorted-employee-ids": """
+def merge_sorted_lists(list1, list2):
+    result = []
+    i = j = 0
+    while i < len(list1) and j < len(list2):
+        if list1[i] <= list2[j]:
+            result.append(list1[i]); i += 1
+        else:
+            result.append(list2[j]); j += 1
+    result.extend(list1[i:])
+    result.extend(list2[j:])
+    return result
+""",
 }
 
 
