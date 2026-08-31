@@ -910,6 +910,200 @@ def max_consecutive_ones(nums):
 def remaining_budget(total_budget, expenses):
     return round(total_budget - sum(expenses), 2)
 """,
+    "word-ladder-length": """
+def ladder_length(begin_word, end_word, word_list):
+    word_set = set(word_list)
+    if end_word not in word_set:
+        return 0
+    from collections import deque
+    queue = deque([(begin_word, 1)])
+    visited = {begin_word}
+    alphabet = 'abcdefghijklmnopqrstuvwxyz'
+    while queue:
+        word, length = queue.popleft()
+        if word == end_word:
+            return length
+        for i in range(len(word)):
+            for c in alphabet:
+                if c == word[i]:
+                    continue
+                candidate = word[:i] + c + word[i + 1:]
+                if candidate in word_set and candidate not in visited:
+                    visited.add(candidate)
+                    queue.append((candidate, length + 1))
+    return 0
+""",
+    "n-queens-count": """
+def count_n_queens_solutions(n):
+    count = 0
+    cols = set(); diag1 = set(); diag2 = set()
+    def backtrack(row):
+        nonlocal count
+        if row == n:
+            count += 1
+            return
+        for col in range(n):
+            if col in cols or (row - col) in diag1 or (row + col) in diag2:
+                continue
+            cols.add(col); diag1.add(row - col); diag2.add(row + col)
+            backtrack(row + 1)
+            cols.remove(col); diag1.remove(row - col); diag2.remove(row + col)
+    backtrack(0)
+    return count
+""",
+    "course-schedule-possible": """
+def can_finish(num_courses, prerequisites):
+    from collections import defaultdict, deque
+    graph = defaultdict(list)
+    indegree = [0] * num_courses
+    for a, b in prerequisites:
+        graph[b].append(a)
+        indegree[a] += 1
+    queue = deque([i for i in range(num_courses) if indegree[i] == 0])
+    visited = 0
+    while queue:
+        node = queue.popleft()
+        visited += 1
+        for nxt in graph[node]:
+            indegree[nxt] -= 1
+            if indegree[nxt] == 0:
+                queue.append(nxt)
+    return visited == num_courses
+""",
+    "minimum-window-substring": """
+def min_window(s, t):
+    if not s or not t:
+        return ""
+    from collections import Counter
+    need = Counter(t)
+    missing = len(t)
+    left = 0
+    best_left, best_right = 0, 0
+    for right, ch in enumerate(s, 1):
+        if need[ch] > 0:
+            missing -= 1
+        need[ch] -= 1
+        if missing == 0:
+            while left < right and need[s[left]] < 0:
+                need[s[left]] += 1
+                left += 1
+            if best_right == 0 or right - left < best_right - best_left:
+                best_left, best_right = left, right
+    return s[best_left:best_right]
+""",
+    "largest-rectangle-in-histogram": """
+def largest_rectangle_area(heights):
+    extended = list(heights) + [0]
+    stack = []
+    max_area = 0
+    for i, h in enumerate(extended):
+        while stack and extended[stack[-1]] >= h:
+            height = extended[stack.pop()]
+            width = i if not stack else i - stack[-1] - 1
+            max_area = max(max_area, height * width)
+        stack.append(i)
+    return max_area
+""",
+    "merge-k-sorted-lists": """
+def merge_k_lists(lists):
+    merged = []
+    for lst in lists:
+        merged.extend(lst)
+    return sorted(merged)
+""",
+    "regular-expression-matching-simple": """
+def is_match(s, p):
+    m, n = len(s), len(p)
+    dp = [[False] * (n + 1) for _ in range(m + 1)]
+    dp[0][0] = True
+    for j in range(1, n + 1):
+        if p[j - 1] == '*':
+            dp[0][j] = dp[0][j - 2]
+    for i in range(1, m + 1):
+        for j in range(1, n + 1):
+            if p[j - 1] == '.' or p[j - 1] == s[i - 1]:
+                dp[i][j] = dp[i - 1][j - 1]
+            elif p[j - 1] == '*':
+                dp[i][j] = dp[i][j - 2]
+                if p[j - 2] == '.' or p[j - 2] == s[i - 1]:
+                    dp[i][j] = dp[i][j] or dp[i - 1][j]
+    return dp[m][n]
+""",
+    "word-break-possible": """
+def word_break(s, word_dict):
+    words = set(word_dict)
+    n = len(s)
+    dp = [False] * (n + 1)
+    dp[0] = True
+    for i in range(1, n + 1):
+        for j in range(i):
+            if dp[j] and s[j:i] in words:
+                dp[i] = True
+                break
+    return dp[n]
+""",
+    "longest-increasing-subsequence-length": """
+def length_of_lis(nums):
+    if not nums:
+        return 0
+    dp = [1] * len(nums)
+    for i in range(len(nums)):
+        for j in range(i):
+            if nums[j] < nums[i]:
+                dp[i] = max(dp[i], dp[j] + 1)
+    return max(dp)
+""",
+    "maximum-subarray-product": """
+def max_product_subarray(nums):
+    max_prod = min_prod = result = nums[0]
+    for n in nums[1:]:
+        candidates = (n, max_prod * n, min_prod * n)
+        max_prod, min_prod = max(candidates), min(candidates)
+        result = max(result, max_prod)
+    return result
+""",
+    "jump-game-min-jumps": """
+def min_jumps(nums):
+    n = len(nums)
+    if n <= 1:
+        return 0
+    jumps = 0
+    current_end = 0
+    farthest = 0
+    for i in range(n - 1):
+        farthest = max(farthest, i + nums[i])
+        if i == current_end:
+            jumps += 1
+            current_end = farthest
+    return jumps
+""",
+    "coin-change-min-coins": """
+def coin_change(coins, amount):
+    INF = float('inf')
+    dp = [0] + [INF] * amount
+    for i in range(1, amount + 1):
+        for c in coins:
+            if c <= i:
+                dp[i] = min(dp[i], dp[i - c] + 1)
+    return dp[amount] if dp[amount] != INF else -1
+""",
+    "graph-valid-tree": """
+def valid_tree(n, edges):
+    if len(edges) != n - 1:
+        return False
+    parent = list(range(n))
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+    for a, b in edges:
+        ra, rb = find(a), find(b)
+        if ra == rb:
+            return False
+        parent[ra] = rb
+    return True
+""",
 }
 
 

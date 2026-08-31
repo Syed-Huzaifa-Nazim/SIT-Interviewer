@@ -3361,6 +3361,336 @@ PROBLEMS = [
             {"args": [100.5, [50.25, 25.25]], "expected": 25.0},
         ],
     },
+
+    # --- Batch 6: Hard-only, to grow the stretch end of the difficulty curve. ---
+    {
+        "id": "word-ladder-length",
+        "title": "Word Ladder Length",
+        "difficulty": "Hard",
+        "function_name": "ladder_length",
+        "time_limit_secs": 5,
+        "prompt": (
+            "Given `begin_word`, `end_word`, and a `word_list`, return the length of the "
+            "shortest transformation sequence from begin_word to end_word, changing one "
+            "letter at a time, where every intermediate word must exist in word_list. "
+            "Return 0 if no such sequence exists."
+        ),
+        "constraints": ["All words are the same length.", "1 <= len(word_list) <= 5000"],
+        "examples": [
+            {"input": 'begin_word = "hit", end_word = "cog", word_list = ["hot", "dot", "dog", "lot", "log", "cog"]',
+             "output": "5"},
+        ],
+        "starters": {
+            "python": "def ladder_length(begin_word, end_word, word_list):\n    # Return the length of the shortest word-ladder from begin_word to end_word, or 0.\n    pass\n",
+            "javascript": "function ladder_length(begin_word, end_word, word_list) {\n    // Return the length of the shortest word-ladder from begin_word to end_word, or 0.\n}\n",
+        },
+        "sample_tests": [
+            {"args": ["hit", "cog", ["hot", "dot", "dog", "lot", "log", "cog"]], "expected": 5},
+            {"args": ["hit", "cog", ["hot", "dot", "dog", "lot", "log"]], "expected": 0},
+        ],
+        "hidden_tests": [
+            {"args": ["a", "c", ["a", "b", "c"]], "expected": 2},
+            {"args": ["hot", "dog", ["hot", "dog"]], "expected": 0},
+            {"args": ["same", "same", ["same"]], "expected": 1},
+        ],
+    },
+    {
+        "id": "n-queens-count",
+        "title": "N-Queens Count",
+        "difficulty": "Hard",
+        "function_name": "count_n_queens_solutions",
+        "time_limit_secs": 5,
+        "prompt": "Given a board size `n`, return the number of distinct ways to place n queens on an n x n board so that no two attack each other.",
+        "constraints": ["0 <= n <= 8"],
+        "examples": [{"input": "n = 4", "output": "2"}],
+        "starters": {
+            "python": "def count_n_queens_solutions(n):\n    # Return the number of valid n-queens placements.\n    pass\n",
+            "javascript": "function count_n_queens_solutions(n) {\n    // Return the number of valid n-queens placements.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [4], "expected": 2},
+            {"args": [1], "expected": 1},
+        ],
+        "hidden_tests": [
+            {"args": [0], "expected": 1},
+            {"args": [8], "expected": 92},
+            {"args": [2], "expected": 0},
+            {"args": [3], "expected": 0},
+        ],
+    },
+    {
+        "id": "course-schedule-possible",
+        "title": "Course Schedule Possible",
+        "difficulty": "Hard",
+        "function_name": "can_finish",
+        "time_limit_secs": 5,
+        "prompt": (
+            "Given `num_courses` and a list of `prerequisites` pairs [a, b] meaning course "
+            "a requires course b first, return True if it's possible to finish all courses "
+            "(i.e. the prerequisite graph has no cycle)."
+        ),
+        "constraints": ["0 <= num_courses <= 2000"],
+        "examples": [{"input": "num_courses = 2, prerequisites = [[1, 0]]", "output": "true"}],
+        "starters": {
+            "python": "def can_finish(num_courses, prerequisites):\n    # Return True if all courses can be completed (no prerequisite cycle).\n    pass\n",
+            "javascript": "function can_finish(num_courses, prerequisites) {\n    // Return true if all courses can be completed (no prerequisite cycle).\n}\n",
+        },
+        "sample_tests": [
+            {"args": [2, [[1, 0]]], "expected": True},
+            {"args": [2, [[1, 0], [0, 1]]], "expected": False},
+        ],
+        "hidden_tests": [
+            {"args": [1, []], "expected": True},
+            {"args": [3, [[1, 0], [2, 1]]], "expected": True},
+            {"args": [3, [[0, 1], [1, 2], [2, 0]]], "expected": False},
+        ],
+    },
+    {
+        "id": "minimum-window-substring",
+        "title": "Minimum Window Substring",
+        "difficulty": "Hard",
+        "function_name": "min_window",
+        "time_limit_secs": 5,
+        "prompt": (
+            "Given strings `s` and `t`, return the smallest substring of s that contains "
+            "every character of t (with at least its multiplicity in t). Return \"\" if no "
+            "such substring exists."
+        ),
+        "constraints": ["0 <= len(s), len(t) <= 10^4"],
+        "examples": [{"input": 's = "ADOBECODEBANC", t = "ABC"', "output": '"BANC"'}],
+        "starters": {
+            "python": "def min_window(s, t):\n    # Return the smallest substring of s containing every character of t.\n    pass\n",
+            "javascript": "function min_window(s, t) {\n    // Return the smallest substring of s containing every character of t.\n}\n",
+        },
+        "sample_tests": [
+            {"args": ["ADOBECODEBANC", "ABC"], "expected": "BANC"},
+            {"args": ["a", "a"], "expected": "a"},
+        ],
+        "hidden_tests": [
+            {"args": ["a", "aa"], "expected": ""},
+            {"args": ["ab", "b"], "expected": "b"},
+            {"args": ["", "a"], "expected": ""},
+        ],
+    },
+    {
+        "id": "largest-rectangle-in-histogram",
+        "title": "Largest Rectangle In Histogram",
+        "difficulty": "Hard",
+        "function_name": "largest_rectangle_area",
+        "time_limit_secs": 5,
+        "prompt": "Given a list `heights` of histogram bar heights (each width 1), return the area of the largest rectangle that fits entirely within the histogram.",
+        "constraints": ["0 <= len(heights) <= 10^5"],
+        "examples": [{"input": "heights = [2, 1, 5, 6, 2, 3]", "output": "10"}],
+        "starters": {
+            "python": "def largest_rectangle_area(heights):\n    # Return the area of the largest rectangle in the histogram.\n    pass\n",
+            "javascript": "function largest_rectangle_area(heights) {\n    // Return the area of the largest rectangle in the histogram.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [[2, 1, 5, 6, 2, 3]], "expected": 10},
+            {"args": [[2, 4]], "expected": 4},
+        ],
+        "hidden_tests": [
+            {"args": [[]], "expected": 0},
+            {"args": [[1]], "expected": 1},
+            {"args": [[0, 0, 0]], "expected": 0},
+            {"args": [[5, 5, 5, 5]], "expected": 20},
+        ],
+    },
+    {
+        "id": "merge-k-sorted-lists",
+        "title": "Merge K Sorted Lists",
+        "difficulty": "Hard",
+        "function_name": "merge_k_lists",
+        "time_limit_secs": 5,
+        "prompt": "Given `lists`, a list of already-sorted lists of integers, merge them all into a single sorted list.",
+        "constraints": ["0 <= len(lists) <= 10^4"],
+        "examples": [{"input": "lists = [[1, 4, 5], [1, 3, 4], [2, 6]]", "output": "[1, 1, 2, 3, 4, 4, 5, 6]"}],
+        "starters": {
+            "python": "def merge_k_lists(lists):\n    # Return all values from lists merged into one sorted list.\n    pass\n",
+            "javascript": "function merge_k_lists(lists) {\n    // Return all values from lists merged into one sorted array.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [[[1, 4, 5], [1, 3, 4], [2, 6]]], "expected": [1, 1, 2, 3, 4, 4, 5, 6]},
+        ],
+        "hidden_tests": [
+            {"args": [[]], "expected": []},
+            {"args": [[[1], [0]]], "expected": [0, 1]},
+            {"args": [[[5, 5], [5, 5]]], "expected": [5, 5, 5, 5]},
+        ],
+    },
+    {
+        "id": "regular-expression-matching-simple",
+        "title": "Regular Expression Matching",
+        "difficulty": "Hard",
+        "function_name": "is_match",
+        "time_limit_secs": 5,
+        "prompt": (
+            "Implement regex matching supporting '.' (matches any single character) and "
+            "'*' (matches zero or more of the preceding element). The match must cover the "
+            "ENTIRE input string `s` against pattern `p`."
+        ),
+        "constraints": ["0 <= len(s) <= 20", "0 <= len(p) <= 30"],
+        "examples": [
+            {"input": 's = "aa", p = "a"', "output": "false"},
+            {"input": 's = "aa", p = "a*"', "output": "true"},
+        ],
+        "starters": {
+            "python": "def is_match(s, p):\n    # Return True if p matches the entirety of s ('.' and '*' supported).\n    pass\n",
+            "javascript": "function is_match(s, p) {\n    // Return true if p matches the entirety of s ('.' and '*' supported).\n}\n",
+        },
+        "sample_tests": [
+            {"args": ["aa", "a"], "expected": False},
+            {"args": ["aa", "a*"], "expected": True},
+        ],
+        "hidden_tests": [
+            {"args": ["ab", ".*"], "expected": True},
+            {"args": ["mississippi", "mis*is*p*."], "expected": False},
+            {"args": ["", ""], "expected": True},
+            {"args": ["aaa", "a*a"], "expected": True},
+        ],
+    },
+    {
+        "id": "word-break-possible",
+        "title": "Word Break Possible",
+        "difficulty": "Hard",
+        "function_name": "word_break",
+        "time_limit_secs": 5,
+        "prompt": "Given a string `s` and a `word_dict` list of words, return True if s can be segmented into a sequence of one or more dictionary words (words may be reused).",
+        "constraints": ["0 <= len(s) <= 300"],
+        "examples": [{"input": 's = "leetcode", word_dict = ["leet", "code"]', "output": "true"}],
+        "starters": {
+            "python": "def word_break(s, word_dict):\n    # Return True if s can be segmented into words from word_dict.\n    pass\n",
+            "javascript": "function word_break(s, word_dict) {\n    // Return true if s can be segmented into words from word_dict.\n}\n",
+        },
+        "sample_tests": [
+            {"args": ["leetcode", ["leet", "code"]], "expected": True},
+            {"args": ["applepenapple", ["apple", "pen"]], "expected": True},
+        ],
+        "hidden_tests": [
+            {"args": ["catsandog", ["cats", "dog", "sand", "and", "cat"]], "expected": False},
+            {"args": ["", []], "expected": True},
+            {"args": ["a", ["b"]], "expected": False},
+        ],
+    },
+    {
+        "id": "longest-increasing-subsequence-length",
+        "title": "Longest Increasing Subsequence",
+        "difficulty": "Hard",
+        "function_name": "length_of_lis",
+        "time_limit_secs": 5,
+        "prompt": "Given a list `nums`, return the length of the longest strictly increasing subsequence.",
+        "constraints": ["0 <= len(nums) <= 2500"],
+        "examples": [{"input": "nums = [10, 9, 2, 5, 3, 7, 101, 18]", "output": "4"}],
+        "starters": {
+            "python": "def length_of_lis(nums):\n    # Return the length of the longest strictly increasing subsequence.\n    pass\n",
+            "javascript": "function length_of_lis(nums) {\n    // Return the length of the longest strictly increasing subsequence.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [[10, 9, 2, 5, 3, 7, 101, 18]], "expected": 4},
+            {"args": [[0, 1, 0, 3, 2, 3]], "expected": 4},
+        ],
+        "hidden_tests": [
+            {"args": [[]], "expected": 0},
+            {"args": [[7, 7, 7, 7]], "expected": 1},
+            {"args": [[1, 2, 3, 4, 5]], "expected": 5},
+        ],
+    },
+    {
+        "id": "maximum-subarray-product",
+        "title": "Maximum Subarray Product",
+        "difficulty": "Hard",
+        "function_name": "max_product_subarray",
+        "time_limit_secs": 5,
+        "prompt": "Given a non-empty list `nums`, return the largest product of any contiguous subarray.",
+        "constraints": ["1 <= len(nums) <= 2 * 10^4"],
+        "examples": [{"input": "nums = [2, 3, -2, 4]", "output": "6"}],
+        "starters": {
+            "python": "def max_product_subarray(nums):\n    # Return the largest product of any contiguous subarray.\n    pass\n",
+            "javascript": "function max_product_subarray(nums) {\n    // Return the largest product of any contiguous subarray.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [[2, 3, -2, 4]], "expected": 6},
+            {"args": [[-2, 0, -1]], "expected": 0},
+        ],
+        "hidden_tests": [
+            {"args": [[-2, 3, -4]], "expected": 24},
+            {"args": [[0, 2]], "expected": 2},
+            {"args": [[-1]], "expected": -1},
+        ],
+    },
+    {
+        "id": "jump-game-min-jumps",
+        "title": "Jump Game (Minimum Jumps)",
+        "difficulty": "Hard",
+        "function_name": "min_jumps",
+        "time_limit_secs": 5,
+        "prompt": (
+            "Given `nums` where nums[i] is the maximum jump length from index i, and "
+            "starting at index 0, return the minimum number of jumps to reach the last "
+            "index (guaranteed reachable)."
+        ),
+        "constraints": ["1 <= len(nums) <= 10^4"],
+        "examples": [{"input": "nums = [2, 3, 1, 1, 4]", "output": "2"}],
+        "starters": {
+            "python": "def min_jumps(nums):\n    # Return the minimum number of jumps to reach the last index.\n    pass\n",
+            "javascript": "function min_jumps(nums) {\n    // Return the minimum number of jumps to reach the last index.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [[2, 3, 1, 1, 4]], "expected": 2},
+            {"args": [[1, 1, 1, 1]], "expected": 3},
+        ],
+        "hidden_tests": [
+            {"args": [[0]], "expected": 0},
+            {"args": [[1]], "expected": 0},
+            {"args": [[2, 1]], "expected": 1},
+        ],
+    },
+    {
+        "id": "coin-change-min-coins",
+        "title": "Coin Change (Minimum Coins)",
+        "difficulty": "Hard",
+        "function_name": "coin_change",
+        "time_limit_secs": 5,
+        "prompt": "Given a list of `coins` denominations and an `amount`, return the fewest number of coins needed to make up that amount, or -1 if it can't be made.",
+        "constraints": ["0 <= amount <= 10^4"],
+        "examples": [{"input": "coins = [1, 2, 5], amount = 11", "output": "3"}],
+        "starters": {
+            "python": "def coin_change(coins, amount):\n    # Return the fewest coins to make amount, or -1 if impossible.\n    pass\n",
+            "javascript": "function coin_change(coins, amount) {\n    // Return the fewest coins to make amount, or -1 if impossible.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [[1, 2, 5], 11], "expected": 3},
+            {"args": [[2], 3], "expected": -1},
+        ],
+        "hidden_tests": [
+            {"args": [[1], 0], "expected": 0},
+            {"args": [[1], 2], "expected": 2},
+            {"args": [[1, 2, 5], 100], "expected": 20},
+        ],
+    },
+    {
+        "id": "graph-valid-tree",
+        "title": "Graph Valid Tree",
+        "difficulty": "Hard",
+        "function_name": "valid_tree",
+        "time_limit_secs": 5,
+        "prompt": "Given `n` nodes labeled 0 to n-1 and a list of undirected `edges`, return True if these edges form a valid tree (connected, no cycles).",
+        "constraints": ["1 <= n <= 2000"],
+        "examples": [{"input": "n = 5, edges = [[0, 1], [0, 2], [0, 3], [1, 4]]", "output": "true"}],
+        "starters": {
+            "python": "def valid_tree(n, edges):\n    # Return True if edges form a valid tree over n nodes.\n    pass\n",
+            "javascript": "function valid_tree(n, edges) {\n    // Return true if edges form a valid tree over n nodes.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [5, [[0, 1], [0, 2], [0, 3], [1, 4]]], "expected": True},
+            {"args": [5, [[0, 1], [1, 2], [2, 3], [1, 3], [1, 4]]], "expected": False},
+        ],
+        "hidden_tests": [
+            {"args": [1, []], "expected": True},
+            {"args": [4, [[0, 1], [2, 3]]], "expected": False},
+            {"args": [3, [[0, 1], [1, 2]]], "expected": True},
+        ],
+    },
 ]
 
 # SQL problems live in their own module because their test cases are shaped differently
