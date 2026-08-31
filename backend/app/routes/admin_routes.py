@@ -11,7 +11,8 @@ from app.models import (
     Notification, CodeSubmission, InterviewReport, RecordingLog, ProctorSnapshot,
     ResumeAnalysis
 )
-from app.utils.security import admin_required, get_current_user_id
+from app.utils.security import admin_required, get_current_user_id, ADMIN_ROLES
+from app.utils.scope import AdminScope, admin_scope
 from app.utils.candidate import (
     COURSE_CATEGORIES, COURSE_STATUSES, SIGNUP_CATEGORIES, INSTRUCTOR_CATEGORY,
     is_instructor_category, requires_course_status, normalize_cnic, generate_otp
@@ -53,7 +54,7 @@ def _user_directory(user_ids=None):
     return {u.id: u for u in query.all()}
 
 @admin_bp.get('/stats')
-def get_stats(user: User = Depends(admin_required)):
+def get_stats(user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
     # Each of these used to be its own round trip: six separate COUNTs, plus the whole
     # transactions and tokens tables pulled into Python just to be summed. Aggregating in
     # SQL collapses that to one trip per table and moves the arithmetic to the database,
@@ -63,28 +64,32 @@ def get_stats(user: User = Depends(admin_required)):
     def _count_if(condition):
         return func.count(case((condition, 1)))
 
-    total_users, active_users, banned_users = db.session.query(
+    # Every total below is scoped. A dashboard that shows the whole platform's numbers to
+    # one company's admin leaks headcount and activity even though it names nobody.
+    total_users, active_users, banned_users = scope.filter_users(db.session.query(
         _count_if(User.role == 'candidate'),
         _count_if((User.role == 'candidate') & (User.status == 'active')),
         _count_if(User.status == 'banned'),
-    ).one()
+    )).one()
 
-    total_interviews, active_interviews, daily_interviews = db.session.query(
+    total_interviews, active_interviews, daily_interviews = scope.filter_by_owner(db.session.query(
         _count_if(Interview.status == 'completed'),
         _count_if(Interview.status == 'active'),
         _count_if((Interview.status == 'completed') & (Interview.created_at >= yesterday)),
-    ).one()
+    ), Interview.user_id).one()
 
-    total_revenue = db.session.query(
+    total_revenue = scope.filter_by_owner(db.session.query(
         func.coalesce(func.sum(Transaction.amount), 0.0)
-    ).filter(Transaction.transaction_type == 'purchase').scalar()
+    ).filter(Transaction.transaction_type == 'purchase'), Transaction.user_id).scalar()
 
-    total_available_tokens, total_consumed_tokens = db.session.query(
+    total_available_tokens, total_consumed_tokens = scope.filter_by_owner(db.session.query(
         func.coalesce(func.sum(Token.tokens_available), 0),
         func.coalesce(func.sum(Token.tokens_consumed), 0),
-    ).one()
+    ), Token.user_id).one()
 
-    recent_feedbacks = Feedback.query.order_by(Feedback.created_at.desc()).limit(5).all()
+    recent_feedbacks = scope.filter_by_owner(
+        Feedback.query, Feedback.user_id
+    ).order_by(Feedback.created_at.desc()).limit(5).all()
     feedback_users = _user_directory(f.user_id for f in recent_feedbacks)
     feedbacks_data = []
     for f in recent_feedbacks:
@@ -98,7 +103,9 @@ def get_stats(user: User = Depends(admin_required)):
             'created_at': f.created_at.isoformat()
         })
 
-    logs = AdminLog.query.order_by(AdminLog.created_at.desc()).limit(10).all()
+    logs = scope.filter_by_actor(
+        AdminLog.query, AdminLog.admin_id
+    ).order_by(AdminLog.created_at.desc()).limit(10).all()
 
     return {
         'users': {
@@ -124,11 +131,13 @@ def get_stats(user: User = Depends(admin_required)):
     }
 
 @admin_bp.get('/users')
-def list_users(user: User = Depends(admin_required)):
+def list_users(user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
     # Three queries total, not two per user. This endpoint used to issue one Token lookup
     # and one Interview lookup for every row — 89 round trips for 44 candidates, which at
     # Singapore-to-Mumbai latency is over five seconds of pure waiting.
-    users = User.query.filter(User.role != 'admin').order_by(User.created_at.desc()).all()
+    users = scope.filter_users(
+        User.query.filter(User.role.notin_(ADMIN_ROLES))
+    ).order_by(User.created_at.desc()).all()
 
     tokens_by_user = {
         t.user_id: t.tokens_available
@@ -167,13 +176,14 @@ def list_users(user: User = Depends(admin_required)):
 
 
 @admin_bp.get('/users/{target_user_id}')
-def get_user_detail(target_user_id: int, user: User = Depends(admin_required)):
+def get_user_detail(target_user_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
     """Single-candidate fetch for the Admin Hub profile page — same shape as one row of
     GET /users, so a direct load/refresh/bookmark of the profile page doesn't need the
     full list re-fetched just to find one row."""
     target = User.query.get(target_user_id)
-    if not target or target.role == 'admin':
+    if not target or target.role in ADMIN_ROLES:
         raise HTTPException(status_code=404, detail="User not found")
+    scope.require_user(target)
 
     t = Token.query.filter_by(user_id=target.id).first()
     latest_interview = (
@@ -191,7 +201,7 @@ def get_user_detail(target_user_id: int, user: User = Depends(admin_required)):
 
 
 @admin_bp.get('/users/{target_user_id}/resume')
-def get_user_resume(target_user_id: int, user: User = Depends(admin_required)):
+def get_user_resume(target_user_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
     """Admin-only: the resume a Resume-Based candidate's interview was generated from
     (Resume §4.2).
 
@@ -205,8 +215,7 @@ def get_user_resume(target_user_id: int, user: User = Depends(admin_required)):
     the one their questions actually came from.
     """
     target = User.query.get(target_user_id)
-    if not target:
-        raise HTTPException(status_code=404, detail="User not found")
+    scope.require_user(target)
 
     record = (
         ResumeAnalysis.query
@@ -230,6 +239,7 @@ def flag_resume_analysis(
     analysis_id: int,
     payload: dict = Body(default=None),
     user: User = Depends(admin_required),
+    scope: AdminScope = Depends(admin_scope),
 ):
     """Admin-only: mark a resume as badly parsed, or clear that mark (Resume §4.2).
 
@@ -241,6 +251,7 @@ def flag_resume_analysis(
     record = ResumeAnalysis.query.get(analysis_id)
     if not record:
         raise HTTPException(status_code=404, detail="Resume analysis not found")
+    scope.require_owned(record)
 
     data = payload or {}
     flagged = bool(data.get('flagged', True))
@@ -273,14 +284,13 @@ def flag_resume_analysis(
 
 
 @admin_bp.get('/users/{target_user_id}/proctoring')
-def get_user_proctoring(target_user_id: int, user: User = Depends(admin_required)):
+def get_user_proctoring(target_user_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
     """Admin-only: the proctoring snapshot + summary for a candidate's most recent
     interview. A camera snapshot is captured both when an interview is completed and
     when it is auto-terminated for a proctoring breach, so this drives the review panel
     on the Manage Users profile. Returns nulls when there is no interview/snapshot yet."""
     target = User.query.get(target_user_id)
-    if not target:
-        raise HTTPException(status_code=404, detail="User not found")
+    scope.require_user(target)
 
     interview = (
         Interview.query.filter_by(user_id=target_user_id)
@@ -306,14 +316,18 @@ def get_user_proctoring(target_user_id: int, user: User = Depends(admin_required
 
 
 @admin_bp.put('/users/{target_user_id}/profile')
-def update_user_profile(target_user_id: int, payload: dict = Body(default=None), user: User = Depends(admin_required)):
+def update_user_profile(target_user_id: int, payload: dict = Body(default=None), user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
     """Full candidate profile editing (§4.1) — including course status, which only
     an admin may change after signup (§2.2)."""
     target = User.query.get(target_user_id)
     if not target:
         raise HTTPException(status_code=404, detail="User not found")
-    if target.role == 'admin' and target.id != user.id:
+    if target.role in ADMIN_ROLES and target.id != user.id:
         raise HTTPException(status_code=400, detail="Cannot edit another administrator's account")
+    if target.id != user.id:
+        # Editing one's own account stays open regardless of scope — an admin's own row has
+        # no company_id and would otherwise be unreachable to them.
+        scope.require_user(target)
 
     data = payload or {}
     changes = []
@@ -390,18 +404,25 @@ def update_user_profile(target_user_id: int, payload: dict = Body(default=None),
 
 
 @admin_bp.post('/users/{target_user_id}/send-interview-invite')
-def send_interview_invite(target_user_id: int, user: User = Depends(admin_required)):
+def send_interview_invite(target_user_id: int, payload: dict = Body(default=None),
+                           user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
     """Issue (or re-issue) one-time interview credentials to a completed-course
     candidate (§2.2 confirmed workflow: admin manually triggers the OTP email).
 
     From this moment the candidate's password login is disabled and only the fresh
     emailed OTP works — exactly once.
     """
+    from app.utils.difficulty import is_valid_range
+    difficulty_range = ((payload or {}).get('question_difficulty_range') or '').strip().upper() or None
+    if difficulty_range and not is_valid_range(difficulty_range):
+        raise HTTPException(status_code=400, detail="Invalid question_difficulty_range")
+
     target = User.query.get(target_user_id)
     if not target:
         raise HTTPException(status_code=404, detail="User not found")
-    if target.role == 'admin':
+    if target.role in ADMIN_ROLES:
         raise HTTPException(status_code=400, detail="Cannot send an interview invite to an administrator")
+    scope.require_user(target)
 
     # Only true Instructors get the instructor-worded invite. Resume-Based candidates are
     # also status-less but take the standard candidate wording, same as they do at signup.
@@ -431,11 +452,17 @@ def send_interview_invite(target_user_id: int, user: User = Depends(admin_requir
         # login (auth_routes.py) then still rejects as "expired", and the admin dashboard
         # would keep showing the stale old date as if this invite never happened.
         target.otp_expires_at = None
+        # Only overwritten when this invite explicitly names a range — re-inviting without
+        # one keeps whatever range (if any) an earlier invite already set, instead of
+        # silently clearing it back to "no range" on every re-issue.
+        if difficulty_range:
+            target.question_difficulty_range = difficulty_range
 
         db.session.add(AdminLog(
             admin_id=user.id,
             action='SEND_INTERVIEW_INVITE',
             details=f"Issued one-time interview credentials to User ID {target.id} ({target.email}, CNIC {target.cnic})"
+                    + (f" with question difficulty range {difficulty_range}" if difficulty_range else "")
         ))
         db.session.add(Notification(
             user_id=target.id,
@@ -458,10 +485,12 @@ def send_interview_invite(target_user_id: int, user: User = Depends(admin_requir
 
 
 @admin_bp.get('/reinterview-requests')
-def list_reinterview_requests(user_id: Optional[int] = None, user: User = Depends(admin_required)):
+def list_reinterview_requests(user_id: Optional[int] = None, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
     """Approval queue for second-interview attempts (§4.3). Optional user_id scopes this to
     one candidate's approval history (cross-linked from their profile)."""
-    requests_query = SecondInterviewRequest.query
+    requests_query = scope.filter_by_owner(
+        SecondInterviewRequest.query, SecondInterviewRequest.user_id
+    )
     if user_id is not None:
         requests_query = requests_query.filter_by(user_id=user_id)
     requests_q = requests_query.order_by(SecondInterviewRequest.requested_at.desc()).all()
@@ -516,11 +545,12 @@ def list_reinterview_requests(user_id: Optional[int] = None, user: User = Depend
 
 
 @admin_bp.post('/reinterview-requests/{request_id}/decision')
-def decide_reinterview_request(request_id: int, payload: dict = Body(default=None), user: User = Depends(admin_required)):
+def decide_reinterview_request(request_id: int, payload: dict = Body(default=None), user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
     """Approve → fresh one-time credentials emailed; Reject → ineligibility email (§3.4)."""
     req = SecondInterviewRequest.query.get(request_id)
     if not req:
         raise HTTPException(status_code=404, detail="Request not found")
+    scope.require_owned(req)
     if req.status != 'pending':
         raise HTTPException(status_code=400, detail=f"This request has already been {req.status}")
 
@@ -569,39 +599,52 @@ def decide_reinterview_request(request_id: int, payload: dict = Body(default=Non
 
 
 @admin_bp.get('/email-logs')
-def list_email_logs(user: User = Depends(admin_required)):
+def list_email_logs(user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
     """Outbound email audit (§1): failed sends surface here instead of dying silently."""
-    logs = EmailLog.query.order_by(EmailLog.created_at.desc()).limit(200).all()
+    # Scoped by recipient. An email log row carries the candidate's address and the
+    # subject line of what was sent to them, so an unscoped list is a candidate list.
+    logs = scope.filter_by_owner(
+        EmailLog.query, EmailLog.user_id
+    ).order_by(EmailLog.created_at.desc()).limit(200).all()
     return [l.to_dict() for l in logs]
 
 
 @admin_bp.get('/recording-logs')
-def list_recording_logs(user: User = Depends(admin_required)):
+def list_recording_logs(user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
     """Interview-recording lifecycle audit: when each answer recording was created and,
     once the retention window elapses, when it was automatically deleted."""
-    logs = RecordingLog.query.order_by(RecordingLog.created_at.desc()).limit(300).all()
+    logs = scope.filter_by_owner(
+        RecordingLog.query, RecordingLog.user_id
+    ).order_by(RecordingLog.created_at.desc()).limit(300).all()
     return [l.to_dict() for l in logs]
 
 
 @admin_bp.get('/pending-actions/count')
-def pending_actions_count(user: User = Depends(admin_required)):
+def pending_actions_count(user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
     """Counts for the in-portal admin badge (Update §4) — replaces admin email alerts."""
-    reinterview_pending = SecondInterviewRequest.query.filter_by(status='pending').count()
+    reinterview_pending = scope.filter_by_owner(
+        SecondInterviewRequest.query.filter_by(status='pending'),
+        SecondInterviewRequest.user_id,
+    ).count()
     return {
         'reinterview_pending': reinterview_pending,
         'total': reinterview_pending,
     }
 
 
-def _send_post_interview_email(target_user_id, admin, kind):
+def _send_post_interview_email(target_user_id, admin, kind, scope):
     """Shared handler for the two post-interview admin email actions (Update §5):
     'clearance' and 'hr_invite'. Sends a distinct template, records the timestamp for
-    the profile audit trail, logs the admin action, and notifies the candidate."""
+    the profile audit trail, logs the admin action, and notifies the candidate.
+
+    Takes the caller's scope rather than re-deriving it: both entry points are already
+    scoped routes, and a helper that quietly widened access would undo them."""
     target = User.query.get(target_user_id)
     if not target:
         raise HTTPException(status_code=404, detail="User not found")
-    if target.role == 'admin':
+    if target.role in ADMIN_ROLES:
         raise HTTPException(status_code=400, detail="This action does not apply to administrator accounts")
+    scope.require_user(target)
 
     if kind == 'clearance':
         subject, html = email_templates.interview_clearance(target.name)
@@ -638,27 +681,28 @@ def _send_post_interview_email(target_user_id, admin, kind):
 
 
 @admin_bp.post('/users/{target_user_id}/send-clearance')
-def send_clearance_email(target_user_id: int, user: User = Depends(admin_required)):
+def send_clearance_email(target_user_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
     """'Send Clearance Email' (Update §5): informs the candidate/instructor they cleared."""
-    return _send_post_interview_email(target_user_id, user, 'clearance')
+    return _send_post_interview_email(target_user_id, user, 'clearance', scope)
 
 
 @admin_bp.post('/users/{target_user_id}/send-hr-invite')
-def send_hr_invite_email(target_user_id: int, user: User = Depends(admin_required)):
+def send_hr_invite_email(target_user_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
     """'Send HR Assessment Invite' (Update §5): distinct next-stage HR invitation."""
-    return _send_post_interview_email(target_user_id, user, 'hr_invite')
+    return _send_post_interview_email(target_user_id, user, 'hr_invite', scope)
 
 
 @admin_bp.post('/users/{target_user_id}/send-proctor-snapshot')
-def send_proctor_snapshot_email(target_user_id: int, user: User = Depends(admin_required)):
+def send_proctor_snapshot_email(target_user_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
     """Email the candidate their proctoring camera snapshot (attached) along with a
     termination + 30-day-block notice. Uses the snapshot from the candidate's most
     recent interview report."""
     target = User.query.get(target_user_id)
     if not target:
         raise HTTPException(status_code=404, detail="User not found")
-    if target.role == 'admin':
+    if target.role in ADMIN_ROLES:
         raise HTTPException(status_code=400, detail="This action does not apply to administrator accounts")
+    scope.require_user(target)
 
     interview = (
         Interview.query.filter_by(user_id=target_user_id)
@@ -713,15 +757,16 @@ def send_proctor_snapshot_email(target_user_id: int, user: User = Depends(admin_
     return {'message': f'Proctoring snapshot emailed to {target.email}'}
 
 @admin_bp.post('/users/{target_user_id}/ban')
-def toggle_ban(target_user_id: int, user: User = Depends(admin_required)):
+def toggle_ban(target_user_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
     admin_id = user.id
     target_user = User.query.get(target_user_id)
 
     if not target_user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    if target_user.role == 'admin':
+    if target_user.role in ADMIN_ROLES:
         raise HTTPException(status_code=400, detail="Cannot restrict administrative accounts")
+    scope.require_user(target_user)
 
     new_status = 'banned' if target_user.status == 'active' else 'active'
     target_user.status = new_status
@@ -746,7 +791,7 @@ def toggle_ban(target_user_id: int, user: User = Depends(admin_required)):
         raise HTTPException(status_code=500, detail=f"Failed to update user status: {str(e)}")
 
 @admin_bp.post('/users/{target_user_id}/tokens')
-def override_tokens(target_user_id: int, payload: dict = Body(default=None), user: User = Depends(admin_required)):
+def override_tokens(target_user_id: int, payload: dict = Body(default=None), user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
     admin_id = user.id
     data = payload or {}
     new_balance = data.get('tokens_available')
@@ -757,6 +802,7 @@ def override_tokens(target_user_id: int, payload: dict = Body(default=None), use
     target_user = User.query.get(target_user_id)
     if not target_user:
         raise HTTPException(status_code=404, detail="User not found")
+    scope.require_user(target_user)
 
     token_account = Token.query.filter_by(user_id=target_user_id).first()
     if not token_account:
@@ -873,7 +919,7 @@ def _anonymize_user_in_logs(target):
 
 
 @admin_bp.delete('/users/{target_user_id}')
-def delete_user(target_user_id: int, user: User = Depends(admin_required)):
+def delete_user(target_user_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
     """Permanently delete a candidate/instructor account and ALL their data — database
     rows AND Supabase Storage files (Cascade §4). Admin accounts are hard-blocked.
 
@@ -885,8 +931,9 @@ def delete_user(target_user_id: int, user: User = Depends(admin_required)):
     target = User.query.get(target_user_id)
     if not target:
         raise HTTPException(status_code=404, detail="User not found")
-    if target.role == 'admin':
+    if target.role in ADMIN_ROLES:
         raise HTTPException(status_code=403, detail="Administrator accounts cannot be deleted.")
+    scope.require_user(target)
 
     uid = target.id
     target_name = target.name
@@ -935,11 +982,25 @@ def delete_user(target_user_id: int, user: User = Depends(admin_required)):
     return {'message': msg}
 
 
-def _delete_record(model, record_id, admin, label, action, pre_delete=None):
-    """Shared handler for deleting a single data record with audit logging."""
+def _delete_record(model, record_id, admin, label, action, scope, pre_delete=None,
+                   owner_attr='user_id'):
+    """Shared handler for deleting a single data record with audit logging.
+
+    `scope` is required rather than optional. Six routes funnel through here, all of them
+    destructive and all addressed by a bare integer id; an optional scope is one forgotten
+    keyword away from letting an admin delete another company's records by guessing.
+    Pass owner_attr=None for a table that hangs off the acting admin rather than a
+    candidate.
+    """
     record = model.query.get(record_id)
     if not record:
         raise HTTPException(status_code=404, detail=f"{label} not found")
+    if owner_attr is None:
+        # admin_logs: scoped by who wrote the row, exactly as the listing is.
+        if not scope.is_super and getattr(record, 'admin_id', None) != scope.admin.id:
+            raise HTTPException(status_code=404, detail=f"{label} not found")
+    else:
+        scope.require_owned(record, owner_attr)
     try:
         if pre_delete:
             pre_delete(record)
@@ -956,7 +1017,7 @@ def _delete_record(model, record_id, admin, label, action, pre_delete=None):
 
 
 @admin_bp.delete('/interviews/{interview_id}')
-def delete_interview(interview_id: int, user: User = Depends(admin_required)):
+def delete_interview(interview_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
     """Delete an interview and its questions/responses/report (ORM cascade), plus its
     stored media — answer audio, session video and proctoring snapshots — from Supabase
     Storage (Cascade §4). Detaches any feedback / code submissions that referenced it so
@@ -966,6 +1027,10 @@ def delete_interview(interview_id: int, user: User = Depends(admin_required)):
     refs = []
     itv = Interview.query.get(interview_id)
     if itv:
+        # Checked here as well as inside _delete_record: the block below reads storage
+        # references for the interview, and there is no reason to touch another company's
+        # rows at all before refusing.
+        scope.require_owned(itv)
         for resp in InterviewResponse.query.filter_by(interview_id=interview_id).all():
             parsed = SupabaseService.parse_storage_ref(resp.audio_path)
             if parsed:
@@ -987,46 +1052,50 @@ def delete_interview(interview_id: int, user: User = Depends(admin_required)):
         # must be removed explicitly or they linger pointing at a deleted interview.
         ProctorSnapshot.query.filter_by(interview_id=interview_id).delete(synchronize_session=False)
 
-    result = _delete_record(Interview, interview_id, user, 'Interview', 'DELETE_INTERVIEW', pre_delete=_detach)
+    result = _delete_record(Interview, interview_id, user, 'Interview', 'DELETE_INTERVIEW',
+                            scope, pre_delete=_detach)
     _delete_storage_refs(refs, f"interview {interview_id}", admin_id=user.id)
     return result
 
 
 @admin_bp.delete('/feedback/{feedback_id}')
-def delete_feedback(feedback_id: int, user: User = Depends(admin_required)):
-    return _delete_record(Feedback, feedback_id, user, 'Feedback', 'DELETE_FEEDBACK')
+def delete_feedback(feedback_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
+    return _delete_record(Feedback, feedback_id, user, 'Feedback', 'DELETE_FEEDBACK', scope)
 
 
 @admin_bp.delete('/transactions/{transaction_id}')
-def delete_transaction(transaction_id: int, user: User = Depends(admin_required)):
-    return _delete_record(Transaction, transaction_id, user, 'Transaction', 'DELETE_TRANSACTION')
+def delete_transaction(transaction_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
+    return _delete_record(Transaction, transaction_id, user, 'Transaction', 'DELETE_TRANSACTION', scope)
 
 
 @admin_bp.delete('/logs/{log_id}')
-def delete_admin_log(log_id: int, user: User = Depends(admin_required)):
-    return _delete_record(AdminLog, log_id, user, 'Audit log', 'DELETE_ADMIN_LOG')
+def delete_admin_log(log_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
+    return _delete_record(AdminLog, log_id, user, 'Audit log', 'DELETE_ADMIN_LOG', scope,
+                          owner_attr=None)
 
 
 @admin_bp.delete('/email-logs/{log_id}')
-def delete_email_log(log_id: int, user: User = Depends(admin_required)):
-    return _delete_record(EmailLog, log_id, user, 'Email log', 'DELETE_EMAIL_LOG')
+def delete_email_log(log_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
+    return _delete_record(EmailLog, log_id, user, 'Email log', 'DELETE_EMAIL_LOG', scope)
 
 
 @admin_bp.delete('/recording-logs/{log_id}')
-def delete_recording_log(log_id: int, user: User = Depends(admin_required)):
-    return _delete_record(RecordingLog, log_id, user, 'Recording log', 'DELETE_RECORDING_LOG')
+def delete_recording_log(log_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
+    return _delete_record(RecordingLog, log_id, user, 'Recording log', 'DELETE_RECORDING_LOG', scope)
 
 
 @admin_bp.delete('/reinterview-requests/{request_id}')
-def delete_reinterview_request(request_id: int, user: User = Depends(admin_required)):
-    return _delete_record(SecondInterviewRequest, request_id, user, 'Second-interview request', 'DELETE_REINTERVIEW_REQUEST')
+def delete_reinterview_request(request_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
+    return _delete_record(SecondInterviewRequest, request_id, user, 'Second-interview request',
+                          'DELETE_REINTERVIEW_REQUEST', scope)
 
 
 @admin_bp.get('/proctor-snapshots')
 def list_proctor_snapshots(
     interview_id: Optional[int] = None,
     user_id: Optional[int] = None,
-    user: User = Depends(admin_required)
+    user: User = Depends(admin_required),
+    scope: AdminScope = Depends(admin_scope),
 ):
     """Proctoring image archive index (newest first): termination webcam frames and
     monitored screen screenshots. Images live in a PRIVATE Supabase bucket under
@@ -1034,7 +1103,7 @@ def list_proctor_snapshots(
     on demand per image via the /url endpoint below. Optional filters scope this to one
     interview (cross-linked from a report) or one candidate (cross-linked from a profile);
     the unfiltered call keeps its existing 400-row cap."""
-    query = ProctorSnapshot.query
+    query = scope.filter_by_owner(ProctorSnapshot.query, ProctorSnapshot.user_id)
     if interview_id is not None:
         query = query.filter_by(interview_id=interview_id)
     if user_id is not None:
@@ -1046,13 +1115,14 @@ def list_proctor_snapshots(
 
 
 @admin_bp.get('/proctor-snapshots/{snapshot_id}/url')
-def get_proctor_snapshot_url(snapshot_id: int, user: User = Depends(admin_required)):
+def get_proctor_snapshot_url(snapshot_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
     """Short-lived signed URL to view one archived proctoring image. These are sensitive
     (a candidate's camera/screen), so they are never public — this is the only way in."""
     from app.utils.supabase_service import SupabaseService
     snap = ProctorSnapshot.query.get(snapshot_id)
     if not snap or not snap.storage_ref:
         raise HTTPException(status_code=404, detail="Snapshot not found")
+    scope.require_owned(snap)
     signed = SupabaseService.get_signed_url(snap.storage_ref, expires_in=600)
     if not signed:
         raise HTTPException(status_code=503, detail="Could not generate a view link right now")
@@ -1060,13 +1130,14 @@ def get_proctor_snapshot_url(snapshot_id: int, user: User = Depends(admin_requir
 
 
 @admin_bp.delete('/proctor-snapshots/{snapshot_id}')
-def delete_proctor_snapshot(snapshot_id: int, user: User = Depends(admin_required)):
+def delete_proctor_snapshot(snapshot_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
     """Permanently remove one archived proctoring image — both the stored file and its
     index row (Cascade §4: a DB delete can't reach Supabase Storage, so do it here)."""
     from app.utils.supabase_service import SupabaseService
     snap = ProctorSnapshot.query.get(snapshot_id)
     if not snap:
         raise HTTPException(status_code=404, detail="Snapshot not found")
+    scope.require_owned(snap)
     parsed = SupabaseService.parse_storage_ref(snap.storage_ref)
     if parsed:
         SupabaseService.delete_object(parsed[0], parsed[1])
@@ -1081,7 +1152,7 @@ def delete_proctor_snapshot(snapshot_id: int, user: User = Depends(admin_require
 
 
 @admin_bp.post('/interviews/{interview_id}/assemble-recording')
-def assemble_interview_recording(interview_id: int, user: User = Depends(admin_required)):
+def assemble_interview_recording(interview_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
     """Rebuild a session recording from the slices the candidate's browser uploaded.
 
     The candidate's own finalize call is the normal path, but it runs at the moment they are
@@ -1095,6 +1166,7 @@ def assemble_interview_recording(interview_id: int, user: User = Depends(admin_r
     interview = Interview.query.get(interview_id)
     if not interview:
         raise HTTPException(status_code=404, detail="Interview not found")
+    scope.require_owned(interview)
     if interview.video_path:
         return {'message': 'A recording is already stored for this session', 'stored': True}
 
@@ -1126,7 +1198,7 @@ def assemble_interview_recording(interview_id: int, user: User = Depends(admin_r
 
 
 @admin_bp.get('/interviews/{interview_id}/video-url')
-def get_interview_video_url(interview_id: int, user: User = Depends(admin_required)):
+def get_interview_video_url(interview_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
     """Admin-only playback of a session recording (DB Integration §2.2): returns a
     short-lived signed URL into the PRIVATE interview-recordings bucket. Recordings are
     never publicly reachable — this is the only way they're served."""
@@ -1134,6 +1206,7 @@ def get_interview_video_url(interview_id: int, user: User = Depends(admin_requir
     interview = Interview.query.get(interview_id)
     if not interview:
         raise HTTPException(status_code=404, detail="Interview not found")
+    scope.require_owned(interview)
     if not interview.video_path:
         raise HTTPException(status_code=404, detail="No recording exists for this session")
     signed = SupabaseService.get_signed_url(interview.video_path, expires_in=600)
@@ -1143,8 +1216,8 @@ def get_interview_video_url(interview_id: int, user: User = Depends(admin_requir
 
 
 @admin_bp.get('/interviews')
-def list_interviews(user_id: Optional[int] = None, user: User = Depends(admin_required)):
-    query = Interview.query
+def list_interviews(user_id: Optional[int] = None, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
+    query = scope.filter_by_owner(Interview.query, Interview.user_id)
     if user_id is not None:
         query = query.filter_by(user_id=user_id)
     interviews = query.order_by(Interview.created_at.desc()).all()
@@ -1159,8 +1232,10 @@ def list_interviews(user_id: Optional[int] = None, user: User = Depends(admin_re
     return interviews_list
 
 @admin_bp.get('/transactions')
-def list_transactions(user: User = Depends(admin_required)):
-    transactions = Transaction.query.order_by(Transaction.created_at.desc()).all()
+def list_transactions(user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
+    transactions = scope.filter_by_owner(
+        Transaction.query, Transaction.user_id
+    ).order_by(Transaction.created_at.desc()).all()
     users = _user_directory(t.user_id for t in transactions)
     tx_list = []
     for t in transactions:
@@ -1172,8 +1247,10 @@ def list_transactions(user: User = Depends(admin_required)):
     return tx_list
 
 @admin_bp.get('/feedback')
-def list_feedbacks(user: User = Depends(admin_required)):
-    feedbacks = Feedback.query.order_by(Feedback.created_at.desc()).all()
+def list_feedbacks(user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
+    feedbacks = scope.filter_by_owner(
+        Feedback.query, Feedback.user_id
+    ).order_by(Feedback.created_at.desc()).all()
     users = _user_directory(f.user_id for f in feedbacks)
     interview_ids = {f.interview_id for f in feedbacks if f.interview_id}
     interviews = (
@@ -1202,8 +1279,10 @@ def list_feedbacks(user: User = Depends(admin_required)):
     return feedbacks_list
 
 @admin_bp.get('/logs')
-def list_logs(user: User = Depends(admin_required)):
-    logs = AdminLog.query.order_by(AdminLog.created_at.desc()).all()
+def list_logs(user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
+    logs = scope.filter_by_actor(
+        AdminLog.query, AdminLog.admin_id
+    ).order_by(AdminLog.created_at.desc()).all()
     admins = _user_directory(l.admin_id for l in logs)
     logs_list = []
     for l in logs:
@@ -1224,13 +1303,15 @@ def _is_flagged(response):
 
 
 @admin_bp.get('/scoring/analytics')
-def scoring_analytics(user: User = Depends(admin_required)):
+def scoring_analytics(user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
     """Aggregate view of how the LLM has been scoring interviews (§7).
 
     Built entirely from the persisted per-question evaluation data (score, confidence,
     rationale) — no separate evaluation pipeline.
     """
-    completed = Interview.query.filter_by(status='completed').order_by(Interview.created_at.desc()).all()
+    completed = scope.filter_by_owner(
+        Interview.query.filter_by(status='completed'), Interview.user_id
+    ).order_by(Interview.created_at.desc()).all()
 
     # Two extra queries for the whole report instead of two per interview: every response
     # in one trip, grouped in memory, plus the candidate directory. At 81 completed
@@ -1299,11 +1380,12 @@ def scoring_analytics(user: User = Depends(admin_required)):
 
 
 @admin_bp.get('/scoring/interviews/{interview_id}')
-def scoring_interview_detail(interview_id: int, user: User = Depends(admin_required)):
+def scoring_interview_detail(interview_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
     """Per-question breakdown for one interview: question, transcript, score, rationale (§7)."""
     itv = Interview.query.get(interview_id)
     if not itv:
         raise HTTPException(status_code=404, detail="Interview not found")
+    scope.require_owned(itv)
 
     u = User.query.get(itv.user_id)
     questions = InterviewQuestion.query.filter_by(interview_id=interview_id).order_by(InterviewQuestion.order_num).all()

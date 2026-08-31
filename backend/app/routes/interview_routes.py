@@ -17,7 +17,8 @@ from app.models import (
 from app.ai.mixtral.mixtral_service import MixtralService
 from app.ai.whisper.whisper_service import WhisperService, TranscriptionError
 from app.config.config import Config
-from app.utils.security import get_current_user_id
+from app.utils.security import get_current_user_id, ADMIN_ROLES
+from app.utils.scope import build_scope
 from app.utils.candidate import question_time_limit
 from app.utils.supabase_service import SupabaseService
 
@@ -364,6 +365,18 @@ def start_interview(payload: dict = Body(default=None), user_id: int = Depends(g
     from app.utils.candidate import is_instructor_category, is_resume_category
     _requesting_user = User.query.get(user_id)
     is_instructor = bool(_requesting_user and is_instructor_category(_requesting_user.course_category))
+
+    # Question Difficulty Range: if the admin/API key that invited this candidate pinned a
+    # range at invite time, it is authoritative here and overrides whatever the client sent
+    # above — a candidate cannot pick around an admin's own choice. No range set (the
+    # overwhelming majority of accounts, including every pre-feature one) falls straight
+    # through to `difficulty` exactly as before.
+    from app.utils.difficulty import resolve_prompt_difficulty, resolve_storage_label, resolve_sandbox_difficulties
+    _invite_range = _requesting_user.question_difficulty_range if _requesting_user else None
+    if _invite_range:
+        difficulty = resolve_storage_label(_invite_range) or difficulty
+    prompt_difficulty = resolve_prompt_difficulty(_invite_range, num_questions) or difficulty
+    sandbox_difficulties = resolve_sandbox_difficulties(_invite_range)
     if is_instructor:
         interview_type = 'instructor'
         job_role = 'Instructor'
@@ -433,7 +446,7 @@ def start_interview(payload: dict = Body(default=None), user_id: int = Depends(g
         if not classification['is_technical'] and classification['confidence'] >= 50:
             # Log the rejected domain so admins can see which unsupported domains are requested.
             try:
-                admin_user = User.query.filter_by(role='admin').first()
+                admin_user = User.query.filter(User.role.in_(ADMIN_ROLES)).first()
                 db.session.add(AdminLog(
                     admin_id=admin_user.id if admin_user else user_id,
                     action='REJECTED_DOMAIN',
@@ -493,7 +506,7 @@ def start_interview(payload: dict = Body(default=None), user_id: int = Depends(g
             interview_type=interview_type,
             job_role=job_role,
             experience_level=experience_level,
-            difficulty=difficulty,
+            difficulty=prompt_difficulty,
             num_questions=num_questions,
             custom_jd=custom_jd,
             custom_skills=custom_skills,
@@ -515,6 +528,7 @@ def start_interview(payload: dict = Body(default=None), user_id: int = Depends(g
                     # Resume-Based candidates have no chosen domain, so the problem is
                     # matched against the skills on their CV instead (Resume §3.3).
                     resume_skills=(resume_profile or {}).get('skills'),
+                    allowed_difficulties=sandbox_difficulties,
                 )
             except Exception as e:
                 # Never block the interview on the sandbox opener — fall back to the
@@ -1379,8 +1393,14 @@ def submit_answer(
 @interview_bp.get('/{interview_id}/report')
 def get_report(interview_id: int, user_id: int = Depends(get_current_user_id)):
     user = User.query.get(user_id)
-    if user.role == 'admin':
+    if user.role in ADMIN_ROLES:
+        # An admin may open any report — but only inside their own companies. This route
+        # lives outside /api/admin, so it never picks up the admin_scope dependency and has
+        # to apply the same rule itself. Without it this is the widest cross-company leak in
+        # the app: the Admin Hub links straight here by interview id, and ids are sequential.
         interview = Interview.query.get(interview_id)
+        if interview and not build_scope(user).allows_user(User.query.get(interview.user_id)):
+            interview = None
     else:
         interview = Interview.query.filter_by(id=interview_id, user_id=user_id).first()
 
@@ -1668,7 +1688,7 @@ def check_and_apply_user_ban(user_id):
     user = User.query.get(user_id)
     if not user:
         return
-    if user.role == 'admin':
+    if user.role in ADMIN_ROLES:
         return
     terminated_count = Interview.query.filter_by(user_id=user_id, is_proctor_failed=True).count()
     # Any proctoring termination blocks the candidate for 30 days. Re-terminations only
@@ -1678,7 +1698,7 @@ def check_and_apply_user_ban(user_id):
         user.status = 'banned'
         if not user.banned_until or new_until > user.banned_until:
             user.banned_until = new_until
-        admin_user = User.query.filter_by(role='admin').first()
+        admin_user = User.query.filter(User.role.in_(ADMIN_ROLES)).first()
         admin_fk = admin_user.id if admin_user else user_id
 
         sys_log = AdminLog(
@@ -1896,7 +1916,7 @@ def identity_verification_failed(interview_id: int, payload: dict = Body(default
                 "the identity check. Contact the administrator if you believe this is an error."
             )
 
-        admin_user = User.query.filter_by(role='admin').first()
+        admin_user = User.query.filter(User.role.in_(ADMIN_ROLES)).first()
         db.session.add(AdminLog(
             admin_id=admin_user.id if admin_user else user_id,
             action='IDENTITY_VERIFICATION_FAILED',

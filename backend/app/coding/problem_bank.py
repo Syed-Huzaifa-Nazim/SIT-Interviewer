@@ -706,7 +706,8 @@ def public_problem(problem):
 _DATA_HINTS = ("data", "sql", "database", "analytic", "warehouse", "etl", "bi ")
 
 
-def pick_opening_problem(job_role="", course_category="", preferred_language=None, resume_skills=None):
+def pick_opening_problem(job_role="", course_category="", preferred_language=None, resume_skills=None,
+                          allowed_difficulties=None):
     """Choose the coding-sandbox problem to open a Completed-course interview with.
 
     SQL is preferred when the candidate's domain is data-oriented (that is where a query
@@ -717,6 +718,12 @@ def pick_opening_problem(job_role="", course_category="", preferred_language=Non
     ``resume_skills`` covers the Resume-Based category, where the candidate never selected a
     domain — job_role is a generic placeholder for them, so their own listed skills are what
     decides whether a query exercise is the right opener.
+
+    ``allowed_difficulties`` (Difficulty Range feature): an ordered low->high list (e.g.
+    ``['Medium', 'Hard']`` for MEDIUM_TO_HARD) restricting which difficulties may open the
+    sandbox — without it, the opener always defaults to Easy regardless of the invite's
+    range, which would put a MEDIUM_TO_HARD candidate's first coding question below the
+    range they were invited at. None means no restriction (today's behavior).
     """
     haystack = f"{job_role or ''} {course_category or ''} {' '.join(resume_skills or [])}".lower()
     wants_sql = any(hint in haystack for hint in _DATA_HINTS)
@@ -735,6 +742,21 @@ def pick_opening_problem(job_role="", course_category="", preferred_language=Non
         pool = code_problems or sql_problems
     if not pool:
         return None
+
+    if allowed_difficulties:
+        restricted = [p for p in pool if p.get("difficulty") in allowed_difficulties]
+        if restricted:
+            pool = restricted
+        # else: nothing in this pool matches the range (e.g. no Hard SQL problems yet) —
+        # fall through to the full pool rather than returning nothing.
+
+        # Open on the lowest difficulty the range actually allows, so a MEDIUM_TO_HARD
+        # candidate never opens on an Easy problem their range excluded.
+        for level in allowed_difficulties:
+            at_level = [p for p in pool if p.get("difficulty") == level]
+            if at_level:
+                return at_level[0]
+        return pool[0]
 
     # Open on an approachable problem: the first question sets the tone, and a Hard opener
     # would rattle a candidate before the interview has really begun.

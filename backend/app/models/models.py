@@ -47,6 +47,26 @@ class User(db.Model):
     reset_otp_hash = db.Column(db.String(128), nullable=True)
     reset_otp_expires_at = db.Column(db.DateTime, nullable=True)
 
+    # Second factor for the super admin sign-in. A THIRD set of OTP columns, deliberately
+    # kept apart from otp_* (the one-time interview credential) and reset_otp_* (forgot
+    # password) for the same reason those two are apart: they are consumed by different
+    # flows with different lifetimes, and sharing one pair would let one flow arm, expire or
+    # burn another's code. That is not hypothetical — the interview OTP is single-use, and a
+    # login code written over it would silently cost a candidate their one attempt.
+    login_otp_hash = db.Column(db.String(128), nullable=True)
+    login_otp_expires_at = db.Column(db.DateTime, nullable=True)
+
+    # Single-use codes that stand in for the emailed one. Not a nicety: the second factor is
+    # delivered by email, and this system's own email_logs record real delivery failures
+    # ("Network is unreachable"). Without these, one bad SMTP day means nobody can administer
+    # the platform at all. Stored as a JSON list of bcrypt hashes; a used code is removed.
+    recovery_codes = db.Column(db.Text, nullable=True)
+
+    # Set on an account whose password was generated for it. Until it is cleared, the admin
+    # surface refuses this account everything except changing that password — an emailed
+    # credential that is never replaced is a shared secret sitting in an inbox.
+    must_change_password = db.Column(db.Boolean, default=False)
+
     # Any access token issued before this moment is rejected (forced logout).
     session_revoked_at = db.Column(db.DateTime, nullable=True)
 
@@ -62,10 +82,40 @@ class User(db.Model):
     # proctoring snapshot / interview). Admin-only; never exposed to the candidate.
     admin_remarks = db.Column(db.Text, nullable=True)
 
+    # Which company this row belongs to. For a CANDIDATE it is the company whose admin
+    # invited them, and it is what every /api/admin/* query is scoped by. For an ADMIN it is
+    # unused — an admin can hold several companies, so those live in
+    # admin_company_assignments instead.
+    #
+    # Deliberately nullable, and NULL for every account that existed before multi-admin.
+    # Those rows are visible to the super admin only: showing an unassigned candidate to
+    # every admin would defeat the whole point of scoping, and guessing an owner for them
+    # would be worse than leaving them parked.
+    company_id = db.Column(db.Integer, db.ForeignKey('companies.id', ondelete='SET NULL'), nullable=True)
+
+    # Where mail to this person should actually go, when that is not `email`.
+    #
+    # `email` is the LOGIN identity: admin accounts are created with a generated address on
+    # our own domain, which nobody reads. Without somewhere to put the human's real address
+    # there is no way to send them their credentials. NULL means email is also the contact
+    # address, which is the case for every candidate.
+    contact_email = db.Column(db.String(120), nullable=True)
+
     # Set when the account was created by the Bulk Email Module rather than by someone
     # signing up themselves. NULL means an organic signup, which is what separates the
     # "Enrolled Users" and "Bulk Invited Users" tabs in Manage Users.
     bulk_batch_id = db.Column(db.Integer, db.ForeignKey('bulk_email_batches.id', ondelete='SET NULL'), nullable=True)
+
+    # Question Difficulty Range (Difficulty Range feature): one of
+    # app.utils.difficulty.DIFFICULTY_RANGES's keys ('EASY_TO_MEDIUM', 'MEDIUM_TO_HARD',
+    # 'EASY_TO_HARD'), set by whoever invites this candidate (admin single-invite, Bulk
+    # Email Module, or an API key). Read at `/interviews/start` to override the difficulty
+    # the candidate would otherwise be able to choose themselves.
+    #
+    # Deliberately nullable and NULL by default: every account that existed before this
+    # feature, and every invite that doesn't set one, keeps today's behavior exactly —
+    # `/interviews/start` falls back to whatever difficulty the client sends, same as always.
+    question_difficulty_range = db.Column(db.String(20), nullable=True)
 
     # Relationships
     tokens = db.relationship('Token', backref='user', uselist=False, cascade="all, delete-orphan")
@@ -122,6 +172,68 @@ class User(db.Model):
         self.reset_otp_hash = None
         self.reset_otp_expires_at = None
 
+    def set_login_otp(self, otp, ttl_minutes=10):
+        """Arm the sign-in second factor. Shorter-lived than the reset code: it is used
+        seconds after it arrives, in a window the person is actively sitting in."""
+        salt = bcrypt.gensalt()
+        self.login_otp_hash = bcrypt.hashpw(otp.encode('utf-8'), salt).decode('utf-8')
+        self.login_otp_expires_at = datetime.datetime.utcnow() + datetime.timedelta(minutes=ttl_minutes)
+
+    def check_login_otp(self, otp):
+        """True only for a code that is set, unexpired, and matches."""
+        if not self.login_otp_hash or not self.login_otp_expires_at:
+            return False
+        if datetime.datetime.utcnow() > self.login_otp_expires_at:
+            return False
+        return bcrypt.checkpw(otp.encode('utf-8'), self.login_otp_hash.encode('utf-8'))
+
+    def clear_login_otp(self):
+        self.login_otp_hash = None
+        self.login_otp_expires_at = None
+
+    def set_recovery_codes(self, codes):
+        """Replace the recovery set. The PLAINTEXT codes stay the caller's to show once and
+        then forget — only hashes are stored here, so a lost set cannot be recovered, only
+        regenerated."""
+        self.recovery_codes = json.dumps([
+            bcrypt.hashpw(c.encode('utf-8'), bcrypt.gensalt()).decode('utf-8') for c in codes
+        ])
+
+    def recovery_codes_remaining(self):
+        if not self.recovery_codes:
+            return 0
+        try:
+            return len(json.loads(self.recovery_codes))
+        except (ValueError, TypeError):
+            return 0
+
+    def consume_recovery_code(self, code):
+        """Spend one recovery code. True if it matched, and it never matches twice.
+
+        The caller must commit: a code that verifies but is not removed is a reusable
+        password, which is the one thing a single-use code exists not to be.
+        """
+        if not self.recovery_codes or not code:
+            return False
+        try:
+            hashes = json.loads(self.recovery_codes)
+        except (ValueError, TypeError):
+            # A corrupted blob must fail closed rather than raise inside a login.
+            return False
+
+        # Normalised the same way they are shown: printed in dashed groups, typed back in
+        # whatever case and spacing the person manages.
+        candidate = code.strip().replace('-', '').replace(' ', '').upper()
+        for stored in list(hashes):
+            try:
+                if bcrypt.checkpw(candidate.encode('utf-8'), stored.encode('utf-8')):
+                    hashes.remove(stored)
+                    self.recovery_codes = json.dumps(hashes)
+                    return True
+            except (ValueError, TypeError):
+                continue
+        return False
+
     def to_dict(self):
         return {
             'id': self.id,
@@ -140,7 +252,14 @@ class User(db.Model):
             'must_use_otp': bool(self.must_use_otp),
             'otp_used': bool(self.otp_used),
             'otp_expires_at': self.otp_expires_at.isoformat() if self.otp_expires_at else None,
+            'company_id': self.company_id,
+            'contact_email': self.contact_email,
+            'must_change_password': bool(self.must_change_password),
+            # Count only — the hashes never leave the server, and the plaintext codes exist
+            # only in the one response that issued them.
+            'recovery_codes_remaining': self.recovery_codes_remaining(),
             'bulk_batch_id': self.bulk_batch_id,
+            'question_difficulty_range': self.question_difficulty_range,
             'last_seen_at': self.last_seen_at.isoformat() if self.last_seen_at else None,
             'clearance_email_sent_at': self.clearance_email_sent_at.isoformat() if self.clearance_email_sent_at else None,
             'hr_invite_sent_at': self.hr_invite_sent_at.isoformat() if self.hr_invite_sent_at else None,
@@ -804,6 +923,16 @@ class AdminLog(db.Model):
     admin_id = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
     action = db.Column(db.String(100), nullable=False)
     details = db.Column(db.Text, nullable=True)
+    # Role the actor held AT THE TIME of the action. Reading it back off the user row would
+    # be wrong: roles change, and an audit trail that says a super admin did something
+    # because they were promoted afterwards is not an audit trail. NULL on every pre-existing
+    # row, which is simply "unknown, predates this column".
+    actor_role = db.Column(db.String(20), nullable=True)
+    # Which API key performed this, when one did. A real column rather than something to be
+    # read back out of `details`: that text is written for humans, and a filter that pattern
+    # matches it breaks silently the day somebody rewords a message — returning nothing,
+    # which looks exactly like "this key has done nothing".
+    api_key_id = db.Column(db.Integer, db.ForeignKey('api_keys.id', ondelete='SET NULL'), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
 
     admin = db.relationship('User', foreign_keys=[admin_id])
@@ -814,6 +943,8 @@ class AdminLog(db.Model):
             'admin_id': self.admin_id,
             'action': self.action,
             'details': self.details,
+            'actor_role': self.actor_role,
+            'api_key_id': self.api_key_id,
             'created_at': self.created_at.isoformat() if self.created_at else None
         }
 
@@ -829,6 +960,16 @@ class BulkEmailBatch(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     admin_id = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    # Set when an API key triggered this batch rather than an admin in the Admin Hub.
+    # admin_id is still populated in that case (the key's creator), so nothing that already
+    # reads admin_id breaks — this only adds the ability to tell the two apart, the same
+    # distinction AdminLog.api_key_id draws for the audit trail.
+    api_key_id = db.Column(db.Integer, db.ForeignKey('api_keys.id', ondelete='SET NULL'), nullable=True)
+    # The company every account in this batch is created under. Stored on the batch rather
+    # than passed through the row payload because the background worker creates the accounts
+    # minutes later on another thread, and the batch row is the only thing it still has.
+    # NULL on batches that predate multi-admin.
+    company_id = db.Column(db.Integer, db.ForeignKey('companies.id', ondelete='SET NULL'), nullable=True)
     file_name = db.Column(db.String(255), nullable=True)
     subject = db.Column(db.String(255), nullable=False)
     personalize = db.Column(db.Boolean, default=False)
@@ -872,6 +1013,8 @@ class BulkEmailBatch(db.Model):
             'id': self.id,
             'admin_id': self.admin_id,
             'admin_name': self.admin.name if self.admin else None,
+            'api_key_id': self.api_key_id,
+            'company_id': self.company_id,
             'file_name': self.file_name,
             'subject': self.subject,
             'batch_name': self.batch_name,
@@ -886,4 +1029,188 @@ class BulkEmailBatch(db.Model):
             'failures': failures,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'completed_at': self.completed_at.isoformat() if self.completed_at else None,
+        }
+
+
+class Company(db.Model):
+    """A tenant. Every candidate belongs to at most one; every admin is granted one or more.
+
+    This is the unit that /api/admin/* is scoped by, so it is the whole reason a second
+    admin can exist without seeing the first admin's candidates.
+    """
+    __tablename__ = 'companies'
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(150), nullable=False)
+    # Stable, URL-safe handle. Unique so two companies cannot be created under names that
+    # only differ by case or spacing and then be impossible to tell apart in a dropdown.
+    slug = db.Column(db.String(80), unique=True, nullable=False)
+    # active | archived. Archiving is how a company is retired: deleting it would either
+    # orphan or cascade away real candidate records, and neither is acceptable for data an
+    # audit may need later.
+    status = db.Column(db.String(20), default='active')
+    # Where a PUBLIC signup lands. Somebody enrolling through the signup form picks a course
+    # category, not a company, so without this every organic signup would be created with no
+    # company at all — invisible to every admin, visible only in the super admin's
+    # unassigned list, forever growing. At most one company carries this at a time; the
+    # super admin route clears it from the others when it is set.
+    #
+    # NULL/false everywhere is the pre-multi-admin behaviour and stays valid: signups then
+    # land unassigned exactly as they do today, and the super admin places them by hand.
+    is_default = db.Column(db.Boolean, default=False)
+    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+    created_by = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'name': self.name,
+            'slug': self.slug,
+            'status': self.status or 'active',
+            'is_default': bool(self.is_default),
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'created_by': self.created_by,
+        }
+
+
+class AdminCompanyAssignment(db.Model):
+    """Which companies an admin may act on. One row per (admin, company) pair.
+
+    A join table rather than a column on users because the requirement is explicitly
+    many-to-many: one admin can be given several companies, and a company can have several
+    admins. Revoking access is deleting a row, which leaves the admin account itself intact.
+    """
+    __tablename__ = 'admin_company_assignments'
+    __table_args__ = (
+        # Two grants of the same company to the same admin are not merely redundant, they
+        # would make a revoke look like it silently failed — the second row still grants it.
+        db.UniqueConstraint('admin_user_id', 'company_id', name='uq_admin_company'),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    admin_user_id = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    company_id = db.Column(db.Integer, db.ForeignKey('companies.id', ondelete='CASCADE'), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+    created_by = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+
+    admin = db.relationship('User', foreign_keys=[admin_user_id])
+    company = db.relationship('Company', foreign_keys=[company_id])
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'admin_user_id': self.admin_user_id,
+            'company_id': self.company_id,
+            'company_name': self.company.name if self.company else None,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class ApiKey(db.Model):
+    """A credential for machine access to one company's data.
+
+    ONE COMPANY, ALWAYS
+    -------------------
+    Unlike an admin, who can hold several, a key is bound to exactly one company. Two
+    companies means two keys. That is not a limitation so much as the point: a key is
+    handed to an integration and then lives in somebody else's configuration, and "which
+    data does this key reach" should be answerable without looking anything up.
+
+    HASHED LIKE A PASSWORD, VERIFIED LIKE A TOKEN
+    ---------------------------------------------
+    Stored as SHA-256, not bcrypt. bcrypt is right for passwords precisely because it is
+    slow, which defends a low-entropy secret a human chose. An API key is 32 random bytes
+    generated here — brute force is not the threat — and it arrives on EVERY request, so
+    ~100ms per verification would cost more throughput than the whole rest of the request.
+    The prefix is indexed and stored in the clear so a lookup is one indexed hit rather
+    than a scan comparing every hash on the table.
+    """
+    __tablename__ = 'api_keys'
+
+    id = db.Column(db.Integer, primary_key=True)
+
+    # Human label ("Zapier integration", "HR dashboard"). What appears in the audit trail,
+    # because a key id tells whoever is reading it nothing.
+    name = db.Column(db.String(120), nullable=False)
+
+    # First characters of the key, shown in the clear everywhere the key is listed. The
+    # secret is unrecoverable after creation, so without this there is no way to tell two
+    # keys apart when deciding which to revoke.
+    key_prefix = db.Column(db.String(24), unique=True, nullable=False, index=True)
+    key_hash = db.Column(db.String(64), nullable=False)
+
+    company_id = db.Column(db.Integer, db.ForeignKey('companies.id', ondelete='CASCADE'), nullable=False)
+
+    # JSON list of scope strings. A key with no scopes can authenticate and do nothing,
+    # which is the safe thing for it to default to.
+    scopes = db.Column(db.Text, nullable=True)
+
+    # Requests per minute. Per key rather than per IP: an integration is one caller however
+    # many machines it runs on, and an IP limit would punish everyone behind one NAT.
+    rate_limit_per_minute = db.Column(db.Integer, default=60)
+
+    created_by = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+
+    # Optional. An integration that was meant to be temporary and has no expiry is one
+    # nobody ever remembers to turn off.
+    expires_at = db.Column(db.DateTime, nullable=True)
+
+    # Revocation is a timestamp, not a delete: the audit trail refers to this key by id, and
+    # deleting the row would turn every one of those entries into a dangling number.
+    revoked_at = db.Column(db.DateTime, nullable=True)
+    revoked_by = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+
+    # Written on use, best-effort. Answers the only question that matters when deciding
+    # whether a key is still needed: is anything still calling with it?
+    last_used_at = db.Column(db.DateTime, nullable=True)
+
+    company = db.relationship('Company', foreign_keys=[company_id])
+
+    def scope_list(self):
+        if not self.scopes:
+            return []
+        try:
+            value = json.loads(self.scopes)
+        except (ValueError, TypeError):
+            # A corrupted blob must mean "no permissions", never "all permissions".
+            return []
+        return value if isinstance(value, list) else []
+
+    def set_scopes(self, scopes):
+        self.scopes = json.dumps(sorted(set(scopes or [])))
+
+    def has_scope(self, scope):
+        return scope in self.scope_list()
+
+    def is_active(self, now=None):
+        now = now or datetime.datetime.utcnow()
+        if self.revoked_at is not None:
+            return False
+        if self.expires_at is not None and now > self.expires_at:
+            return False
+        return True
+
+    def status(self):
+        if self.revoked_at is not None:
+            return 'revoked'
+        if self.expires_at is not None and datetime.datetime.utcnow() > self.expires_at:
+            return 'expired'
+        return 'active'
+
+    def to_dict(self):
+        """Never includes the secret — it exists only in the response that created it."""
+        return {
+            'id': self.id,
+            'name': self.name,
+            'key_prefix': self.key_prefix,
+            'company_id': self.company_id,
+            'company_name': self.company.name if self.company else None,
+            'scopes': self.scope_list(),
+            'rate_limit_per_minute': self.rate_limit_per_minute or 60,
+            'status': self.status(),
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'expires_at': self.expires_at.isoformat() if self.expires_at else None,
+            'revoked_at': self.revoked_at.isoformat() if self.revoked_at else None,
+            'last_used_at': self.last_used_at.isoformat() if self.last_used_at else None,
         }

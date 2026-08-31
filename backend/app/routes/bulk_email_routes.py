@@ -24,10 +24,12 @@ from fastapi.responses import StreamingResponse
 from app.database.db import db
 from app.models import User, Token, Transaction, Notification, AdminLog, BulkEmailBatch
 from app.utils.security import admin_required
+from app.utils.scope import AdminScope, admin_scope
 from app.utils.candidate import (
     SIGNUP_CATEGORIES, COURSE_STATUSES, CATEGORY_JOB_ROLES,
     is_instructor_category, is_resume_category, normalize_cnic, generate_otp,
 )
+from app.utils.difficulty import is_valid_range, range_choices
 from app.config.config import Config
 from app.email import EmailService
 from app.email import templates as email_templates
@@ -80,6 +82,14 @@ def _validate_row(raw, seen_cnics, seen_emails):
         errors.append('Deadline must be a number of days')
     if deadline_days not in DEADLINE_CHOICES:
         errors.append(f"Deadline must be one of: {', '.join(str(d) for d in DEADLINE_CHOICES)} days")
+
+    # Question Difficulty Range: optional, per-row. Empty/absent means "no range" — the
+    # candidate's interview keeps today's behavior (client-chosen difficulty). The batch-level
+    # default (applied in /validate and /send before rows reach here) has already been merged
+    # into each row by that point, so a row only ever arrives here with its OWN final choice.
+    difficulty_range = (raw.get('difficulty_range') or '').strip().upper() or None
+    if difficulty_range and not is_valid_range(difficulty_range):
+        errors.append('Question difficulty range must be one of EASY_TO_MEDIUM, MEDIUM_TO_HARD, EASY_TO_HARD')
 
     if not name:
         errors.append('Name is required')
@@ -144,7 +154,23 @@ def _validate_row(raw, seen_cnics, seen_emails):
         'course_status': None if instructor else course_status,
         'instructor': instructor,
         'deadline_days': deadline_days,
+        'difficulty_range': difficulty_range,
     }, []
+
+
+def _apply_batch_difficulty_default(rows, batch_default):
+    """Fill in a row's difficulty_range from the batch-level default when the row itself
+    didn't set one — lets an admin pick one range for the whole file instead of typing it
+    into every row, while a row that DID set its own still wins (per-row override)."""
+    if not batch_default:
+        return rows
+    filled = []
+    for raw in rows:
+        raw = dict(raw or {})
+        if not (raw.get('difficulty_range') or '').strip():
+            raw['difficulty_range'] = batch_default
+        filled.append(raw)
+    return filled
 
 
 def _validate_rows(rows):
@@ -162,10 +188,53 @@ def _validate_rows(rows):
     return results
 
 
+def _selectable_companies(scope):
+    """Active companies the caller may create accounts under."""
+    from app.models import Company
+    query = Company.query.filter(Company.status != 'archived')
+    if not scope.is_super:
+        if not scope.company_ids:
+            return []
+        query = query.filter(Company.id.in_(scope.company_ids))
+    return query.order_by(Company.name.asc()).all()
+
+
+def _resolve_batch_company(scope, company_id):
+    """The company a batch will create its accounts under, or raise.
+
+    Every account this module creates is a candidate, and a candidate with no company is
+    invisible to the admin who just invited them (only the super admin sees unassigned
+    rows). So the company is required rather than optional — an omitted one would produce a
+    batch of accounts that immediately vanish from the inviter's own list.
+
+    The single exception is a database with no companies at all, which is what the system
+    looks like before the super admin sets any up: batches there behave exactly as they did
+    before multi-admin.
+    """
+    from app.models import Company
+
+    available = _selectable_companies(scope)
+    if not available and Company.query.first() is None:
+        return None
+
+    if company_id is None:
+        if len(available) == 1:
+            # An admin who holds exactly one company has no choice to make.
+            return available[0].id
+        raise HTTPException(
+            status_code=400,
+            detail="Choose which company these candidates belong to before sending."
+        )
+
+    if not any(c.id == company_id for c in available):
+        raise HTTPException(status_code=404, detail="Company not found")
+    return company_id
+
+
 # --------------------------------------------------------------------------- endpoints
 
 @bulk_email_bp.get('/config')
-def bulk_config(user: User = Depends(admin_required)):
+def bulk_config(user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
     """Everything the modal needs to render and validate client-side, straight from the
     server's own constants so the two can never drift apart."""
     return {
@@ -176,6 +245,10 @@ def bulk_config(user: User = Depends(admin_required)):
         'default_deadline_days': DEFAULT_DEADLINE_DAYS,
         'max_rows': MAX_ROWS,
         'ongoing_enabled': bool(Config.ONGOING_CATEGORY_ENABLED),
+        'difficulty_ranges': range_choices(),
+        # Which companies this admin may invite into, so the modal can offer exactly those
+        # and never a company the send would then reject.
+        'companies': [c.to_dict() for c in _selectable_companies(scope)],
     }
 
 
@@ -197,7 +270,8 @@ def download_template(user: User = Depends(admin_required)):
 
 
 @bulk_email_bp.post('/validate')
-def validate_batch(payload: dict = Body(default=None), user: User = Depends(admin_required)):
+def validate_batch(payload: dict = Body(default=None), user: User = Depends(admin_required),
+                   scope: AdminScope = Depends(admin_scope)):
     """Server-side validation of the parsed rows.
 
     The modal parses the file in the browser for an instant preview, but correctness is
@@ -211,6 +285,15 @@ def validate_batch(payload: dict = Body(default=None), user: User = Depends(admi
     if len(rows) > MAX_ROWS:
         raise HTTPException(status_code=400, detail=f"Too many rows — the limit is {MAX_ROWS} per batch")
 
+    # Resolved here as well as in /send so the preview refuses a batch the send would
+    # refuse anyway, rather than letting the admin fill in a whole file first.
+    _resolve_batch_company(scope, data.get('company_id'))
+
+    batch_difficulty_range = (data.get('difficulty_range') or '').strip().upper() or None
+    if batch_difficulty_range and not is_valid_range(batch_difficulty_range):
+        raise HTTPException(status_code=400, detail="Invalid difficulty_range")
+    rows = _apply_batch_difficulty_default(rows, batch_difficulty_range)
+
     results = _validate_rows(rows)
     valid_count = sum(1 for r in results if r['valid'])
     return {
@@ -223,7 +306,8 @@ def validate_batch(payload: dict = Body(default=None), user: User = Depends(admi
 
 
 @bulk_email_bp.post('/send')
-def send_batch(payload: dict = Body(default=None), user: User = Depends(admin_required)):
+def send_batch(payload: dict = Body(default=None), user: User = Depends(admin_required),
+               scope: AdminScope = Depends(admin_scope)):
     """Create accounts and queue the invitations, then return immediately.
 
     The actual work runs on a daemon thread so a large batch never blocks the admin's
@@ -239,6 +323,7 @@ def send_batch(payload: dict = Body(default=None), user: User = Depends(admin_re
     # call bypasses — an over-long value would otherwise fail at INSERT with a database error
     # after the accounts were already validated.
     batch_name = (data.get('batch_name') or '').strip()[:120] or None
+    company_id = _resolve_batch_company(scope, data.get('company_id'))
 
     if not subject:
         raise HTTPException(status_code=400, detail="An email subject/title is required")
@@ -246,6 +331,11 @@ def send_batch(payload: dict = Body(default=None), user: User = Depends(admin_re
         raise HTTPException(status_code=400, detail="No rows to send")
     if len(rows) > MAX_ROWS:
         raise HTTPException(status_code=400, detail=f"Too many rows — the limit is {MAX_ROWS} per batch")
+
+    batch_difficulty_range = (data.get('difficulty_range') or '').strip().upper() or None
+    if batch_difficulty_range and not is_valid_range(batch_difficulty_range):
+        raise HTTPException(status_code=400, detail="Invalid difficulty_range")
+    rows = _apply_batch_difficulty_default(rows, batch_difficulty_range)
 
     # Re-validate server-side; refuse the whole batch if anything is wrong so the admin
     # fixes it in the preview rather than discovering a half-sent batch afterwards.
@@ -265,6 +355,7 @@ def send_batch(payload: dict = Body(default=None), user: User = Depends(admin_re
 
     batch = BulkEmailBatch(
         admin_id=user.id,
+        company_id=company_id,
         file_name=file_name,
         subject=subject,
         batch_name=batch_name,
@@ -293,16 +384,23 @@ def send_batch(payload: dict = Body(default=None), user: User = Depends(admin_re
 
 
 @bulk_email_bp.get('/batches')
-def list_batches(user: User = Depends(admin_required)):
-    batches = BulkEmailBatch.query.order_by(BulkEmailBatch.created_at.desc()).limit(50).all()
+def list_batches(user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
+    # Scoped by who ran the batch, the same cut as the audit log: a batch row carries a
+    # file name and subject line belonging to whoever sent it.
+    batches = scope.filter_by_actor(
+        BulkEmailBatch.query, BulkEmailBatch.admin_id
+    ).order_by(BulkEmailBatch.created_at.desc()).limit(50).all()
     return {'batches': [b.to_dict() for b in batches]}
 
 
 @bulk_email_bp.get('/batches/{batch_id}')
-def get_batch(batch_id: int, user: User = Depends(admin_required)):
+def get_batch(batch_id: int, user: User = Depends(admin_required),
+              scope: AdminScope = Depends(admin_scope)):
     """Progress endpoint the modal polls while a batch is sending."""
     batch = BulkEmailBatch.query.get(batch_id)
     if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found")
+    if not scope.is_super and batch.admin_id != scope.admin.id:
         raise HTTPException(status_code=404, detail="Batch not found")
     return {'batch': batch.to_dict()}
 
@@ -329,7 +427,7 @@ def _discard_account(user_id):
         db.session.rollback()
 
 
-def _create_and_invite(row, batch_id, subject, personalize):
+def _create_and_invite(row, batch_id, subject, personalize, company_id=None):
     """Create ONE account and send its invitation.
 
     Mirrors the public signup path exactly — same User fields, same random unusable
@@ -351,7 +449,9 @@ def _create_and_invite(row, batch_id, subject, personalize):
         course_category=row['category'],
         course_status=row['course_status'],
         interview_status='invited',
+        company_id=company_id,
         bulk_batch_id=batch_id,
+        question_difficulty_range=row.get('difficulty_range'),
     )
     # One-time credential login only — the stored password is random and unusable, exactly
     # as the signup path does for completed-course candidates and instructors.
@@ -408,7 +508,7 @@ def _create_and_invite(row, batch_id, subject, personalize):
     return user_id
 
 
-def _invite_one(row, batch_id, subject, personalize):
+def _invite_one(row, batch_id, subject, personalize, company_id=None):
     """Pool-thread task: invite ONE recipient. Returns None on success, else the error text.
 
     Never raises, so one bad recipient can never cancel the rest of the batch. Each pool
@@ -417,7 +517,7 @@ def _invite_one(row, batch_id, subject, personalize):
     the life of the batch.
     """
     try:
-        _create_and_invite(row, batch_id, subject, personalize)
+        _create_and_invite(row, batch_id, subject, personalize, company_id)
         return None
     except Exception as e:
         db.session.rollback()
@@ -438,6 +538,7 @@ def _process_batch(batch_id, rows):
         if not batch:
             return
         subject, personalize = batch.subject, bool(batch.personalize)
+        company_id = batch.company_id
         batch.status = 'sending'
         db.session.commit()
 
@@ -449,7 +550,7 @@ def _process_batch(batch_id, rows):
         # so a serial loop spends almost all of its time waiting on the network.
         with ThreadPoolExecutor(max_workers=max(1, SEND_CONCURRENCY)) as pool:
             futures = {
-                pool.submit(_invite_one, row, batch_id, subject, personalize): idx
+                pool.submit(_invite_one, row, batch_id, subject, personalize, company_id): idx
                 for idx, row in enumerate(rows)
             }
             for future in as_completed(futures):
