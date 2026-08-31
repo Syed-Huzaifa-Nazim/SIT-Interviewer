@@ -1837,6 +1837,766 @@ PROBLEMS = [
             {"args": [0, 14], "expected": 10},
         ],
     },
+
+    # --- Batch 4: more practical/real-world framed problems (bank expansion continues). ---
+    {
+        "id": "calculate-age-in-years",
+        "title": "Calculate Age In Years",
+        "difficulty": "Easy",
+        "function_name": "age_in_years",
+        "time_limit_secs": 5,
+        "prompt": "Given a `birth_year` and a `current_year`, return the person's age in whole years.",
+        "constraints": ["1 <= birth_year <= current_year <= 9999"],
+        "examples": [{"input": "birth_year = 1990, current_year = 2024", "output": "34"}],
+        "starters": {
+            "python": "def age_in_years(birth_year, current_year):\n    # Return current_year - birth_year.\n    pass\n",
+            "javascript": "function age_in_years(birth_year, current_year) {\n    // Return current_year - birth_year.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [1990, 2024], "expected": 34},
+            {"args": [2000, 2000], "expected": 0},
+        ],
+        "hidden_tests": [
+            {"args": [1999, 2023], "expected": 24},
+            {"args": [1800, 2024], "expected": 224},
+        ],
+    },
+    {
+        "id": "is-prime-number",
+        "title": "Is Prime Number",
+        "difficulty": "Easy",
+        "function_name": "is_prime",
+        "time_limit_secs": 5,
+        "prompt": "Return True if `n` is a prime number.",
+        "constraints": ["0 <= n <= 10^9"],
+        "examples": [
+            {"input": "n = 7", "output": "true"},
+            {"input": "n = 10", "output": "false"},
+        ],
+        "starters": {
+            "python": "def is_prime(n):\n    # Return True if n is prime.\n    pass\n",
+            "javascript": "function is_prime(n) {\n    // Return true if n is prime.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [7], "expected": True},
+            {"args": [10], "expected": False},
+        ],
+        "hidden_tests": [
+            {"args": [1], "expected": False},
+            {"args": [2], "expected": True},
+            {"args": [97], "expected": True},
+            {"args": [100], "expected": False},
+            {"args": [0], "expected": False},
+        ],
+    },
+    {
+        "id": "gcd-of-two-numbers",
+        "title": "GCD Of Two Numbers",
+        "difficulty": "Easy",
+        "function_name": "gcd",
+        "time_limit_secs": 5,
+        "prompt": "Return the greatest common divisor of `a` and `b`.",
+        "constraints": ["0 <= a, b <= 10^9"],
+        "examples": [{"input": "a = 12, b = 18", "output": "6"}],
+        "starters": {
+            "python": "def gcd(a, b):\n    # Return the greatest common divisor of a and b.\n    pass\n",
+            "javascript": "function gcd(a, b) {\n    // Return the greatest common divisor of a and b.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [12, 18], "expected": 6},
+            {"args": [7, 13], "expected": 1},
+        ],
+        "hidden_tests": [
+            {"args": [0, 5], "expected": 5},
+            {"args": [5, 0], "expected": 5},
+            {"args": [100, 75], "expected": 25},
+            {"args": [17, 17], "expected": 17},
+        ],
+    },
+    {
+        "id": "reverse-integer",
+        "title": "Reverse Integer",
+        "difficulty": "Easy",
+        "function_name": "reverse_integer",
+        "time_limit_secs": 5,
+        "prompt": "Given an integer `n`, return its digits reversed, preserving the sign.",
+        "constraints": ["-10^9 <= n <= 10^9"],
+        "examples": [
+            {"input": "n = 123", "output": "321"},
+            {"input": "n = -456", "output": "-654"},
+        ],
+        "starters": {
+            "python": "def reverse_integer(n):\n    # Return n with its digits reversed, keeping the sign.\n    pass\n",
+            "javascript": "function reverse_integer(n) {\n    // Return n with its digits reversed, keeping the sign.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [123], "expected": 321},
+            {"args": [-456], "expected": -654},
+        ],
+        "hidden_tests": [
+            {"args": [0], "expected": 0},
+            {"args": [100], "expected": 1},
+            {"args": [120], "expected": 21},
+            {"args": [7], "expected": 7},
+        ],
+    },
+    {
+        "id": "count-character-frequency",
+        "title": "Count Character Frequency",
+        "difficulty": "Easy",
+        "function_name": "char_frequency",
+        "time_limit_secs": 5,
+        "prompt": "Given a string `s`, return a dict mapping each character to how many times it appears.",
+        "constraints": ["0 <= len(s) <= 10^4"],
+        "examples": [{"input": 's = "aab"', "output": '{"a": 2, "b": 1}'}],
+        "starters": {
+            "python": "def char_frequency(s):\n    # Return {char: count} for every character in s.\n    pass\n",
+            "javascript": "function char_frequency(s) {\n    // Return {char: count} for every character in s.\n}\n",
+        },
+        "sample_tests": [
+            {"args": ["aab"], "expected": {"a": 2, "b": 1}},
+        ],
+        "hidden_tests": [
+            {"args": [""], "expected": {}},
+            {"args": ["aaa"], "expected": {"a": 3}},
+            {"args": ["ab ab"], "expected": {"a": 2, "b": 2, " ": 1}},
+        ],
+    },
+    {
+        "id": "validate-parentheses-depth",
+        "title": "Validate Parentheses Depth",
+        "difficulty": "Medium",
+        "function_name": "max_nesting_depth",
+        "time_limit_secs": 5,
+        "prompt": (
+            "Given a balanced string `s` of only '(' and ')' characters, return the "
+            "maximum nesting depth reached."
+        ),
+        "constraints": ["0 <= len(s) <= 10^4", "s is balanced."],
+        "examples": [
+            {"input": 's = "((()))"', "output": "3"},
+            {"input": 's = "()()"', "output": "1"},
+        ],
+        "starters": {
+            "python": "def max_nesting_depth(s):\n    # Return the deepest level of nested parentheses in s.\n    pass\n",
+            "javascript": "function max_nesting_depth(s) {\n    // Return the deepest level of nested parentheses in s.\n}\n",
+        },
+        "sample_tests": [
+            {"args": ["((()))"], "expected": 3},
+            {"args": ["()()"], "expected": 1},
+        ],
+        "hidden_tests": [
+            {"args": [""], "expected": 0},
+            {"args": ["()"], "expected": 1},
+            {"args": ["(((())))"], "expected": 4},
+        ],
+    },
+    {
+        "id": "calculate-cart-item-count",
+        "title": "Calculate Cart Item Count",
+        "difficulty": "Easy",
+        "function_name": "total_items",
+        "time_limit_secs": 5,
+        "prompt": "Given a `cart` dict mapping item name to quantity, return the total number of items.",
+        "constraints": ["0 <= len(cart) <= 1000"],
+        "examples": [{"input": 'cart = {"apple": 2, "banana": 3}', "output": "5"}],
+        "starters": {
+            "python": "def total_items(cart):\n    # Return the sum of all quantities in cart.\n    pass\n",
+            "javascript": "function total_items(cart) {\n    // Return the sum of all quantities in cart.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [{"apple": 2, "banana": 3}], "expected": 5},
+        ],
+        "hidden_tests": [
+            {"args": [{}], "expected": 0},
+            {"args": [{"x": 1}], "expected": 1},
+            {"args": [{"a": 10, "b": 0, "c": 5}], "expected": 15},
+        ],
+    },
+    {
+        "id": "find-second-largest",
+        "title": "Find Second Largest",
+        "difficulty": "Easy",
+        "function_name": "second_largest",
+        "time_limit_secs": 5,
+        "prompt": "Given a list `nums` with at least 2 distinct values, return the second largest distinct value.",
+        "constraints": ["2 <= len(nums) <= 10^5"],
+        "examples": [{"input": "nums = [10, 20, 4, 45, 99]", "output": "45"}],
+        "starters": {
+            "python": "def second_largest(nums):\n    # Return the second largest DISTINCT value in nums.\n    pass\n",
+            "javascript": "function second_largest(nums) {\n    // Return the second largest DISTINCT value in nums.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [[10, 20, 4, 45, 99]], "expected": 45},
+            {"args": [[5, 5, 5, 3]], "expected": 3},
+        ],
+        "hidden_tests": [
+            {"args": [[1, 2]], "expected": 1},
+            {"args": [[100, 90, 90, 80]], "expected": 90},
+            {"args": [[-1, -5, -3]], "expected": -3},
+        ],
+    },
+    {
+        "id": "is-armstrong-number",
+        "title": "Is Armstrong Number",
+        "difficulty": "Easy",
+        "function_name": "is_armstrong",
+        "time_limit_secs": 5,
+        "prompt": (
+            "An Armstrong number equals the sum of its own digits each raised to the "
+            "power of the digit count (e.g. 153 = 1^3 + 5^3 + 3^3). Return True if `n` is one."
+        ),
+        "constraints": ["0 <= n <= 10^8"],
+        "examples": [
+            {"input": "n = 153", "output": "true"},
+            {"input": "n = 123", "output": "false"},
+        ],
+        "starters": {
+            "python": "def is_armstrong(n):\n    # Return True if n is an Armstrong number.\n    pass\n",
+            "javascript": "function is_armstrong(n) {\n    // Return true if n is an Armstrong number.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [153], "expected": True},
+            {"args": [123], "expected": False},
+        ],
+        "hidden_tests": [
+            {"args": [0], "expected": True},
+            {"args": [9], "expected": True},
+            {"args": [9474], "expected": True},
+            {"args": [10], "expected": False},
+        ],
+    },
+    {
+        "id": "calculate-late-fee",
+        "title": "Calculate Late Fee",
+        "difficulty": "Easy",
+        "function_name": "late_fee",
+        "time_limit_secs": 5,
+        "prompt": (
+            "A library charges a late fee of `daily_rate` per day overdue. Given "
+            "`days_late` (may be negative or zero if not overdue) and `daily_rate`, "
+            "return the fee owed (never negative)."
+        ),
+        "constraints": ["-1000 <= days_late <= 1000", "0 <= daily_rate <= 1000"],
+        "examples": [
+            {"input": "days_late = 3, daily_rate = 2", "output": "6"},
+            {"input": "days_late = 0, daily_rate = 2", "output": "0"},
+        ],
+        "starters": {
+            "python": "def late_fee(days_late, daily_rate):\n    # Return max(0, days_late) * daily_rate.\n    pass\n",
+            "javascript": "function late_fee(days_late, daily_rate) {\n    // Return max(0, days_late) * daily_rate.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [3, 2], "expected": 6},
+            {"args": [0, 2], "expected": 0},
+        ],
+        "hidden_tests": [
+            {"args": [-5, 2], "expected": 0},
+            {"args": [10, 1.5], "expected": 15.0},
+            {"args": [1, 100], "expected": 100},
+        ],
+    },
+    {
+        "id": "capitalize-each-word",
+        "title": "Capitalize Each Word",
+        "difficulty": "Easy",
+        "function_name": "title_case",
+        "time_limit_secs": 5,
+        "prompt": "Given a `sentence`, return it with the first letter of each word capitalized and the rest lowercase.",
+        "constraints": ["0 <= len(sentence) <= 10^4"],
+        "examples": [{"input": 'sentence = "hello world"', "output": '"Hello World"'}],
+        "starters": {
+            "python": "def title_case(sentence):\n    # Return sentence with each word capitalized.\n    pass\n",
+            "javascript": "function title_case(sentence) {\n    // Return sentence with each word capitalized.\n}\n",
+        },
+        "sample_tests": [
+            {"args": ["hello world"], "expected": "Hello World"},
+            {"args": ["THE QUICK FOX"], "expected": "The Quick Fox"},
+        ],
+        "hidden_tests": [
+            {"args": [""], "expected": ""},
+            {"args": ["a"], "expected": "A"},
+            {"args": ["mUlTi CaSe HeRe"], "expected": "Multi Case Here"},
+        ],
+    },
+    {
+        "id": "find-intersection-of-arrays",
+        "title": "Find Intersection Of Arrays",
+        "difficulty": "Easy",
+        "function_name": "array_intersection",
+        "time_limit_secs": 5,
+        "prompt": "Given two lists `a` and `b`, return a sorted list of the unique values present in both.",
+        "constraints": ["0 <= len(a), len(b) <= 10^5"],
+        "examples": [{"input": "a = [1, 2, 2, 3], b = [2, 3, 4]", "output": "[2, 3]"}],
+        "starters": {
+            "python": "def array_intersection(a, b):\n    # Return a sorted list of values present in both a and b.\n    pass\n",
+            "javascript": "function array_intersection(a, b) {\n    // Return a sorted array of values present in both a and b.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [[1, 2, 2, 3], [2, 3, 4]], "expected": [2, 3]},
+        ],
+        "hidden_tests": [
+            {"args": [[], [1, 2]], "expected": []},
+            {"args": [[1, 1, 1], [1]], "expected": [1]},
+            {"args": [[5, 6], [7, 8]], "expected": []},
+        ],
+    },
+    {
+        "id": "count-pairs-with-sum",
+        "title": "Count Pairs With Sum",
+        "difficulty": "Medium",
+        "function_name": "count_pairs_with_sum",
+        "time_limit_secs": 5,
+        "prompt": (
+            "Given a list `nums` and a `target`, return the number of index pairs (i, j) "
+            "with i < j such that nums[i] + nums[j] == target."
+        ),
+        "constraints": ["0 <= len(nums) <= 2000"],
+        "examples": [{"input": "nums = [1, 2, 3, 4], target = 5", "output": "2"}],
+        "starters": {
+            "python": "def count_pairs_with_sum(nums, target):\n    # Return the count of index pairs i<j whose values sum to target.\n    pass\n",
+            "javascript": "function count_pairs_with_sum(nums, target) {\n    // Return the count of index pairs i<j whose values sum to target.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [[1, 2, 3, 4], 5], "expected": 2},
+            {"args": [[1, 1, 1], 2], "expected": 3},
+        ],
+        "hidden_tests": [
+            {"args": [[], 5], "expected": 0},
+            {"args": [[5], 5], "expected": 0},
+            {"args": [[0, 0, 0, 0], 0], "expected": 6},
+        ],
+    },
+    {
+        "id": "validate-iso-date",
+        "title": "Validate ISO Date",
+        "difficulty": "Medium",
+        "function_name": "is_valid_iso_date",
+        "time_limit_secs": 5,
+        "prompt": (
+            "Given a string `date_str` in \"YYYY-MM-DD\" form, return True only if it is a "
+            "real calendar date (correct days-in-month, leap years accounted for)."
+        ),
+        "constraints": ["len(date_str) is arbitrary — validate defensively."],
+        "examples": [
+            {"input": 'date_str = "2024-02-29"', "output": "true"},
+            {"input": 'date_str = "2023-02-29"', "output": "false"},
+        ],
+        "starters": {
+            "python": "def is_valid_iso_date(date_str):\n    # Return True if date_str is a real YYYY-MM-DD calendar date.\n    pass\n",
+            "javascript": "function is_valid_iso_date(date_str) {\n    // Return true if date_str is a real YYYY-MM-DD calendar date.\n}\n",
+        },
+        "sample_tests": [
+            {"args": ["2024-02-29"], "expected": True},
+            {"args": ["2023-02-29"], "expected": False},
+        ],
+        "hidden_tests": [
+            {"args": ["2024-13-01"], "expected": False},
+            {"args": ["2024-00-10"], "expected": False},
+            {"args": ["2024-04-31"], "expected": False},
+            {"args": ["2024-01-01"], "expected": True},
+            {"args": ["bad-date"], "expected": False},
+        ],
+    },
+    {
+        "id": "find-majority-element",
+        "title": "Find Majority Element",
+        "difficulty": "Medium",
+        "function_name": "majority_element",
+        "time_limit_secs": 5,
+        "prompt": (
+            "Given a list `nums` where one value is guaranteed to appear more than n/2 "
+            "times, return that value."
+        ),
+        "constraints": ["1 <= len(nums) <= 10^5"],
+        "examples": [{"input": "nums = [2, 2, 1, 1, 1, 2, 2]", "output": "2"}],
+        "starters": {
+            "python": "def majority_element(nums):\n    # Return the value appearing more than n/2 times.\n    pass\n",
+            "javascript": "function majority_element(nums) {\n    // Return the value appearing more than n/2 times.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [[3, 2, 3]], "expected": 3},
+            {"args": [[2, 2, 1, 1, 1, 2, 2]], "expected": 2},
+        ],
+        "hidden_tests": [
+            {"args": [[1]], "expected": 1},
+            {"args": [[5, 5, 5, 5, 1, 1, 1]], "expected": 5},
+            {"args": [[1, 1, 1, 2, 2]], "expected": 1},
+        ],
+    },
+    {
+        "id": "detect-sorted-array",
+        "title": "Detect Sorted Array",
+        "difficulty": "Easy",
+        "function_name": "is_sorted_ascending",
+        "time_limit_secs": 5,
+        "prompt": "Return True if `nums` is sorted in non-decreasing order.",
+        "constraints": ["0 <= len(nums) <= 10^5"],
+        "examples": [
+            {"input": "nums = [1, 2, 2, 3]", "output": "true"},
+            {"input": "nums = [3, 1, 2]", "output": "false"},
+        ],
+        "starters": {
+            "python": "def is_sorted_ascending(nums):\n    # Return True if nums is sorted ascending.\n    pass\n",
+            "javascript": "function is_sorted_ascending(nums) {\n    // Return true if nums is sorted ascending.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [[1, 2, 2, 3]], "expected": True},
+            {"args": [[3, 1, 2]], "expected": False},
+        ],
+        "hidden_tests": [
+            {"args": [[]], "expected": True},
+            {"args": [[5]], "expected": True},
+            {"args": [[5, 4]], "expected": False},
+        ],
+    },
+    {
+        "id": "rotate-string-check",
+        "title": "Rotate String Check",
+        "difficulty": "Easy",
+        "function_name": "is_rotation",
+        "time_limit_secs": 5,
+        "prompt": "Given two strings `s1` and `s2` of equal length, return True if s2 is a rotation of s1.",
+        "constraints": ["0 <= len(s1), len(s2) <= 10^4"],
+        "examples": [{"input": 's1 = "waterbottle", s2 = "erbottlewat"', "output": "true"}],
+        "starters": {
+            "python": "def is_rotation(s1, s2):\n    # Return True if s2 is a rotation of s1.\n    pass\n",
+            "javascript": "function is_rotation(s1, s2) {\n    // Return true if s2 is a rotation of s1.\n}\n",
+        },
+        "sample_tests": [
+            {"args": ["waterbottle", "erbottlewat"], "expected": True},
+            {"args": ["hello", "world"], "expected": False},
+        ],
+        "hidden_tests": [
+            {"args": ["", ""], "expected": True},
+            {"args": ["abc", "abc"], "expected": True},
+            {"args": ["abc", "cab"], "expected": True},
+            {"args": ["abc", "acb"], "expected": False},
+        ],
+    },
+    {
+        "id": "calculate-retry-backoff",
+        "title": "Calculate Retry Backoff",
+        "difficulty": "Medium",
+        "function_name": "exponential_backoff",
+        "time_limit_secs": 5,
+        "prompt": (
+            "An API client retries with exponential backoff. Given the 0-based `attempt` "
+            "number, `base_seconds`, and `max_seconds`, return "
+            "min(base_seconds * 2^attempt, max_seconds)."
+        ),
+        "constraints": ["0 <= attempt <= 30"],
+        "examples": [{"input": "attempt = 3, base_seconds = 1, max_seconds = 100", "output": "8"}],
+        "starters": {
+            "python": "def exponential_backoff(attempt, base_seconds, max_seconds):\n    # Return min(base_seconds * 2**attempt, max_seconds).\n    pass\n",
+            "javascript": "function exponential_backoff(attempt, base_seconds, max_seconds) {\n    // Return Math.min(base_seconds * 2**attempt, max_seconds).\n}\n",
+        },
+        "sample_tests": [
+            {"args": [0, 1, 100], "expected": 1},
+            {"args": [3, 1, 100], "expected": 8},
+        ],
+        "hidden_tests": [
+            {"args": [10, 1, 60], "expected": 60},
+            {"args": [0, 5, 100], "expected": 5},
+            {"args": [2, 2, 100], "expected": 8},
+        ],
+    },
+    {
+        "id": "find-unique-visitor-count",
+        "title": "Find Unique Visitor Count",
+        "difficulty": "Easy",
+        "function_name": "unique_visitors",
+        "time_limit_secs": 5,
+        "prompt": "Given a list of `visitor_ids` (with repeats), return the number of distinct visitors.",
+        "constraints": ["0 <= len(visitor_ids) <= 10^5"],
+        "examples": [{"input": 'visitor_ids = ["u1", "u2", "u1", "u3"]', "output": "3"}],
+        "starters": {
+            "python": "def unique_visitors(visitor_ids):\n    # Return the number of distinct visitor ids.\n    pass\n",
+            "javascript": "function unique_visitors(visitor_ids) {\n    // Return the number of distinct visitor ids.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [["u1", "u2", "u1", "u3"]], "expected": 3},
+        ],
+        "hidden_tests": [
+            {"args": [[]], "expected": 0},
+            {"args": [["a"]], "expected": 1},
+            {"args": [["x", "x", "x"]], "expected": 1},
+        ],
+    },
+    {
+        "id": "calculate-grade-from-score",
+        "title": "Calculate Grade From Score",
+        "difficulty": "Easy",
+        "function_name": "letter_grade",
+        "time_limit_secs": 5,
+        "prompt": (
+            "Given a numeric `score` (0-100), return its letter grade: \"A\" (>= 90), "
+            "\"B\" (>= 80), \"C\" (>= 70), \"D\" (>= 60), else \"F\"."
+        ),
+        "constraints": ["0 <= score <= 100"],
+        "examples": [
+            {"input": "score = 95", "output": '"A"'},
+            {"input": "score = 50", "output": '"F"'},
+        ],
+        "starters": {
+            "python": "def letter_grade(score):\n    # Return the letter grade for score.\n    pass\n",
+            "javascript": "function letter_grade(score) {\n    // Return the letter grade for score.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [95], "expected": "A"},
+            {"args": [50], "expected": "F"},
+        ],
+        "hidden_tests": [
+            {"args": [90], "expected": "A"},
+            {"args": [89], "expected": "B"},
+            {"args": [60], "expected": "D"},
+            {"args": [59], "expected": "F"},
+        ],
+    },
+    {
+        "id": "two-pointer-sorted-two-sum",
+        "title": "Two Sum On A Sorted Array",
+        "difficulty": "Medium",
+        "function_name": "two_sum_sorted",
+        "time_limit_secs": 5,
+        "prompt": (
+            "Given a list `nums` sorted ascending with exactly one pair summing to "
+            "`target`, return their 0-based indices [i, j] with i < j."
+        ),
+        "constraints": ["2 <= len(nums) <= 10^5", "nums is sorted ascending."],
+        "examples": [{"input": "nums = [2, 7, 11, 15], target = 9", "output": "[0, 1]"}],
+        "starters": {
+            "python": "def two_sum_sorted(nums, target):\n    # Return [i, j] with nums[i] + nums[j] == target, using two pointers.\n    pass\n",
+            "javascript": "function two_sum_sorted(nums, target) {\n    // Return [i, j] with nums[i] + nums[j] == target, using two pointers.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [[1, 2, 3, 4, 6], 6], "expected": [1, 3]},
+            {"args": [[2, 7, 11, 15], 9], "expected": [0, 1]},
+        ],
+        "hidden_tests": [
+            {"args": [[1, 2, 3], 5], "expected": [1, 2]},
+            {"args": [[0, 0, 3, 4], 0], "expected": [0, 1]},
+        ],
+    },
+    {
+        "id": "find-first-non-repeating-char",
+        "title": "Find First Non-Repeating Character",
+        "difficulty": "Medium",
+        "function_name": "first_unique_char",
+        "time_limit_secs": 5,
+        "prompt": "Given a string `s`, return the 0-based index of the first character that appears exactly once, or -1 if none does.",
+        "constraints": ["0 <= len(s) <= 10^5"],
+        "examples": [
+            {"input": 's = "leetcode"', "output": "0"},
+            {"input": 's = "aabb"', "output": "-1"},
+        ],
+        "starters": {
+            "python": "def first_unique_char(s):\n    # Return the index of the first non-repeating character, or -1.\n    pass\n",
+            "javascript": "function first_unique_char(s) {\n    // Return the index of the first non-repeating character, or -1.\n}\n",
+        },
+        "sample_tests": [
+            {"args": ["leetcode"], "expected": 0},
+            {"args": ["aabb"], "expected": -1},
+        ],
+        "hidden_tests": [
+            {"args": [""], "expected": -1},
+            {"args": ["z"], "expected": 0},
+            {"args": ["aabbc"], "expected": 4},
+        ],
+    },
+    {
+        "id": "calculate-total-pages",
+        "title": "Calculate Total Pages",
+        "difficulty": "Easy",
+        "function_name": "total_pages",
+        "time_limit_secs": 5,
+        "prompt": "Given `total_items` and `items_per_page`, return the number of pages needed (round up).",
+        "constraints": ["0 <= total_items <= 10^7", "1 <= items_per_page"],
+        "examples": [{"input": "total_items = 95, items_per_page = 10", "output": "10"}],
+        "starters": {
+            "python": "def total_pages(total_items, items_per_page):\n    # Return the number of pages needed, rounded up.\n    pass\n",
+            "javascript": "function total_pages(total_items, items_per_page) {\n    // Return the number of pages needed, rounded up.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [95, 10], "expected": 10},
+            {"args": [100, 10], "expected": 10},
+        ],
+        "hidden_tests": [
+            {"args": [0, 10], "expected": 0},
+            {"args": [1, 10], "expected": 1},
+            {"args": [21, 7], "expected": 3},
+        ],
+    },
+    {
+        "id": "detect-palindrome-number",
+        "title": "Detect Palindrome Number",
+        "difficulty": "Easy",
+        "function_name": "is_palindrome_number",
+        "time_limit_secs": 5,
+        "prompt": "Return True if the integer `n` reads the same forwards and backwards. Negative numbers are never palindromes.",
+        "constraints": ["-10^9 <= n <= 10^9"],
+        "examples": [
+            {"input": "n = 121", "output": "true"},
+            {"input": "n = 123", "output": "false"},
+        ],
+        "starters": {
+            "python": "def is_palindrome_number(n):\n    # Return True if n's digits read the same forwards and backwards.\n    pass\n",
+            "javascript": "function is_palindrome_number(n) {\n    // Return true if n's digits read the same forwards and backwards.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [121], "expected": True},
+            {"args": [123], "expected": False},
+        ],
+        "hidden_tests": [
+            {"args": [-121], "expected": False},
+            {"args": [0], "expected": True},
+            {"args": [1], "expected": True},
+            {"args": [1221], "expected": True},
+        ],
+    },
+    {
+        "id": "merge-two-dicts-summing-values",
+        "title": "Merge Two Dicts Summing Values",
+        "difficulty": "Easy",
+        "function_name": "sum_dicts",
+        "time_limit_secs": 5,
+        "prompt": "Given two dicts `d1` and `d2` of numeric values, return a merged dict where a key present in both has its values summed.",
+        "constraints": ["0 <= len(d1), len(d2) <= 1000"],
+        "examples": [{"input": 'd1 = {"a": 1, "b": 2}, d2 = {"b": 3, "c": 4}', "output": '{"a": 1, "b": 5, "c": 4}'}],
+        "starters": {
+            "python": "def sum_dicts(d1, d2):\n    # Return d1 and d2 merged, summing values on shared keys.\n    pass\n",
+            "javascript": "function sum_dicts(d1, d2) {\n    // Return d1 and d2 merged, summing values on shared keys.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [{"a": 1, "b": 2}, {"b": 3, "c": 4}], "expected": {"a": 1, "b": 5, "c": 4}},
+        ],
+        "hidden_tests": [
+            {"args": [{}, {}], "expected": {}},
+            {"args": [{"x": 5}, {}], "expected": {"x": 5}},
+            {"args": [{}, {"y": 10}], "expected": {"y": 10}},
+        ],
+    },
+    {
+        "id": "calculate-standard-deviation",
+        "title": "Calculate Standard Deviation",
+        "difficulty": "Hard",
+        "function_name": "population_stddev",
+        "time_limit_secs": 5,
+        "prompt": "Given a non-empty list `nums`, return its population standard deviation rounded to 2 decimal places.",
+        "constraints": ["1 <= len(nums) <= 10^5"],
+        "examples": [{"input": "nums = [2, 4, 4, 4, 5, 5, 7, 9]", "output": "2.0"}],
+        "starters": {
+            "python": "def population_stddev(nums):\n    # Return the population standard deviation of nums, rounded to 2 decimals.\n    pass\n",
+            "javascript": "function population_stddev(nums) {\n    // Return the population standard deviation of nums, rounded to 2 decimals.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [[2, 4, 4, 4, 5, 5, 7, 9]], "expected": 2.0},
+            {"args": [[10, 10, 10, 10]], "expected": 0.0},
+        ],
+        "hidden_tests": [
+            {"args": [[1, 2, 3, 4, 5]], "expected": 1.41},
+            {"args": [[100]], "expected": 0.0},
+        ],
+    },
+    {
+        "id": "find-kth-largest",
+        "title": "Find Kth Largest Element",
+        "difficulty": "Medium",
+        "function_name": "kth_largest",
+        "time_limit_secs": 5,
+        "prompt": "Given a list `nums` and an integer `k`, return the kth largest element (k=1 is the largest); duplicates count individually.",
+        "constraints": ["1 <= k <= len(nums) <= 10^5"],
+        "examples": [{"input": "nums = [3, 2, 1, 5, 6, 4], k = 2", "output": "5"}],
+        "starters": {
+            "python": "def kth_largest(nums, k):\n    # Return the kth largest element of nums.\n    pass\n",
+            "javascript": "function kth_largest(nums, k) {\n    // Return the kth largest element of nums.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [[3, 2, 1, 5, 6, 4], 2], "expected": 5},
+            {"args": [[3, 2, 3, 1, 2, 4, 5, 5, 6], 4], "expected": 4},
+        ],
+        "hidden_tests": [
+            {"args": [[1], 1], "expected": 1},
+            {"args": [[1, 2], 1], "expected": 2},
+            {"args": [[1, 2], 2], "expected": 1},
+        ],
+    },
+    {
+        "id": "calculate-simple-interest",
+        "title": "Calculate Simple Interest",
+        "difficulty": "Easy",
+        "function_name": "simple_interest",
+        "time_limit_secs": 5,
+        "prompt": (
+            "Given a `principal`, an annual `rate` as a percentage, and `years`, return the "
+            "simple interest earned, rounded to 2 decimals: principal * rate/100 * years."
+        ),
+        "constraints": ["0 <= principal <= 10^7", "0 <= rate <= 100", "0 <= years <= 50"],
+        "examples": [{"input": "principal = 1000, rate = 5, years = 2", "output": "100.0"}],
+        "starters": {
+            "python": "def simple_interest(principal, rate, years):\n    # Return the simple interest, rounded to 2 decimals.\n    pass\n",
+            "javascript": "function simple_interest(principal, rate, years) {\n    // Return the simple interest, rounded to 2 decimals.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [1000, 5, 2], "expected": 100.0},
+            {"args": [500, 10, 1], "expected": 50.0},
+        ],
+        "hidden_tests": [
+            {"args": [0, 10, 5], "expected": 0.0},
+            {"args": [2000, 0, 10], "expected": 0.0},
+            {"args": [1500, 7.5, 2], "expected": 225.0},
+        ],
+    },
+    {
+        "id": "count-set-bits",
+        "title": "Count Set Bits",
+        "difficulty": "Easy",
+        "function_name": "count_set_bits",
+        "time_limit_secs": 5,
+        "prompt": "Given a non-negative integer `n`, return the number of 1 bits in its binary representation.",
+        "constraints": ["0 <= n <= 2^31 - 1"],
+        "examples": [
+            {"input": "n = 7", "output": "3"},
+            {"input": "n = 8", "output": "1"},
+        ],
+        "starters": {
+            "python": "def count_set_bits(n):\n    # Return the number of 1 bits in n's binary representation.\n    pass\n",
+            "javascript": "function count_set_bits(n) {\n    // Return the number of 1 bits in n's binary representation.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [7], "expected": 3},
+            {"args": [8], "expected": 1},
+        ],
+        "hidden_tests": [
+            {"args": [0], "expected": 0},
+            {"args": [1], "expected": 1},
+            {"args": [255], "expected": 8},
+            {"args": [1023], "expected": 10},
+        ],
+    },
+    {
+        "id": "longest-consecutive-sequence",
+        "title": "Longest Consecutive Sequence",
+        "difficulty": "Hard",
+        "function_name": "longest_consecutive",
+        "time_limit_secs": 5,
+        "prompt": "Given an unsorted list `nums`, return the length of the longest run of consecutive integers (in value, not position).",
+        "constraints": ["0 <= len(nums) <= 10^5"],
+        "examples": [{"input": "nums = [100, 4, 200, 1, 3, 2]", "output": "4"}],
+        "starters": {
+            "python": "def longest_consecutive(nums):\n    # Return the length of the longest run of consecutive integers in nums.\n    pass\n",
+            "javascript": "function longest_consecutive(nums) {\n    // Return the length of the longest run of consecutive integers in nums.\n}\n",
+        },
+        "sample_tests": [
+            {"args": [[100, 4, 200, 1, 3, 2]], "expected": 4},
+            {"args": [[0, 3, 7, 2, 5, 8, 4, 6, 0, 1]], "expected": 9},
+        ],
+        "hidden_tests": [
+            {"args": [[]], "expected": 0},
+            {"args": [[1]], "expected": 1},
+            {"args": [[1, 2, 0, 1]], "expected": 3},
+        ],
+    },
 ]
 
 # SQL problems live in their own module because their test cases are shaped differently

@@ -483,6 +483,221 @@ def count_business_days(start_day_index, num_days):
             count += 1
     return count
 """,
+    "calculate-age-in-years": """
+def age_in_years(birth_year, current_year):
+    return current_year - birth_year
+""",
+    "is-prime-number": """
+def is_prime(n):
+    if n < 2:
+        return False
+    if n < 4:
+        return True
+    if n % 2 == 0:
+        return False
+    i = 3
+    while i * i <= n:
+        if n % i == 0:
+            return False
+        i += 2
+    return True
+""",
+    "gcd-of-two-numbers": """
+def gcd(a, b):
+    while b:
+        a, b = b, a % b
+    return a
+""",
+    "reverse-integer": """
+def reverse_integer(n):
+    sign = -1 if n < 0 else 1
+    return sign * int(str(abs(n))[::-1])
+""",
+    "count-character-frequency": """
+def char_frequency(s):
+    freq = {}
+    for ch in s:
+        freq[ch] = freq.get(ch, 0) + 1
+    return freq
+""",
+    "validate-parentheses-depth": """
+def max_nesting_depth(s):
+    depth = 0
+    best = 0
+    for ch in s:
+        if ch == '(':
+            depth += 1
+            best = max(best, depth)
+        elif ch == ')':
+            depth -= 1
+    return best
+""",
+    "calculate-cart-item-count": """
+def total_items(cart):
+    return sum(cart.values())
+""",
+    "find-second-largest": """
+def second_largest(nums):
+    uniq = sorted(set(nums), reverse=True)
+    return uniq[1]
+""",
+    "is-armstrong-number": """
+def is_armstrong(n):
+    digits = str(n)
+    power = len(digits)
+    return n == sum(int(d) ** power for d in digits)
+""",
+    "calculate-late-fee": """
+def late_fee(days_late, daily_rate):
+    return max(0, days_late) * daily_rate
+""",
+    "capitalize-each-word": """
+def title_case(sentence):
+    return ' '.join(w[:1].upper() + w[1:].lower() for w in sentence.split())
+""",
+    "find-intersection-of-arrays": """
+def array_intersection(a, b):
+    return sorted(set(a) & set(b))
+""",
+    "count-pairs-with-sum": """
+def count_pairs_with_sum(nums, target):
+    count = 0
+    n = len(nums)
+    for i in range(n):
+        for j in range(i + 1, n):
+            if nums[i] + nums[j] == target:
+                count += 1
+    return count
+""",
+    "validate-iso-date": """
+def is_valid_iso_date(date_str):
+    parts = date_str.split('-')
+    if len(parts) != 3:
+        return False
+    y_s, m_s, d_s = parts
+    if not (len(y_s) == 4 and y_s.isdigit() and len(m_s) == 2 and m_s.isdigit()
+            and len(d_s) == 2 and d_s.isdigit()):
+        return False
+    y, m, d = int(y_s), int(m_s), int(d_s)
+    if not (1 <= y <= 9999 and 1 <= m <= 12):
+        return False
+    leap = y % 4 == 0 and (y % 100 != 0 or y % 400 == 0)
+    days_in_month = [31, 29 if leap else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    return 1 <= d <= days_in_month[m - 1]
+""",
+    "find-majority-element": """
+def majority_element(nums):
+    count = 0
+    candidate = None
+    for n in nums:
+        if count == 0:
+            candidate = n
+        count += 1 if n == candidate else -1
+    return candidate
+""",
+    "detect-sorted-array": """
+def is_sorted_ascending(nums):
+    return all(nums[i] <= nums[i + 1] for i in range(len(nums) - 1))
+""",
+    "rotate-string-check": """
+def is_rotation(s1, s2):
+    if len(s1) != len(s2):
+        return False
+    return s2 in (s1 + s1)
+""",
+    "calculate-retry-backoff": """
+def exponential_backoff(attempt, base_seconds, max_seconds):
+    return min(base_seconds * (2 ** attempt), max_seconds)
+""",
+    "find-unique-visitor-count": """
+def unique_visitors(visitor_ids):
+    return len(set(visitor_ids))
+""",
+    "calculate-grade-from-score": """
+def letter_grade(score):
+    if score >= 90:
+        return "A"
+    if score >= 80:
+        return "B"
+    if score >= 70:
+        return "C"
+    if score >= 60:
+        return "D"
+    return "F"
+""",
+    "two-pointer-sorted-two-sum": """
+def two_sum_sorted(nums, target):
+    lo, hi = 0, len(nums) - 1
+    while lo < hi:
+        s = nums[lo] + nums[hi]
+        if s == target:
+            return [lo, hi]
+        elif s < target:
+            lo += 1
+        else:
+            hi -= 1
+    return []
+""",
+    "find-first-non-repeating-char": """
+def first_unique_char(s):
+    from collections import Counter
+    counts = Counter(s)
+    for i, ch in enumerate(s):
+        if counts[ch] == 1:
+            return i
+    return -1
+""",
+    "calculate-total-pages": """
+def total_pages(total_items, items_per_page):
+    if total_items <= 0:
+        return 0
+    return -(-total_items // items_per_page)
+""",
+    "detect-palindrome-number": """
+def is_palindrome_number(n):
+    if n < 0:
+        return False
+    s = str(n)
+    return s == s[::-1]
+""",
+    "merge-two-dicts-summing-values": """
+def sum_dicts(d1, d2):
+    result = dict(d1)
+    for k, v in d2.items():
+        result[k] = result.get(k, 0) + v
+    return result
+""",
+    "calculate-standard-deviation": """
+def population_stddev(nums):
+    n = len(nums)
+    mean = sum(nums) / n
+    variance = sum((x - mean) ** 2 for x in nums) / n
+    return round(variance ** 0.5, 2)
+""",
+    "find-kth-largest": """
+def kth_largest(nums, k):
+    return sorted(nums, reverse=True)[k - 1]
+""",
+    "calculate-simple-interest": """
+def simple_interest(principal, rate, years):
+    return round(principal * rate / 100 * years, 2)
+""",
+    "count-set-bits": """
+def count_set_bits(n):
+    return bin(n).count('1')
+""",
+    "longest-consecutive-sequence": """
+def longest_consecutive(nums):
+    num_set = set(nums)
+    best = 0
+    for n in num_set:
+        if n - 1 not in num_set:
+            length = 1
+            while n + length in num_set:
+                length += 1
+            best = max(best, length)
+    return best
+""",
 }
 
 
