@@ -1007,7 +1007,11 @@ class MixtralService:
                     ("What is JSX, and why isn't it valid JavaScript on its own — what step converts it?", "conceptual", None, "Easy"),
                     ("Explain how the onClick prop differs from a plain HTML onclick attribute in React.", "conceptual", None, "Easy"),
                     ("You need to lift state up from two sibling components to a common parent. Walk through how you would refactor this.", "scenario", None, "Medium"),
-                    ("Explain React's Fiber architecture and how time-slicing lets concurrent rendering interrupt a render pass.", "conceptual", None, "Hard")
+                    ("Explain React's Fiber architecture and how time-slicing lets concurrent rendering interrupt a render pass.", "conceptual", None, "Hard"),
+                    ("What are React fragments, and why would you use <>...</> instead of a wrapping div?", "conceptual", None, "Easy"),
+                    ("Write a React component that displays a countdown timer starting from a seconds prop.", "coding", None, "Easy"),
+                    ("Explain code-splitting in React with React.lazy and Suspense. What problem does it solve?", "conceptual", None, "Medium"),
+                    ("Explain how React's reconciliation decides to reuse vs. remount a component when a list item's key changes vs. when its type changes.", "conceptual", None, "Hard")
                 ],
                 "python": [
                     ("Explain the differences between list, tuple, and set in Python. In what scenarios is a set preferred?", "conceptual"),
@@ -1038,7 +1042,11 @@ class MixtralService:
                     ("What is the difference between a Python module and a package?", "conceptual", None, "Easy"),
                     ("Write a Python function that checks if a number is even or odd.", "coding", None, "Easy"),
                     ("Explain Python's asyncio event loop. How does async def differ from a regular function?", "conceptual", None, "Medium"),
-                    ("Explain how Python's garbage collector handles reference cycles, beyond simple reference counting.", "conceptual", None, "Hard")
+                    ("Explain how Python's garbage collector handles reference cycles, beyond simple reference counting.", "conceptual", None, "Hard"),
+                    ("What is the difference between a Python list and a NumPy array?", "conceptual", None, "Easy"),
+                    ("Write a Python function that returns the number of vowels in a string.", "coding", None, "Easy"),
+                    ("Explain Python's __slots__. When would you use it, and what does it trade away?", "conceptual", None, "Medium"),
+                    ("Explain how Python's asyncio event loop cooperatively schedules coroutines, and what happens if a coroutine blocks synchronously.", "conceptual", None, "Hard")
                 ],
                 "node": [
                     ("Explain how the Node.js event loop works and what makes it non-blocking.", "conceptual"),
@@ -1067,7 +1075,11 @@ class MixtralService:
                     ("What is npm, and what is the difference between a local and a global package install?", "conceptual", None, "Easy"),
                     ("Write an Express route handler that returns a 404 JSON response for any unmatched route.", "coding", None, "Easy"),
                     ("How would you gracefully shut down a Node.js server on SIGTERM, finishing in-flight requests first?", "scenario", None, "Medium"),
-                    ("Explain how Node.js's libuv thread pool handles file system and DNS operations differently from the event loop's own I/O.", "conceptual", None, "Hard")
+                    ("Explain how Node.js's libuv thread pool handles file system and DNS operations differently from the event loop's own I/O.", "conceptual", None, "Hard"),
+                    ("What is the purpose of a .env file in a Node project, and why should it never be committed to git?", "conceptual", None, "Easy"),
+                    ("Write a Node.js function that reads a JSON file and returns its parsed contents, using async/await.", "coding", None, "Easy"),
+                    ("Explain the difference between dependencies installed with --save vs --save-dev, and how that affects a production build.", "conceptual", None, "Medium"),
+                    ("Explain backpressure in Node.js streams - what happens if a writable stream can't keep up with a readable stream piping into it, and how do you handle it?", "conceptual", None, "Hard")
                 ],
                 "database": [
                     ("What are database indexes? How do they improve query speeds, and what is the write penalty?", "conceptual"),
@@ -1096,7 +1108,11 @@ class MixtralService:
                     ("What is a foreign key constraint, and what happens if you try to insert a row that violates it?", "conceptual", None, "Easy"),
                     ("Write an SQL query to count how many orders each customer has placed.", "coding", None, "Easy"),
                     ("Explain the difference between INNER JOIN, LEFT JOIN, and FULL OUTER JOIN with a short example.", "conceptual", None, "Medium"),
-                    ("Explain how a query planner decides between a sequential scan and an index scan, and when its choice can go wrong.", "conceptual", None, "Hard")
+                    ("Explain how a query planner decides between a sequential scan and an index scan, and when its choice can go wrong.", "conceptual", None, "Hard"),
+                    ("What is a composite primary key, and when would you use one instead of a single-column key?", "conceptual", None, "Easy"),
+                    ("Write an SQL query to find the average salary per department.", "coding", None, "Easy"),
+                    ("Explain database replication lag. Why might a read from a replica return stale data?", "conceptual", None, "Medium"),
+                    ("Explain how a covering index can eliminate a table lookup entirely, and what makes an index 'covering' for a given query.", "conceptual", None, "Hard")
                 ],
                 "ai_ml": [
                     ("What is Retrieval-Augmented Generation (RAG)? How does it mitigate Large Language Model hallucinations?", "conceptual"),
@@ -1125,7 +1141,11 @@ class MixtralService:
                     ("What is the difference between a training set, a validation set, and a test set?", "conceptual", None, "Easy"),
                     ("Write Python code that normalizes a list of numbers to a 0-1 range using min-max scaling.", "coding", None, "Easy"),
                     ("Explain temperature and top-p sampling in LLM text generation. How do they affect output randomness?", "conceptual", None, "Medium"),
-                    ("Explain how mixture-of-experts (MoE) architectures reduce inference compute while keeping a large parameter count.", "conceptual", None, "Hard")
+                    ("Explain how mixture-of-experts (MoE) architectures reduce inference compute while keeping a large parameter count.", "conceptual", None, "Hard"),
+                    ("What is overfitting, and name one simple technique to reduce it.", "conceptual", None, "Easy"),
+                    ("Write Python code using pandas to load a CSV and print the count of missing values per column.", "coding", None, "Easy"),
+                    ("Explain the difference between batch inference and streaming inference for an LLM API, and when each is appropriate.", "conceptual", None, "Medium"),
+                    ("Explain how KV-caching speeds up autoregressive LLM decoding, and why cache size grows with sequence length.", "conceptual", None, "Hard")
                 ]
             },
             "hr": [
@@ -1153,7 +1173,12 @@ class MixtralService:
                 ("How do you typically start your day at work?", "hr", None, "Easy"),
                 ("Describe a time you had to give difficult feedback to a peer.", "hr", None, "Medium"),
                 ("How would you handle being asked to work significantly beyond your job scope?", "hr", None, "Medium"),
-                ("Tell us about a time you had to influence a decision without having direct authority over the people involved.", "hr", None, "Hard")
+                ("Tell us about a time you had to influence a decision without having direct authority over the people involved.", "hr", None, "Hard"),
+                ("What kind of work environment helps you do your best work?", "hr", None, "Easy"),
+                ("How do you typically communicate progress on a task to your manager?", "hr", None, "Easy"),
+                ("Describe a time you had to quickly get up to speed on a topic you knew nothing about.", "hr", None, "Medium"),
+                ("How do you decide what to prioritize when everything feels urgent?", "hr", None, "Medium"),
+                ("Tell us about a time you had to deliver on a commitment after the circumstances around it had significantly changed.", "hr", None, "Hard")
             ],
             "behavioral": [
                 ("Describe a complex technical problem you solved recently. Use the STAR method (Situation, Task, Action, Result).", "behavioral"),
@@ -1176,7 +1201,12 @@ class MixtralService:
                 ("Describe a time you helped a teammate who was stuck.", "behavioral", None, "Easy"),
                 ("Tell me about a time you had to change your plan midway through a project. What triggered it?", "behavioral", None, "Medium"),
                 ("Describe a time you took initiative without being asked.", "behavioral", None, "Medium"),
-                ("Tell me about the most difficult stakeholder conflict you've navigated, and how you resolved it without escalating it further.", "behavioral", None, "Hard")
+                ("Tell me about the most difficult stakeholder conflict you've navigated, and how you resolved it without escalating it further.", "behavioral", None, "Hard"),
+                ("Describe a time you asked for help instead of struggling alone.", "behavioral", None, "Easy"),
+                ("Tell me about a piece of feedback that stuck with you.", "behavioral", None, "Easy"),
+                ("Describe a time you had to push back on a request you thought was a bad idea.", "behavioral", None, "Medium"),
+                ("Tell me about a time you had to work within a constraint you didn't agree with.", "behavioral", None, "Medium"),
+                ("Describe the highest-pressure situation you've faced at work and how you kept the team focused through it.", "behavioral", None, "Hard")
             ]
         }
 
