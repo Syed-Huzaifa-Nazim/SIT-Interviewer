@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useSearchParams } from 'react-router-dom';
+import * as PopoverPrimitive from '@radix-ui/react-popover';
+import { cn } from '@/lib/utils';
 import api from '../services/api';
 import Alert from '../components/ui/Alert';
 import Badge from '../components/ui/Badge';
@@ -38,6 +40,13 @@ import {
   MessageSquare,
   Mail,
   History,
+  Download,
+  ChevronDown,
+  Check,
+  Loader2,
+  CheckCircle,
+  AlertCircle,
+  FileSpreadsheet,
 } from 'lucide-react';
 
 const INTERVIEW_STATUS_VARIANTS = {
@@ -115,6 +124,23 @@ const BatchChip = ({ label, count, active, onClick }) => (
   </button>
 );
 
+// Export CSV — the 4 exportable columns, in the fixed order the download uses.
+// `header` is the literal CSV column name (lowercase, per spec); `field` is the key on
+// the user object this page already has in memory (course_category holds "Category").
+const CSV_FIELD_DEFS = [
+  { key: 'name', field: 'name', header: 'name', label: 'Name' },
+  { key: 'email', field: 'email', header: 'email', label: 'Email' },
+  { key: 'cnic', field: 'cnic', header: 'cnic', label: 'CNIC' },
+  { key: 'category', field: 'course_category', header: 'category', label: 'Category' },
+];
+
+// Quotes a CSV cell only when it actually needs it (contains a comma, quote, or newline),
+// doubling any embedded quotes — the standard CSV escaping rule (RFC 4180).
+const csvCell = (value) => {
+  const str = value === null || value === undefined ? '' : String(value);
+  return /[",\r\n]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
+};
+
 const AdminUsersPage = () => {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -189,6 +215,19 @@ const AdminUsersPage = () => {
   // which measured at ~300ms per keystroke in Chrome's Interaction Timing panel.
   const [deleteUser, setDeleteUser] = useState(null);
   const [sendInviteUser, setSendInviteUser] = useState(null);
+
+  // Export CSV — small popover state, kept local since nothing else on the page needs it.
+  const [csvOpen, setCsvOpen] = useState(false);
+  const [csvFields, setCsvFields] = useState({ name: true, email: true, cnic: true, category: true });
+  const [csvExporting, setCsvExporting] = useState(false);
+  // Transient toast (auto-dismisses), separate from the page's persistent notice/error
+  // banner above the table — this confirmation is about one quick action, not page state.
+  const [csvToast, setCsvToast] = useState(null); // { type: 'success' | 'error', message }
+  useEffect(() => {
+    if (!csvToast) return;
+    const t = setTimeout(() => setCsvToast(null), 3200);
+    return () => clearTimeout(t);
+  }, [csvToast]);
 
   const fetchUsers = async (silent = false) => {
     try {
@@ -403,6 +442,47 @@ const AdminUsersPage = () => {
     [tabUsers, searchTerm, courseFilters, istatusFilters, accessFilters]
   );
 
+  const toggleCsvField = (key) => setCsvFields((prev) => ({ ...prev, [key]: !prev[key] }));
+
+  // Exports the currently relevant dataset — the same rows the table itself shows right
+  // now (active tab + search + column filters applied), not just the current page slice,
+  // so the file matches what the admin is actually looking at.
+  const handleExportCsv = () => {
+    const activeFields = CSV_FIELD_DEFS.filter((f) => csvFields[f.key]);
+    if (!activeFields.length) return;
+    setCsvExporting(true);
+    // A brief, genuine "working" moment rather than an instant flash — the export itself
+    // is fast, but a state the eye can never register isn't a loading state at all.
+    window.setTimeout(() => {
+      try {
+        const headerRow = activeFields.map((f) => f.header).join(',');
+        const rows = filteredUsers.map((u) => activeFields.map((f) => csvCell(u[f.field])).join(','));
+        const csvContent = [headerRow, ...rows].join('\r\n');
+        // Leading BOM so Excel opens UTF-8 content (accented names, etc.) correctly
+        // instead of mis-decoding it.
+        const blob = new Blob(['﻿' + csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `sit-users-${new Date().toISOString().slice(0, 10)}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        setCsvToast({
+          type: 'success',
+          message: `Exported ${filteredUsers.length} user${filteredUsers.length === 1 ? '' : 's'} to CSV.`,
+        });
+        setCsvOpen(false);
+      } catch (err) {
+        console.error(err);
+        setCsvToast({ type: 'error', message: 'Failed to export CSV. Please try again.' });
+      } finally {
+        setCsvExporting(false);
+      }
+    }, 250);
+  };
+
   // Per-option counts shown next to each checkbox — computed against the current tab +
   // search only, deliberately ignoring the OTHER draft facets, so ticking one box never
   // makes the rest of the list's counts jump around underneath the admin.
@@ -516,6 +596,14 @@ const AdminUsersPage = () => {
             <UiButton variant="brand" size="sm" onClick={() => setBulkOpen(true)}>
               <Mail /> Bulk Email
             </UiButton>
+            <ExportCsvMenu
+              open={csvOpen}
+              onOpenChange={setCsvOpen}
+              fields={csvFields}
+              onToggleField={toggleCsvField}
+              onExport={handleExportCsv}
+              exporting={csvExporting}
+            />
           </>
         }
       >
@@ -1121,7 +1209,124 @@ const AdminUsersPage = () => {
         onClose={() => setBulkOpen(false)}
         onSent={() => { fetchUsers(true); setActiveTab('bulk'); }}
       />
+
+      {csvToast && <ExportCsvToast toast={csvToast} onDismiss={() => setCsvToast(null)} />}
     </div>
+  );
+};
+
+// Export CSV — small popover, styled to match AdminFilter's popover exactly (same
+// container classes, same custom-checkbox pattern) so it reads as native to this page
+// rather than a one-off control with its own look.
+const ExportCsvMenu = ({ open, onOpenChange, fields, onToggleField, onExport, exporting }) => {
+  const noneSelected = !fields.name && !fields.email && !fields.cnic && !fields.category;
+
+  return (
+    <PopoverPrimitive.Root open={open} onOpenChange={onOpenChange}>
+      <PopoverPrimitive.Trigger asChild>
+        <UiButton variant="default" size="sm">
+          <Download /> Export CSV <ChevronDown className="size-3.5 opacity-70" />
+        </UiButton>
+      </PopoverPrimitive.Trigger>
+
+      <PopoverPrimitive.Portal>
+        <PopoverPrimitive.Content
+          align="end"
+          sideOffset={8}
+          className={cn(
+            'z-50 w-64 rounded-xl border border-border bg-popover p-0 text-popover-foreground shadow-2xl',
+            'data-[state=open]:animate-in data-[state=closed]:animate-out',
+            'data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0',
+            'data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95',
+            'data-[side=bottom]:slide-in-from-top-2 data-[side=top]:slide-in-from-bottom-2'
+          )}
+        >
+          <header className="flex items-center gap-2 border-b border-border px-3 py-2.5">
+            <FileSpreadsheet className="size-3.5 text-primary" />
+            <span className="text-xs font-bold text-foreground">Export Users</span>
+          </header>
+
+          <p className="px-3 pt-2.5 text-[10px] text-muted-foreground">
+            Download user data as CSV file with:
+          </p>
+
+          <div className="p-2">
+            {CSV_FIELD_DEFS.map((f) => {
+              const checked = fields[f.key];
+              return (
+                <label
+                  key={f.key}
+                  className={cn(
+                    'flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 transition-colors',
+                    checked ? 'bg-primary/8 hover:bg-primary/12' : 'hover:bg-accent'
+                  )}
+                >
+                  <span
+                    className={cn(
+                      'grid size-4 shrink-0 place-items-center rounded-[5px] border transition-all',
+                      checked ? 'border-primary bg-primary' : 'border-input bg-card'
+                    )}
+                  >
+                    {checked && <Check className="size-3 text-primary-foreground" strokeWidth={3} />}
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => onToggleField(f.key)}
+                    className="sr-only"
+                  />
+                  <span className="text-xs font-medium text-foreground">{f.label}</span>
+                </label>
+              );
+            })}
+          </div>
+
+          <div className="border-t border-border p-2">
+            <UiButton
+              variant="default"
+              size="sm"
+              className="w-full"
+              onClick={onExport}
+              disabled={exporting || noneSelected}
+            >
+              {exporting ? <Loader2 className="size-3.5 animate-spin" /> : <Download />}
+              {exporting ? 'Preparing…' : 'Download CSV'}
+            </UiButton>
+          </div>
+        </PopoverPrimitive.Content>
+      </PopoverPrimitive.Portal>
+    </PopoverPrimitive.Root>
+  );
+};
+
+// Small transient confirmation, separate from the page's persistent notice/error banner —
+// auto-dismisses on its own (see the csvToast effect above) so a quick export doesn't leave
+// a banner sitting at the top of the page needing to be dismissed by hand.
+const ExportCsvToast = ({ toast, onDismiss }) => {
+  const isError = toast.type === 'error';
+  return createPortal(
+    <div
+      role="status"
+      className={cn(
+        'fixed bottom-5 right-5 z-[60] flex items-center gap-2.5 rounded-xl border px-4 py-3 text-xs font-semibold shadow-2xl',
+        'animate-in fade-in-0 slide-in-from-bottom-2 duration-200',
+        isError
+          ? 'border-red-500/30 bg-red-500/10 text-red-400'
+          : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
+      )}
+    >
+      {isError ? <AlertCircle className="size-4 shrink-0" /> : <CheckCircle className="size-4 shrink-0" />}
+      <span>{toast.message}</span>
+      <button
+        type="button"
+        onClick={onDismiss}
+        aria-label="Dismiss"
+        className="ml-1 shrink-0 opacity-60 hover:opacity-100"
+      >
+        <X className="size-3.5" />
+      </button>
+    </div>,
+    document.body
   );
 };
 
