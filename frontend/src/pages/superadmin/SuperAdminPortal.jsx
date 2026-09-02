@@ -474,13 +474,53 @@ function CompaniesTab({ companies, busy, run }) {
 
 /* ------------------------------------------------------------------ Administrators */
 
+// Every scope an admin (or an API key) can be restricted to — fetched fresh from the
+// server (same /superadmin/api-scopes endpoint ApiKeysTab uses) rather than duplicated
+// here, so the two pickers can never quietly drift out of sync with what the backend
+// actually enforces.
+function usePermissionScopes() {
+  const [scopes, setScopes] = useState([]);
+  useEffect(() => {
+    superAdminApi.get('/superadmin/api-scopes').then((res) => setScopes(res.data)).catch(() => {});
+  }, []);
+  return scopes;
+}
+
+/** Full access vs. an explicit (possibly empty) list, in one line for a table cell. */
+function PermissionsSummary({ permissions }) {
+  if (permissions === null || permissions === undefined) {
+    return <span className="text-xs text-muted-foreground">Full access</span>;
+  }
+  if (permissions.length === 0) {
+    return <span className="text-xs text-muted-foreground">None — can do nothing</span>;
+  }
+  return (
+    <div className="flex flex-wrap gap-1">
+      {permissions.map((p) => (
+        <code key={p} className="rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground">
+          {p}
+        </code>
+      ))}
+    </div>
+  );
+}
+
 function AdminsTab({ admins, companies, busy, run, selfId }) {
   const blank = { name: '', contact_email: '', company_ids: [] };
   const [form, setForm] = useState(blank);
   const [showForm, setShowForm] = useState(false);
+  // Off by default: an admin created with the form left alone gets exactly today's
+  // behavior (full access), never a silently narrowed account.
+  const [restrictNew, setRestrictNew] = useState(false);
+  const [newPermissions, setNewPermissions] = useState([]);
   // The credentials the server just generated. Shown once, here, and never retrievable.
   const [created, setCreated] = useState(null);
   const [pendingSessionRevoke, setPendingSessionRevoke] = useState(null);
+  // Which admin's permissions are being edited inline in the table, and the draft value.
+  const [editingPermsFor, setEditingPermsFor] = useState(null);
+  const [editPermissions, setEditPermissions] = useState([]);
+
+  const scopes = usePermissionScopes();
 
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
 
@@ -492,18 +532,46 @@ function AdminsTab({ admins, companies, busy, run, selfId }) {
         : [...f.company_ids, id],
     }));
 
+  const toggleNewPermission = (scope) =>
+    setNewPermissions((p) => (p.includes(scope) ? p.filter((s) => s !== scope) : [...p, scope]));
+
+  const toggleEditPermission = (scope) =>
+    setEditPermissions((p) => (p.includes(scope) ? p.filter((s) => s !== scope) : [...p, scope]));
+
+  const startEditingPerms = (admin) => {
+    setEditingPermsFor(admin.id);
+    setEditPermissions(admin.permissions || []);
+  };
+
+  const savePermissions = (adminId) =>
+    run(
+      () => superAdminApi.put(`/superadmin/admins/${adminId}/permissions`, { permissions: editPermissions }),
+      'Permissions updated.'
+    ).then(() => setEditingPermsFor(null));
+
+  const clearPermissions = (adminId) =>
+    run(
+      () => superAdminApi.put(`/superadmin/admins/${adminId}/permissions`, { permissions: null }),
+      'Restored to full access.'
+    ).then(() => setEditingPermsFor(null));
+
   const create = async (e) => {
     e.preventDefault();
     // Not through `run`: that helper discards the response, and this response contains the
     // only copy of the generated password there will ever be.
     let result = null;
     await run(async () => {
-      const res = await superAdminApi.post('/superadmin/admins', form);
+      const res = await superAdminApi.post('/superadmin/admins', {
+        ...form,
+        permissions: restrictNew ? newPermissions : null,
+      });
       result = res.data;
     });
     if (result) {
       setCreated(result);
       setForm(blank);
+      setRestrictNew(false);
+      setNewPermissions([]);
       setShowForm(false);
     }
   };
@@ -620,6 +688,43 @@ function AdminsTab({ admins, companies, busy, run, selfId }) {
             )}
           </div>
 
+          <div className="space-y-1.5">
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={restrictNew}
+                onChange={(e) => setRestrictNew(e.target.checked)}
+              />
+              <span className="font-medium text-foreground">Restrict to specific permissions</span>
+            </label>
+            <p className="text-xs text-muted-foreground">
+              Left off, this admin gets full access within their granted companies — the same
+              as every administrator today. Turn this on to hand them only some of it.
+            </p>
+            {restrictNew && (
+              <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
+                {scopes.map((s) => {
+                  const on = newPermissions.includes(s.scope);
+                  return (
+                    <button
+                      key={s.scope}
+                      type="button"
+                      onClick={() => toggleNewPermission(s.scope)}
+                      className={
+                        on
+                          ? 'rounded-lg border border-primary bg-primary/10 px-3 py-2 text-left'
+                          : 'rounded-lg border border-border px-3 py-2 text-left hover:border-ring/40'
+                      }
+                    >
+                      <code className="text-xs font-semibold text-foreground">{s.scope}</code>
+                      <span className="block text-xs text-muted-foreground">{s.description}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
           <p className="text-xs text-muted-foreground">
             The login address and password are both generated. The password is emailed to
             them and shown to you once, and it stops working as soon as they set their own.
@@ -638,6 +743,7 @@ function AdminsTab({ admins, companies, busy, run, selfId }) {
               <TableHead>Administrator</TableHead>
               <TableHead>Role</TableHead>
               <TableHead>Companies</TableHead>
+              <TableHead>Permissions</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
@@ -714,6 +820,69 @@ function AdminsTab({ admins, companies, busy, run, selfId }) {
                       </div>
                     )}
                   </TableCell>
+                  <TableCell>
+                    {isSuper ? (
+                      <span className="text-xs text-muted-foreground">Unrestricted, always</span>
+                    ) : editingPermsFor === a.id ? (
+                      <div className="space-y-2">
+                        <div className="grid gap-1 sm:grid-cols-2">
+                          {scopes.map((s) => {
+                            const on = editPermissions.includes(s.scope);
+                            return (
+                              <button
+                                key={s.scope}
+                                type="button"
+                                onClick={() => toggleEditPermission(s.scope)}
+                                className={
+                                  on
+                                    ? 'rounded-md border border-primary bg-primary/10 px-2 py-1 text-left text-[10px]'
+                                    : 'rounded-md border border-border px-2 py-1 text-left text-[10px] text-muted-foreground hover:border-ring/40'
+                                }
+                              >
+                                <code className="font-semibold">{s.scope}</code>
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <Button size="sm" disabled={busy} onClick={() => savePermissions(a.id)}>
+                            Save
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            disabled={busy}
+                            onClick={() => setEditingPermsFor(null)}
+                          >
+                            Cancel
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-1.5">
+                        <PermissionsSummary permissions={a.permissions} />
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => startEditingPerms(a)}
+                            className="text-[10px] font-semibold text-primary hover:underline"
+                          >
+                            Edit
+                          </button>
+                          {a.permissions !== null && a.permissions !== undefined && (
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => clearPermissions(a.id)}
+                              className="text-[10px] font-semibold text-muted-foreground hover:text-foreground hover:underline"
+                            >
+                              Clear (full access)
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </TableCell>
                   <TableCell className="text-right">
                     {a.id !== selfId && (
                       <Button
@@ -737,7 +906,8 @@ function AdminsTab({ admins, companies, busy, run, selfId }) {
       <p className="text-xs text-muted-foreground">
         Revoking a company takes effect on the admin&apos;s very next request — access is
         read fresh every time, not carried in their session. &ldquo;End sessions&rdquo; is
-        the stronger action: it signs them out everywhere immediately.
+        the stronger action: it signs them out everywhere immediately. The same applies to
+        permissions: a change lands on the admin&apos;s very next request.
       </p>
     </div>
   );

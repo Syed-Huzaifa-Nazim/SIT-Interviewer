@@ -82,3 +82,15 @@ export const ADMIN_ROLES = ['admin', 'super_admin'];
 export const isAdminRole = (role) => ADMIN_ROLES.includes(role);
 
 export const isSuperAdminRole = (role) => role === 'super_admin';
+
+// Granular admin permissions (backend/app/utils/permissions.py's SCOPES — candidates:read,
+// invites:send, etc.). `user.permissions` is null for a super admin and for every admin
+// nobody has ever restricted — both mean "no restriction", matching the backend's own
+// User.has_permission exactly. This is the ONLY thing this check is for: deciding what to
+// show. The real gate is server-side (every /api/admin route requires the same scope), so
+// hiding a nav item here is a convenience, never the actual security boundary.
+export const hasPermission = (user, scope) => {
+  if (!user) return false;
+  if (user.role === 'super_admin') return true;
+  return user.permissions === null || user.permissions === undefined || user.permissions.includes(scope);
+};

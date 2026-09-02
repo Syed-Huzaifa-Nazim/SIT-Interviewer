@@ -4,6 +4,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import * as PopoverPrimitive from '@radix-ui/react-popover';
 import { cn } from '@/lib/utils';
 import api from '../services/api';
+import { useAuth } from '../context/AuthContext';
 import Alert from '../components/ui/Alert';
 import Badge from '../components/ui/Badge';
 import Button from '../components/ui/Button';
@@ -11,7 +12,7 @@ import Spinner from '../components/ui/Spinner';
 import Input from '../components/ui/Input';
 import Pagination from '../components/ui/Pagination';
 import BulkEmailModal from '../components/admin/BulkEmailModal';
-import { SIGNUP_CATEGORIES, INTERVIEW_STATUS_LABELS, isInstructorCategory, isResumeCategory, formatCnic } from '../utils/constants';
+import { SIGNUP_CATEGORIES, INTERVIEW_STATUS_LABELS, isInstructorCategory, isResumeCategory, formatCnic, hasPermission } from '../utils/constants';
 import { Button as UiButton } from '@/components/shadcn/button';
 import { UnderlineTabs } from '@/components/shadcn/tabs';
 import {
@@ -142,6 +143,14 @@ const csvCell = (value) => {
 };
 
 const AdminUsersPage = () => {
+  const { user: currentAdmin } = useAuth();
+  // Which of this page's actions the CURRENT admin may take — a narrowly-permissioned
+  // admin sees the same table (already company-scoped) but not buttons for actions their
+  // account can't perform; the actual gate is server-side (admin_routes.py), this is just
+  // the UI matching it instead of showing a control that would 403.
+  const canWriteCandidates = hasPermission(currentAdmin, 'candidates:write');
+  const canSendInvites = hasPermission(currentAdmin, 'invites:send');
+
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -590,20 +599,26 @@ const AdminUsersPage = () => {
         subtitle="Edit candidate profiles, manage course status, send invites and monitor who is online."
         actions={
           <>
-            <UiButton variant="outline" size="sm" onClick={() => setBatchHistoryOpen(true)}>
-              <History /> Batch History
-            </UiButton>
-            <UiButton variant="brand" size="sm" onClick={() => setBulkOpen(true)}>
-              <Mail /> Bulk Email
-            </UiButton>
-            <ExportCsvMenu
-              open={csvOpen}
-              onOpenChange={setCsvOpen}
-              fields={csvFields}
-              onToggleField={toggleCsvField}
-              onExport={handleExportCsv}
-              exporting={csvExporting}
-            />
+            {canSendInvites && (
+              <UiButton variant="outline" size="sm" onClick={() => setBatchHistoryOpen(true)}>
+                <History /> Batch History
+              </UiButton>
+            )}
+            {canSendInvites && (
+              <UiButton variant="brand" size="sm" onClick={() => setBulkOpen(true)}>
+                <Mail /> Bulk Email
+              </UiButton>
+            )}
+            {hasPermission(currentAdmin, 'candidates:read') && (
+              <ExportCsvMenu
+                open={csvOpen}
+                onOpenChange={setCsvOpen}
+                fields={csvFields}
+                onToggleField={toggleCsvField}
+                onExport={handleExportCsv}
+                exporting={csvExporting}
+              />
+            )}
           </>
         }
       >
@@ -786,19 +801,21 @@ const AdminUsersPage = () => {
                         {/* Full Profile hub link removed from the UI (backlogged, not
                             deleted) — /admin/users/:userId and AdminUserProfilePage.jsx
                             still exist and work, just aren't linked to from here anymore. */}
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          icon={Pencil}
-                          onClick={() => openEditor(item)}
-                          disabled={actionLoading}
-                          className="!p-2 !rounded-lg"
-                          title="Quick Edit Profile"
-                        />
+                        {canWriteCandidates && (
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            icon={Pencil}
+                            onClick={() => openEditor(item)}
+                            disabled={actionLoading}
+                            className="!p-2 !rounded-lg"
+                            title="Quick Edit Profile"
+                          />
+                        )}
                         {/* Statusless categories qualify by category — requiring 'completed'
                             of them would demand a field they can never have. Mirrors the
                             same rule the backend invite endpoint enforces. */}
-                        {(item.course_status === 'completed'
+                        {canSendInvites && (item.course_status === 'completed'
                           || isInstructorCategory(item.course_category)
                           || isResumeCategory(item.course_category)) && (
                           <Button
@@ -811,36 +828,42 @@ const AdminUsersPage = () => {
                             title="Send One-Time Interview Invite"
                           />
                         )}
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          icon={Key}
-                          onClick={() => {
-                            setOverrideUserId(item.id);
-                            setOverrideVal(item.tokens_available);
-                          }}
-                          disabled={actionLoading}
-                          className="!p-2 !rounded-lg"
-                          title="Assign Custom Tokens"
-                        />
-                        <Button
-                          variant={item.status === 'active' ? 'danger' : 'success'}
-                          size="sm"
-                          icon={item.status === 'active' ? Ban : UserCheck}
-                          onClick={() => handleToggleBan(item.id)}
-                          disabled={actionLoading}
-                          className="!p-2 !rounded-lg"
-                          title={item.status === 'active' ? 'Ban Account' : 'Unban Account'}
-                        />
-                        <Button
-                          variant="danger"
-                          size="sm"
-                          icon={Trash2}
-                          onClick={() => setDeleteUser(item)}
-                          disabled={actionLoading}
-                          className="!p-2 !rounded-lg"
-                          title="Delete Account Permanently"
-                        />
+                        {canWriteCandidates && (
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            icon={Key}
+                            onClick={() => {
+                              setOverrideUserId(item.id);
+                              setOverrideVal(item.tokens_available);
+                            }}
+                            disabled={actionLoading}
+                            className="!p-2 !rounded-lg"
+                            title="Assign Custom Tokens"
+                          />
+                        )}
+                        {canWriteCandidates && (
+                          <Button
+                            variant={item.status === 'active' ? 'danger' : 'success'}
+                            size="sm"
+                            icon={item.status === 'active' ? Ban : UserCheck}
+                            onClick={() => handleToggleBan(item.id)}
+                            disabled={actionLoading}
+                            className="!p-2 !rounded-lg"
+                            title={item.status === 'active' ? 'Ban Account' : 'Unban Account'}
+                          />
+                        )}
+                        {canWriteCandidates && (
+                          <Button
+                            variant="danger"
+                            size="sm"
+                            icon={Trash2}
+                            onClick={() => setDeleteUser(item)}
+                            disabled={actionLoading}
+                            className="!p-2 !rounded-lg"
+                            title="Delete Account Permanently"
+                          />
+                        )}
                       </div>
                     </td>
                   </tr>

@@ -33,7 +33,7 @@ import {
   PanelLeftOpen,
   LayoutDashboard,
 } from 'lucide-react';
-import { isAdminRole, isSuperAdminRole } from '../utils/constants';
+import { isAdminRole, isSuperAdminRole, hasPermission } from '../utils/constants';
 
 const SIDEBAR_PREF_KEY = 'admin.sidebar.collapsed';
 
@@ -234,16 +234,21 @@ const AdminLayout = ({ children }) => {
     );
   }
 
+  // Each entry's `permission` names the scope its page's data actually requires server-side
+  // (see admin_routes.py) — filtered out below for an admin who doesn't hold it, so a
+  // narrowly-permissioned admin's sidebar matches what they can actually open instead of
+  // linking to pages that would just 403. Undefined `permission` means every admin sees it
+  // regardless (Manage Users' own actions are still individually gated where they matter).
   const adminMenu = [
-    { name: 'Overview', path: '/admin', icon: Activity },
-    { name: 'Manage Users', path: '/admin/users', icon: Users },
-    { name: 'Approvals', path: '/admin/approvals', icon: ClipboardCheck, badge: pendingCount },
-    { name: 'Interviews', path: '/admin/interviews', icon: TerminalSquare },
-    { name: 'Scoring Analytics', path: '/admin/scoring', icon: Gauge },
-    { name: 'Transactions', path: '/admin/transactions', icon: CreditCard },
-    { name: 'Feedback', path: '/admin/feedback', icon: MessageSquare },
-    { name: 'Logs', path: '/admin/logs', icon: ScrollText },
-  ];
+    { name: 'Overview', path: '/admin', icon: Activity, permission: 'analytics:read' },
+    { name: 'Manage Users', path: '/admin/users', icon: Users, permission: 'candidates:read' },
+    { name: 'Approvals', path: '/admin/approvals', icon: ClipboardCheck, badge: pendingCount, permission: 'reinterview:decide' },
+    { name: 'Interviews', path: '/admin/interviews', icon: TerminalSquare, permission: 'interviews:read' },
+    { name: 'Scoring Analytics', path: '/admin/scoring', icon: Gauge, permission: 'analytics:read' },
+    { name: 'Transactions', path: '/admin/transactions', icon: CreditCard, permission: 'transactions:read' },
+    { name: 'Feedback', path: '/admin/feedback', icon: MessageSquare, permission: 'candidates:read' },
+    { name: 'Logs', path: '/admin/logs', icon: ScrollText, permission: 'audit:read' },
+  ].filter((item) => !item.permission || hasPermission(user, item.permission));
 
   // Shown to a super admin only. /superadmin is a top-level route outside this layout, so
   // following it leaves the Admin Hub shell entirely — which is right: the management
