@@ -106,6 +106,22 @@ class User(db.Model):
     # "Enrolled Users" and "Bulk Invited Users" tabs in Manage Users.
     bulk_batch_id = db.Column(db.Integer, db.ForeignKey('bulk_email_batches.id', ondelete='SET NULL'), nullable=True)
 
+    # Granular permissions for a company ADMIN account (role='admin'), reusing the exact
+    # same scope vocabulary an API key carries (app/utils/permissions.py — 'candidates:read',
+    # 'invites:send', etc.). JSON list of scope strings, or NULL.
+    #
+    # NULL is "no restriction ever set" — full access to every action AdminScope's company
+    # boundary already allows. That is deliberately what every admin account already had
+    # before this column existed, and it stays what a super admin gets by leaving it unset
+    # when creating a new one: the safe, backward-compatible default is the wide one, not a
+    # silently-narrowed one that would lock an existing admin out of tools they always had.
+    # An EXPLICIT empty list ([]) is different from NULL: it means a super admin deliberately
+    # granted zero actions, and is honoured as zero, not treated as "unset".
+    #
+    # Meaningless for role='super_admin', which bypasses this column entirely (see
+    # has_permission) — a super admin's whole reason to exist is being unscoped by design.
+    permissions = db.Column(db.Text, nullable=True)
+
     # Question Difficulty Range (Difficulty Range feature): one of
     # app.utils.difficulty.DIFFICULTY_RANGES's keys ('EASY_TO_MEDIUM', 'MEDIUM_TO_HARD',
     # 'EASY_TO_HARD'), set by whoever invites this candidate (admin single-invite, Bulk
@@ -234,6 +250,40 @@ class User(db.Model):
                 continue
         return False
 
+    def permission_list(self):
+        """The parsed permissions column, or None meaning "no restriction ever set".
+
+        None is a real, distinct answer from an empty list — see the column's own comment.
+        A corrupted blob fails closed to an empty list (zero permissions), never to None
+        (which would silently restore full access), matching ApiKey.scope_list's same rule.
+        """
+        if self.permissions is None:
+            return None
+        try:
+            value = json.loads(self.permissions)
+        except (ValueError, TypeError):
+            return []
+        return value if isinstance(value, list) else []
+
+    def set_permissions(self, scopes):
+        """``scopes=None`` clears any restriction back to full access. A list — including an
+        empty one — is stored as a deliberate, explicit grant."""
+        self.permissions = None if scopes is None else json.dumps(sorted(set(scopes)))
+
+    def has_permission(self, scope):
+        """Whether this admin may take an action gated by `scope`.
+
+        A super admin is exempt unconditionally — this column is never even read for one,
+        matching AdminScope's own is_super short-circuit. For an ordinary admin, None means
+        the unrestricted legacy default; anything else is an explicit allowlist.
+        """
+        if self.role == 'super_admin':
+            return True
+        allowed = self.permission_list()
+        if allowed is None:
+            return True
+        return scope in allowed
+
     def to_dict(self):
         return {
             'id': self.id,
@@ -260,6 +310,10 @@ class User(db.Model):
             'recovery_codes_remaining': self.recovery_codes_remaining(),
             'bulk_batch_id': self.bulk_batch_id,
             'question_difficulty_range': self.question_difficulty_range,
+            # None = unrestricted (today's behavior for every admin); a list is what an
+            # admin's own account can actually do, and what the Admin Hub frontend uses to
+            # hide actions this account has no permission for.
+            'permissions': self.permission_list(),
             'last_seen_at': self.last_seen_at.isoformat() if self.last_seen_at else None,
             'clearance_email_sent_at': self.clearance_email_sent_at.isoformat() if self.clearance_email_sent_at else None,
             'hr_invite_sent_at': self.hr_invite_sent_at.isoformat() if self.hr_invite_sent_at else None,

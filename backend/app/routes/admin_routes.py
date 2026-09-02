@@ -13,6 +13,7 @@ from app.models import (
 )
 from app.utils.security import admin_required, get_current_user_id, ADMIN_ROLES
 from app.utils.scope import AdminScope, admin_scope
+from app.utils.permissions import require_permissions
 from app.utils.candidate import (
     COURSE_CATEGORIES, COURSE_STATUSES, SIGNUP_CATEGORIES, INSTRUCTOR_CATEGORY,
     is_instructor_category, requires_course_status, normalize_cnic, generate_otp
@@ -54,7 +55,8 @@ def _user_directory(user_ids=None):
     return {u.id: u for u in query.all()}
 
 @admin_bp.get('/stats')
-def get_stats(user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
+def get_stats(user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope),
+              _perm: User = Depends(require_permissions('analytics:read'))):
     # Each of these used to be its own round trip: six separate COUNTs, plus the whole
     # transactions and tokens tables pulled into Python just to be summed. Aggregating in
     # SQL collapses that to one trip per table and moves the arithmetic to the database,
@@ -131,7 +133,8 @@ def get_stats(user: User = Depends(admin_required), scope: AdminScope = Depends(
     }
 
 @admin_bp.get('/users')
-def list_users(user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
+def list_users(user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope),
+                _perm: User = Depends(require_permissions('candidates:read'))):
     # Three queries total, not two per user. This endpoint used to issue one Token lookup
     # and one Interview lookup for every row — 89 round trips for 44 candidates, which at
     # Singapore-to-Mumbai latency is over five seconds of pure waiting.
@@ -176,7 +179,8 @@ def list_users(user: User = Depends(admin_required), scope: AdminScope = Depends
 
 
 @admin_bp.get('/users/{target_user_id}')
-def get_user_detail(target_user_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
+def get_user_detail(target_user_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope),
+                     _perm: User = Depends(require_permissions('candidates:read'))):
     """Single-candidate fetch for the Admin Hub profile page — same shape as one row of
     GET /users, so a direct load/refresh/bookmark of the profile page doesn't need the
     full list re-fetched just to find one row."""
@@ -201,7 +205,8 @@ def get_user_detail(target_user_id: int, user: User = Depends(admin_required), s
 
 
 @admin_bp.get('/users/{target_user_id}/resume')
-def get_user_resume(target_user_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
+def get_user_resume(target_user_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope),
+                     _perm: User = Depends(require_permissions('candidates:read'))):
     """Admin-only: the resume a Resume-Based candidate's interview was generated from
     (Resume §4.2).
 
@@ -240,6 +245,7 @@ def flag_resume_analysis(
     payload: dict = Body(default=None),
     user: User = Depends(admin_required),
     scope: AdminScope = Depends(admin_scope),
+    _perm: User = Depends(require_permissions('candidates:write')),
 ):
     """Admin-only: mark a resume as badly parsed, or clear that mark (Resume §4.2).
 
@@ -284,7 +290,8 @@ def flag_resume_analysis(
 
 
 @admin_bp.get('/users/{target_user_id}/proctoring')
-def get_user_proctoring(target_user_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
+def get_user_proctoring(target_user_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope),
+                         _perm: User = Depends(require_permissions('proctor_snapshots:read'))):
     """Admin-only: the proctoring snapshot + summary for a candidate's most recent
     interview. A camera snapshot is captured both when an interview is completed and
     when it is auto-terminated for a proctoring breach, so this drives the review panel
@@ -316,7 +323,8 @@ def get_user_proctoring(target_user_id: int, user: User = Depends(admin_required
 
 
 @admin_bp.put('/users/{target_user_id}/profile')
-def update_user_profile(target_user_id: int, payload: dict = Body(default=None), user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
+def update_user_profile(target_user_id: int, payload: dict = Body(default=None), user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope),
+                         _perm: User = Depends(require_permissions('candidates:write'))):
     """Full candidate profile editing (§4.1) — including course status, which only
     an admin may change after signup (§2.2)."""
     target = User.query.get(target_user_id)
@@ -405,7 +413,8 @@ def update_user_profile(target_user_id: int, payload: dict = Body(default=None),
 
 @admin_bp.post('/users/{target_user_id}/send-interview-invite')
 def send_interview_invite(target_user_id: int, payload: dict = Body(default=None),
-                           user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
+                           user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope),
+                           _perm: User = Depends(require_permissions('invites:send'))):
     """Issue (or re-issue) one-time interview credentials to a completed-course
     candidate (§2.2 confirmed workflow: admin manually triggers the OTP email).
 
@@ -485,7 +494,8 @@ def send_interview_invite(target_user_id: int, payload: dict = Body(default=None
 
 
 @admin_bp.get('/reinterview-requests')
-def list_reinterview_requests(user_id: Optional[int] = None, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
+def list_reinterview_requests(user_id: Optional[int] = None, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope),
+                               _perm: User = Depends(require_permissions('reinterview:decide'))):
     """Approval queue for second-interview attempts (§4.3). Optional user_id scopes this to
     one candidate's approval history (cross-linked from their profile)."""
     requests_query = scope.filter_by_owner(
@@ -545,7 +555,8 @@ def list_reinterview_requests(user_id: Optional[int] = None, user: User = Depend
 
 
 @admin_bp.post('/reinterview-requests/{request_id}/decision')
-def decide_reinterview_request(request_id: int, payload: dict = Body(default=None), user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
+def decide_reinterview_request(request_id: int, payload: dict = Body(default=None), user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope),
+                                _perm: User = Depends(require_permissions('reinterview:decide'))):
     """Approve → fresh one-time credentials emailed; Reject → ineligibility email (§3.4)."""
     req = SecondInterviewRequest.query.get(request_id)
     if not req:
@@ -599,7 +610,8 @@ def decide_reinterview_request(request_id: int, payload: dict = Body(default=Non
 
 
 @admin_bp.get('/email-logs')
-def list_email_logs(user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
+def list_email_logs(user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope),
+                     _perm: User = Depends(require_permissions('audit:read'))):
     """Outbound email audit (§1): failed sends surface here instead of dying silently."""
     # Scoped by recipient. An email log row carries the candidate's address and the
     # subject line of what was sent to them, so an unscoped list is a candidate list.
@@ -610,7 +622,8 @@ def list_email_logs(user: User = Depends(admin_required), scope: AdminScope = De
 
 
 @admin_bp.get('/recording-logs')
-def list_recording_logs(user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
+def list_recording_logs(user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope),
+                         _perm: User = Depends(require_permissions('audit:read'))):
     """Interview-recording lifecycle audit: when each answer recording was created and,
     once the retention window elapses, when it was automatically deleted."""
     logs = scope.filter_by_owner(
@@ -681,19 +694,22 @@ def _send_post_interview_email(target_user_id, admin, kind, scope):
 
 
 @admin_bp.post('/users/{target_user_id}/send-clearance')
-def send_clearance_email(target_user_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
+def send_clearance_email(target_user_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope),
+                          _perm: User = Depends(require_permissions('invites:send'))):
     """'Send Clearance Email' (Update §5): informs the candidate/instructor they cleared."""
     return _send_post_interview_email(target_user_id, user, 'clearance', scope)
 
 
 @admin_bp.post('/users/{target_user_id}/send-hr-invite')
-def send_hr_invite_email(target_user_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
+def send_hr_invite_email(target_user_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope),
+                          _perm: User = Depends(require_permissions('invites:send'))):
     """'Send HR Assessment Invite' (Update §5): distinct next-stage HR invitation."""
     return _send_post_interview_email(target_user_id, user, 'hr_invite', scope)
 
 
 @admin_bp.post('/users/{target_user_id}/send-proctor-snapshot')
-def send_proctor_snapshot_email(target_user_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
+def send_proctor_snapshot_email(target_user_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope),
+                                 _perm: User = Depends(require_permissions('proctor_snapshots:read'))):
     """Email the candidate their proctoring camera snapshot (attached) along with a
     termination + 30-day-block notice. Uses the snapshot from the candidate's most
     recent interview report."""
@@ -757,7 +773,8 @@ def send_proctor_snapshot_email(target_user_id: int, user: User = Depends(admin_
     return {'message': f'Proctoring snapshot emailed to {target.email}'}
 
 @admin_bp.post('/users/{target_user_id}/ban')
-def toggle_ban(target_user_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
+def toggle_ban(target_user_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope),
+                _perm: User = Depends(require_permissions('candidates:write'))):
     admin_id = user.id
     target_user = User.query.get(target_user_id)
 
@@ -791,7 +808,8 @@ def toggle_ban(target_user_id: int, user: User = Depends(admin_required), scope:
         raise HTTPException(status_code=500, detail=f"Failed to update user status: {str(e)}")
 
 @admin_bp.post('/users/{target_user_id}/tokens')
-def override_tokens(target_user_id: int, payload: dict = Body(default=None), user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
+def override_tokens(target_user_id: int, payload: dict = Body(default=None), user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope),
+                     _perm: User = Depends(require_permissions('candidates:write'))):
     admin_id = user.id
     data = payload or {}
     new_balance = data.get('tokens_available')
@@ -919,7 +937,8 @@ def _anonymize_user_in_logs(target):
 
 
 @admin_bp.delete('/users/{target_user_id}')
-def delete_user(target_user_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
+def delete_user(target_user_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope),
+                 _perm: User = Depends(require_permissions('candidates:write'))):
     """Permanently delete a candidate/instructor account and ALL their data — database
     rows AND Supabase Storage files (Cascade §4). Admin accounts are hard-blocked.
 
@@ -1017,7 +1036,8 @@ def _delete_record(model, record_id, admin, label, action, scope, pre_delete=Non
 
 
 @admin_bp.delete('/interviews/{interview_id}')
-def delete_interview(interview_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
+def delete_interview(interview_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope),
+                      _perm: User = Depends(require_permissions('interviews:delete'))):
     """Delete an interview and its questions/responses/report (ORM cascade), plus its
     stored media — answer audio, session video and proctoring snapshots — from Supabase
     Storage (Cascade §4). Detaches any feedback / code submissions that referenced it so
@@ -1059,33 +1079,39 @@ def delete_interview(interview_id: int, user: User = Depends(admin_required), sc
 
 
 @admin_bp.delete('/feedback/{feedback_id}')
-def delete_feedback(feedback_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
+def delete_feedback(feedback_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope),
+                     _perm: User = Depends(require_permissions('candidates:write'))):
     return _delete_record(Feedback, feedback_id, user, 'Feedback', 'DELETE_FEEDBACK', scope)
 
 
 @admin_bp.delete('/transactions/{transaction_id}')
-def delete_transaction(transaction_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
+def delete_transaction(transaction_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope),
+                        _perm: User = Depends(require_permissions('transactions:read'))):
     return _delete_record(Transaction, transaction_id, user, 'Transaction', 'DELETE_TRANSACTION', scope)
 
 
 @admin_bp.delete('/logs/{log_id}')
-def delete_admin_log(log_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
+def delete_admin_log(log_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope),
+                      _perm: User = Depends(require_permissions('audit:read'))):
     return _delete_record(AdminLog, log_id, user, 'Audit log', 'DELETE_ADMIN_LOG', scope,
                           owner_attr=None)
 
 
 @admin_bp.delete('/email-logs/{log_id}')
-def delete_email_log(log_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
+def delete_email_log(log_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope),
+                      _perm: User = Depends(require_permissions('audit:read'))):
     return _delete_record(EmailLog, log_id, user, 'Email log', 'DELETE_EMAIL_LOG', scope)
 
 
 @admin_bp.delete('/recording-logs/{log_id}')
-def delete_recording_log(log_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
+def delete_recording_log(log_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope),
+                          _perm: User = Depends(require_permissions('audit:read'))):
     return _delete_record(RecordingLog, log_id, user, 'Recording log', 'DELETE_RECORDING_LOG', scope)
 
 
 @admin_bp.delete('/reinterview-requests/{request_id}')
-def delete_reinterview_request(request_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
+def delete_reinterview_request(request_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope),
+                                _perm: User = Depends(require_permissions('reinterview:decide'))):
     return _delete_record(SecondInterviewRequest, request_id, user, 'Second-interview request',
                           'DELETE_REINTERVIEW_REQUEST', scope)
 
@@ -1096,6 +1122,7 @@ def list_proctor_snapshots(
     user_id: Optional[int] = None,
     user: User = Depends(admin_required),
     scope: AdminScope = Depends(admin_scope),
+    _perm: User = Depends(require_permissions('proctor_snapshots:read')),
 ):
     """Proctoring image archive index (newest first): termination webcam frames and
     monitored screen screenshots. Images live in a PRIVATE Supabase bucket under
@@ -1115,7 +1142,8 @@ def list_proctor_snapshots(
 
 
 @admin_bp.get('/proctor-snapshots/{snapshot_id}/url')
-def get_proctor_snapshot_url(snapshot_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
+def get_proctor_snapshot_url(snapshot_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope),
+                              _perm: User = Depends(require_permissions('proctor_snapshots:read'))):
     """Short-lived signed URL to view one archived proctoring image. These are sensitive
     (a candidate's camera/screen), so they are never public — this is the only way in."""
     from app.utils.supabase_service import SupabaseService
@@ -1130,7 +1158,8 @@ def get_proctor_snapshot_url(snapshot_id: int, user: User = Depends(admin_requir
 
 
 @admin_bp.delete('/proctor-snapshots/{snapshot_id}')
-def delete_proctor_snapshot(snapshot_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
+def delete_proctor_snapshot(snapshot_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope),
+                             _perm: User = Depends(require_permissions('proctor_snapshots:read'))):
     """Permanently remove one archived proctoring image — both the stored file and its
     index row (Cascade §4: a DB delete can't reach Supabase Storage, so do it here)."""
     from app.utils.supabase_service import SupabaseService
@@ -1152,7 +1181,8 @@ def delete_proctor_snapshot(snapshot_id: int, user: User = Depends(admin_require
 
 
 @admin_bp.post('/interviews/{interview_id}/assemble-recording')
-def assemble_interview_recording(interview_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
+def assemble_interview_recording(interview_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope),
+                                  _perm: User = Depends(require_permissions('recordings:read'))):
     """Rebuild a session recording from the slices the candidate's browser uploaded.
 
     The candidate's own finalize call is the normal path, but it runs at the moment they are
@@ -1198,7 +1228,8 @@ def assemble_interview_recording(interview_id: int, user: User = Depends(admin_r
 
 
 @admin_bp.get('/interviews/{interview_id}/video-url')
-def get_interview_video_url(interview_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
+def get_interview_video_url(interview_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope),
+                             _perm: User = Depends(require_permissions('recordings:read'))):
     """Admin-only playback of a session recording (DB Integration §2.2): returns a
     short-lived signed URL into the PRIVATE interview-recordings bucket. Recordings are
     never publicly reachable — this is the only way they're served."""
@@ -1216,7 +1247,8 @@ def get_interview_video_url(interview_id: int, user: User = Depends(admin_requir
 
 
 @admin_bp.get('/interviews')
-def list_interviews(user_id: Optional[int] = None, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
+def list_interviews(user_id: Optional[int] = None, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope),
+                     _perm: User = Depends(require_permissions('interviews:read'))):
     query = scope.filter_by_owner(Interview.query, Interview.user_id)
     if user_id is not None:
         query = query.filter_by(user_id=user_id)
@@ -1232,7 +1264,8 @@ def list_interviews(user_id: Optional[int] = None, user: User = Depends(admin_re
     return interviews_list
 
 @admin_bp.get('/transactions')
-def list_transactions(user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
+def list_transactions(user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope),
+                       _perm: User = Depends(require_permissions('transactions:read'))):
     transactions = scope.filter_by_owner(
         Transaction.query, Transaction.user_id
     ).order_by(Transaction.created_at.desc()).all()
@@ -1247,7 +1280,8 @@ def list_transactions(user: User = Depends(admin_required), scope: AdminScope = 
     return tx_list
 
 @admin_bp.get('/feedback')
-def list_feedbacks(user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
+def list_feedbacks(user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope),
+                    _perm: User = Depends(require_permissions('candidates:read'))):
     feedbacks = scope.filter_by_owner(
         Feedback.query, Feedback.user_id
     ).order_by(Feedback.created_at.desc()).all()
@@ -1279,7 +1313,8 @@ def list_feedbacks(user: User = Depends(admin_required), scope: AdminScope = Dep
     return feedbacks_list
 
 @admin_bp.get('/logs')
-def list_logs(user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
+def list_logs(user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope),
+               _perm: User = Depends(require_permissions('audit:read'))):
     logs = scope.filter_by_actor(
         AdminLog.query, AdminLog.admin_id
     ).order_by(AdminLog.created_at.desc()).all()
@@ -1303,7 +1338,8 @@ def _is_flagged(response):
 
 
 @admin_bp.get('/scoring/analytics')
-def scoring_analytics(user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
+def scoring_analytics(user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope),
+                       _perm: User = Depends(require_permissions('analytics:read'))):
     """Aggregate view of how the LLM has been scoring interviews (§7).
 
     Built entirely from the persisted per-question evaluation data (score, confidence,
@@ -1380,7 +1416,8 @@ def scoring_analytics(user: User = Depends(admin_required), scope: AdminScope = 
 
 
 @admin_bp.get('/scoring/interviews/{interview_id}')
-def scoring_interview_detail(interview_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
+def scoring_interview_detail(interview_id: int, user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope),
+                              _perm: User = Depends(require_permissions('interviews:read'))):
     """Per-question breakdown for one interview: question, transcript, score, rationale (§7)."""
     itv = Interview.query.get(interview_id)
     if not itv:

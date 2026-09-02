@@ -431,6 +431,10 @@ def create_admin(payload: dict = Body(default=None), user: User = Depends(super_
     name = (data.get('name') or '').strip()
     contact_email = (data.get('contact_email') or data.get('email') or '').strip().lower()
     company_ids = data.get('company_ids') or []
+    # Optional. Omitted (key absent, or null) means "no restriction" — the same full access
+    # every admin has always had. Present means the super admin made a deliberate choice,
+    # even if that choice is an empty list (zero permissions granted).
+    permissions = data.get('permissions', None)
 
     if not name:
         raise HTTPException(status_code=400, detail="Name is required")
@@ -452,6 +456,13 @@ def create_admin(payload: dict = Body(default=None), user: User = Depends(super_
             raise HTTPException(status_code=404, detail=f"Company {cid} not found")
         companies.append(company)
 
+    if permissions is not None:
+        if not isinstance(permissions, list):
+            raise HTTPException(status_code=400, detail="permissions must be a list")
+        unknown = [p for p in permissions if p not in SCOPES]
+        if unknown:
+            raise HTTPException(status_code=400, detail=f"Unknown permission(s): {', '.join(unknown)}")
+
     admin = User(
         name=name,
         email=email,
@@ -465,6 +476,7 @@ def create_admin(payload: dict = Body(default=None), user: User = Depends(super_
     # The generated password is a credential sitting in an inbox until it is replaced, so
     # the account can do nothing else until it is (enforced in admin_required).
     admin.must_change_password = True
+    admin.set_permissions(permissions)
     db.session.add(admin)
     db.session.flush()
 
@@ -478,10 +490,13 @@ def create_admin(payload: dict = Body(default=None), user: User = Depends(super_
         ))
 
     granted = ', '.join(c.name for c in companies) or 'none'
+    perm_note = ('full access' if permissions is None
+                 else (', '.join(sorted(permissions)) or 'none'))
     # The password is never written to the audit trail — the log is readable by this account
     # forever, and a credential recorded there outlives every rotation.
     _audit(user, 'ADMIN_CREATED',
-           f"Created admin {email} (id {admin.id}) for {contact_email}. Companies: {granted}.")
+           f"Created admin {email} (id {admin.id}) for {contact_email}. Companies: {granted}. "
+           f"Permissions: {perm_note}.")
     db.session.commit()
 
     subject, html = email_templates.admin_account_created(
@@ -579,6 +594,46 @@ def revoke_admin_sessions(admin_id: int, user: User = Depends(super_admin_requir
            f"Revoked all live sessions for {target.email} (id {target.id}).")
     db.session.commit()
     return {'message': 'Sessions revoked'}
+
+
+@superadmin_bp.put('/admins/{admin_id}/permissions')
+def update_admin_permissions(admin_id: int, payload: dict = Body(default=None),
+                             user: User = Depends(super_admin_required)):
+    """Narrow (or widen, or clear) one admin's permissions — see User.has_permission.
+
+    Takes effect on the admin's very next request, same as a company grant: nothing about
+    it is cached in their session token, so there is no separate "apply now" step and no
+    window where a just-revoked permission still works.
+    """
+    target = User.query.get(admin_id)
+    if not target or target.role not in ADMIN_ROLES:
+        raise HTTPException(status_code=404, detail="Admin not found")
+    if target.role == ROLE_SUPER_ADMIN:
+        raise HTTPException(status_code=400, detail="A super admin is never restricted by permissions.")
+
+    data = payload or {}
+    # 'permissions' explicitly absent from the body is refused rather than silently treated
+    # as "clear it" — a caller must say null on purpose to widen an admin back to full access.
+    if 'permissions' not in data:
+        raise HTTPException(status_code=400, detail="permissions is required (a list, or null to clear).")
+    permissions = data['permissions']
+    if permissions is not None:
+        if not isinstance(permissions, list):
+            raise HTTPException(status_code=400, detail="permissions must be a list or null")
+        unknown = [p for p in permissions if p not in SCOPES]
+        if unknown:
+            raise HTTPException(status_code=400, detail=f"Unknown permission(s): {', '.join(unknown)}")
+
+    before = target.permission_list()
+    target.set_permissions(permissions)
+    after = target.permission_list()
+    if before != after:
+        before_note = 'full access' if before is None else (', '.join(before) or 'none')
+        after_note = 'full access' if after is None else (', '.join(after) or 'none')
+        _audit(user, 'ADMIN_PERMISSIONS_UPDATED',
+               f"{target.email} (id {target.id}): permissions {before_note} -> {after_note}.")
+    db.session.commit()
+    return {'admin': target.to_dict()}
 
 
 # ---------------------------------------------------------------------------------------

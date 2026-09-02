@@ -28,6 +28,11 @@ from fastapi import Depends, Header, HTTPException, Request, status
 from app.database.db import db
 from app.models import ApiKey, User
 from app.utils.scope import AdminScope
+# Re-exported for every existing `from app.utils.api_key import SCOPES` call site — the
+# vocabulary itself now lives in permissions.py so a company-admin USER account (which
+# carries no ApiKey row at all) can share the exact same scope names. See that module's
+# docstring for why one list serves both credential types.
+from app.utils.permissions import SCOPES  # noqa: F401
 
 # Visible marker so a leaked key is recognisable as one — in a log, a paste, a public repo.
 # Secret scanners key off prefixes like this, and a key that cannot be recognised is a key
@@ -41,24 +46,6 @@ KEY_BYTES = 32
 # How much of the key is stored in the clear, prefix included. Enough to identify a key in a
 # list without being enough to use.
 PREFIX_LENGTH = 16
-
-
-# Every scope the system understands. A key can only be created with scopes from this list,
-# so a typo produces an error at creation rather than a permission that silently never
-# matches anything.
-SCOPES = {
-    'candidates:read': 'Read candidate records',
-    'candidates:write': 'Update candidate profiles',
-    'interviews:read': 'Read interviews and reports',
-    'interviews:delete': 'Delete interviews',
-    'recordings:read': 'Get playback links for session recordings',
-    'proctor_snapshots:read': 'Read proctoring images',
-    'invites:send': 'Send interview invitations',
-    'reinterview:decide': 'Approve or reject second-interview requests',
-    'analytics:read': 'Read aggregate scoring analytics',
-    'audit:read': 'Read the audit log',
-    'transactions:read': 'Read transactions',
-}
 
 
 def generate_key():

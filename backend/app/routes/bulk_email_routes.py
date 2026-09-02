@@ -25,6 +25,7 @@ from app.database.db import db
 from app.models import User, Token, Transaction, Notification, AdminLog, BulkEmailBatch
 from app.utils.security import admin_required
 from app.utils.scope import AdminScope, admin_scope
+from app.utils.permissions import require_permissions
 from app.utils.candidate import (
     SIGNUP_CATEGORIES, COURSE_STATUSES, CATEGORY_JOB_ROLES,
     is_instructor_category, is_resume_category, normalize_cnic, generate_otp,
@@ -307,7 +308,8 @@ def validate_batch(payload: dict = Body(default=None), user: User = Depends(admi
 
 @bulk_email_bp.post('/send')
 def send_batch(payload: dict = Body(default=None), user: User = Depends(admin_required),
-               scope: AdminScope = Depends(admin_scope)):
+               scope: AdminScope = Depends(admin_scope),
+               _perm: User = Depends(require_permissions('invites:send'))):
     """Create accounts and queue the invitations, then return immediately.
 
     The actual work runs on a daemon thread so a large batch never blocks the admin's
@@ -384,7 +386,8 @@ def send_batch(payload: dict = Body(default=None), user: User = Depends(admin_re
 
 
 @bulk_email_bp.get('/batches')
-def list_batches(user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope)):
+def list_batches(user: User = Depends(admin_required), scope: AdminScope = Depends(admin_scope),
+                  _perm: User = Depends(require_permissions('invites:send'))):
     # Scoped by who ran the batch, the same cut as the audit log: a batch row carries a
     # file name and subject line belonging to whoever sent it.
     batches = scope.filter_by_actor(
@@ -395,7 +398,8 @@ def list_batches(user: User = Depends(admin_required), scope: AdminScope = Depen
 
 @bulk_email_bp.get('/batches/{batch_id}')
 def get_batch(batch_id: int, user: User = Depends(admin_required),
-              scope: AdminScope = Depends(admin_scope)):
+              scope: AdminScope = Depends(admin_scope),
+              _perm: User = Depends(require_permissions('invites:send'))):
     """Progress endpoint the modal polls while a batch is sending."""
     batch = BulkEmailBatch.query.get(batch_id)
     if not batch:
