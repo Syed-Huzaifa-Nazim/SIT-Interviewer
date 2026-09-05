@@ -20,5 +20,8 @@ from app.models.models import (
     BulkEmailBatch,
     Company,
     AdminCompanyAssignment,
-    ApiKey
+    ApiKey,
+    CurriculumCourse,
+    CurriculumModule,
+    CurriculumTopic,
 )

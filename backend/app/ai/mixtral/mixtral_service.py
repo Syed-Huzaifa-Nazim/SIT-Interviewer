@@ -109,7 +109,10 @@ class MixtralService:
         'qa engineer', 'cybersecurity analyst', 'cloud engineer', 'mobile developer',
         # Canonical roles for the course-category signup system (§3.3) — additive only,
         # guarantees the auto-created official interview is never rejected.
-        'cloud & data engineer', 'web & mobile app developer', 'ui/ux designer'
+        'cloud & data engineer', 'web & mobile app developer', 'ui/ux designer',
+        # Added when "Graphics and UI/UX Design" split into two separate tracks — the UI/UX
+        # half already had a preset above; this is the Graphic Design half's own.
+        'graphic designer'
     ]
 
     # Safety-net keyword lists used when the LLM classification call is unavailable.

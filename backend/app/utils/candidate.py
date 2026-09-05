@@ -4,10 +4,33 @@ import secrets
 import string
 
 # Course categories tied to the Ongoing/Completed course-status logic (§2.1).
+#
+# Curriculum feature: "AI" was renamed to "AI & Data Science", and "Graphics and UI/UX
+# Design" was split into two separate selectable tracks (never combined — a candidate is
+# either a graphic designer or a UI/UX designer, not both). These 5 names are exactly the
+# 5 curriculum courses imported by scripts/import_curriculum.py; see app/utils/curriculum.py
+# for the category -> curriculum-course mapping.
+#
+# LEGACY_COURSE_CATEGORIES below are deliberately NOT in this list — new signups/invites can
+# no longer choose them — but existing candidates already stored under one of those values
+# are left completely alone (see LEGACY_COURSE_CATEGORIES' own comment for why this matters).
 COURSE_CATEGORIES = [
-    'AI',
+    'AI & Data Science',
     'Cloud & Data Engineering',
     'Web and Mobile App Development',
+    'Graphic Designing With AI',
+    'UI/UX Design With AI',
+]
+
+# Category values that used to be selectable and may still be sitting on real candidate
+# rows (course_category has no DB-level enum constraint, so nothing forces them to move).
+# Never offered again at signup/invite time, and — critically — never auto-migrated: "AI"
+# unambiguously became "AI & Data Science", but "Graphics and UI/UX Design" could mean
+# either of the two new tracks, and guessing which one a real person's account belongs to
+# would be writing fiction into someone's history. An admin may reassign one by hand via
+# the ordinary profile-edit category field; nothing does it automatically.
+LEGACY_COURSE_CATEGORIES = [
+    'AI',
     'Graphics and UI/UX Design',
 ]
 
@@ -36,9 +59,17 @@ SIGNUP_CATEGORIES = COURSE_CATEGORIES + [INSTRUCTOR_CATEGORY, RESUME_CATEGORY]
 # interview for completed-course candidates (§3.3). Every value must be accepted
 # by the domain classifier's preset whitelist so the session can never be rejected.
 CATEGORY_JOB_ROLES = {
-    'AI': 'AI Engineer',
+    'AI & Data Science': 'AI Engineer',
     'Cloud & Data Engineering': 'Cloud & Data Engineer',
     'Web and Mobile App Development': 'Web & Mobile App Developer',
+    'Graphic Designing With AI': 'Graphic Designer',
+    'UI/UX Design With AI': 'UI/UX Designer',
+    # Legacy values (LEGACY_COURSE_CATEGORIES) — kept here, not removed, purely so a candidate
+    # still on one of these old category strings still gets a sensible job_role if something
+    # ever re-derives it. Every .get() call site already falls back to 'Software Engineer'
+    # regardless, so removing these would not break anything; keeping them is simply more
+    # accurate for accounts that still carry the old value.
+    'AI': 'AI Engineer',
     'Graphics and UI/UX Design': 'UI/UX Designer',
     INSTRUCTOR_CATEGORY: 'Instructor',
     # A resume-based candidate has no declared domain. This is only the label the session is

@@ -1,0 +1,314 @@
+{
+  "source": "Saylani Mass IT Training (official website)",
+  "scraped_at": "2026-09-05",
+  "notes": [
+    "Only content explicitly exposed on the official public course pages is included.",
+    "No missing topic names were invented.",
+    "For several courses, the public page exposes every topic name only for Module 1; later modules expose module names and topic counts but not the individual topic names."
+  ],
+  "courses": [
+    {
+      "course_name": "Artificial Intelligence and Data Science",
+      "ui_label": "AI & Data Science",
+      "source_url": "https://www.saylanimit.com/courses/artificial-intelligence-and-data-science",
+      "duration_months": 10,
+      "official_module_count": 9,
+      "official_topic_count": 71,
+      "modules": [
+        {
+          "module_number": 1,
+          "module_name": "Python Foundations",
+          "official_topic_count": 11,
+          "topics_exposed_on_public_page": [
+            "Introduction, Installation, IDE Setup",
+            "Variables, Data Types, Operators",
+            "Conditional Statements",
+            "Loops & Iterations",
+            "Functions, Lambda, Modules",
+            "Python Data Structures",
+            "File Handling",
+            "Exception Handling",
+            "Object-Oriented Programming",
+            "Class-Based Projects",
+            "Home-Based Projects"
+          ]
+        },
+        {
+          "module_number": 2,
+          "module_name": "Python for Data Science (NumPy, Pandas, Visualization)",
+          "official_topic_count": 8,
+          "topics_exposed_on_public_page": []
+        },
+        {
+          "module_number": 3,
+          "module_name": "Statistics & Math for ML",
+          "official_topic_count": 8,
+          "topics_exposed_on_public_page": []
+        },
+        {
+          "module_number": 4,
+          "module_name": "Machine Learning",
+          "official_topic_count": 8,
+          "topics_exposed_on_public_page": []
+        },
+        {
+          "module_number": 5,
+          "module_name": "Deep Learning",
+          "official_topic_count": 5,
+          "topics_exposed_on_public_page": []
+        },
+        {
+          "module_number": 6,
+          "module_name": "MLOps",
+          "official_topic_count": 8,
+          "topics_exposed_on_public_page": []
+        },
+        {
+          "module_number": 7,
+          "module_name": "Big Data & Cloud",
+          "official_topic_count": 5,
+          "topics_exposed_on_public_page": []
+        },
+        {
+          "module_number": 8,
+          "module_name": "GENERATIVE AI (LLMs)",
+          "official_topic_count": 9,
+          "topics_exposed_on_public_page": []
+        },
+        {
+          "module_number": 9,
+          "module_name": "Agentic AI",
+          "official_topic_count": 9,
+          "topics_exposed_on_public_page": []
+        }
+      ]
+    },
+    {
+      "course_name": "Multi Cloud Data Engineering",
+      "ui_label": "Cloud & Data Engineering",
+      "source_url": "https://www.saylanimit.com/courses/multi-cloud-data-engineering",
+      "duration_months": 9,
+      "official_module_count": 10,
+      "official_topic_count": 57,
+      "modules": [
+        {
+          "module_number": 1,
+          "module_name": "Thinking Like a Data Engineer",
+          "official_topic_count": 3,
+          "topics_exposed_on_public_page": [
+            "The Data Engineer's Mindset",
+            "The Modern Data Stack",
+            "Install Required Tools"
+          ]
+        },
+        {
+          "module_number": 2,
+          "module_name": "SQL — The Language of Data",
+          "official_topic_count": 7,
+          "topics_exposed_on_public_page": []
+        },
+        {
+          "module_number": 3,
+          "module_name": "Python — The Engineer's Tool",
+          "official_topic_count": 8,
+          "topics_exposed_on_public_page": []
+        },
+        {
+          "module_number": 4,
+          "module_name": "Orchestration — Apache Airflow",
+          "official_topic_count": 4,
+          "topics_exposed_on_public_page": []
+        },
+        {
+          "module_number": 5,
+          "module_name": "Engineering Practices",
+          "official_topic_count": 4,
+          "topics_exposed_on_public_page": []
+        },
+        {
+          "module_number": 6,
+          "module_name": "Agentic Data Engineering",
+          "official_topic_count": 2,
+          "topics_exposed_on_public_page": []
+        },
+        {
+          "module_number": 7,
+          "module_name": "Cloud Warehousing — Snowflake + dbt",
+          "official_topic_count": 8,
+          "topics_exposed_on_public_page": []
+        },
+        {
+          "module_number": 8,
+          "module_name": "Real-Time Data — Apache Kafka",
+          "official_topic_count": 8,
+          "topics_exposed_on_public_page": []
+        },
+        {
+          "module_number": 9,
+          "module_name": "AWS for Data Engineers",
+          "official_topic_count": 7,
+          "topics_exposed_on_public_page": []
+        },
+        {
+          "module_number": 10,
+          "module_name": "Azure for Data Engineers",
+          "official_topic_count": 6,
+          "topics_exposed_on_public_page": []
+        }
+      ]
+    },
+    {
+      "course_name": "Modern Web Application Development",
+      "ui_label": "Web and Mobile App Development",
+      "source_url": "https://www.saylanimit.com/courses/modern-web-application-development",
+      "duration_months": 12,
+      "official_module_count": 4,
+      "official_topic_count": 81,
+      "modules": [
+        {
+          "module_number": 1,
+          "module_name": "Web Designing",
+          "official_topic_count": 20,
+          "topics_exposed_on_public_page": [
+            "HTML Text",
+            "HTML Images",
+            "HTML Table",
+            "HTML Forms",
+            "HTML Audio/Video Tags",
+            "HTML Links",
+            "Grid system",
+            "Font Awesome",
+            "Bootstrap",
+            "Css3",
+            "Google Fonts",
+            "CSS Variables",
+            "Netlify Hosting",
+            "Github",
+            "Github Hosting",
+            "CSS Animations",
+            "Media queries",
+            "Surge hosting",
+            "Domain & Hosing Subscription (Deployment)",
+            "Flex box"
+          ]
+        },
+        {
+          "module_number": 2,
+          "module_name": "Front-End Development",
+          "official_topic_count": 31,
+          "topics_exposed_on_public_page": []
+        },
+        {
+          "module_number": 3,
+          "module_name": "Modern Front-End Development",
+          "official_topic_count": 14,
+          "topics_exposed_on_public_page": []
+        },
+        {
+          "module_number": 4,
+          "module_name": "Back-End Development",
+          "official_topic_count": 16,
+          "topics_exposed_on_public_page": []
+        }
+      ]
+    },
+    {
+      "course_name": "Graphic Designing With AI",
+      "ui_label": "Graphic Designing With AI",
+      "source_url": "https://www.saylanimit.com/courses/graphic-designing-with-ai",
+      "duration_months": 6,
+      "official_module_count": 6,
+      "official_topic_count": 48,
+      "modules": [
+        {
+          "module_number": 1,
+          "module_name": "The Zero Semester (Visual Literacy & Setup)",
+          "official_topic_count": 8,
+          "topics_exposed_on_public_page": [
+            "The 2026 Design Economy & Workspace Setup",
+            "Asset Sourcing & Image Quality",
+            "ChatGPT as a Research Partner",
+            "Core Principles of Design",
+            "Visual Storytelling & Semiotics",
+            "Professional Mood-boarding",
+            "Idea Generation & Sketching",
+            "Month 1 Capstone (The Physical Challenge)"
+          ]
+        },
+        {
+          "module_number": 2,
+          "module_name": "Photoshop Foundations (The Pixel Lab)",
+          "official_topic_count": 8,
+          "topics_exposed_on_public_page": []
+        },
+        {
+          "module_number": 3,
+          "module_name": "Advanced Photoshop & Print",
+          "official_topic_count": 8,
+          "topics_exposed_on_public_page": []
+        },
+        {
+          "module_number": 4,
+          "module_name": "Vector Precision (Adobe Illustrator)",
+          "official_topic_count": 8,
+          "topics_exposed_on_public_page": []
+        },
+        {
+          "module_number": 5,
+          "module_name": "Strategic Branding & Assets",
+          "official_topic_count": 8,
+          "topics_exposed_on_public_page": []
+        },
+        {
+          "module_number": 6,
+          "module_name": "The AI-Enhanced Professional",
+          "official_topic_count": 8,
+          "topics_exposed_on_public_page": []
+        }
+      ]
+    },
+    {
+      "course_name": "UI UX Design With AI",
+      "ui_label": "UI/UX Design With AI",
+      "source_url": "https://www.saylanimit.com/courses/ui-ux-design-with-ai",
+      "duration_months": 4,
+      "official_module_count": 4,
+      "official_topic_count": 32,
+      "modules": [
+        {
+          "module_number": 1,
+          "module_name": "UI/UX Fundamentals + Human-Centered Design",
+          "official_topic_count": 8,
+          "topics_exposed_on_public_page": [
+            "Introduction to UI/UX & Design Thinking (WEEK 01 - Class 01)",
+            "Introduction to UI/UX & Design Thinking (WEEK 01 - Class 02)",
+            "Understanding Users (WEEK 02 - Class 03)",
+            "Understanding Users (WEEK 03 - CLASS 04)",
+            "User Journeys & Flows (WEEK 03 - Class 05)",
+            "User Journeys & Flows (WEEK 03 - Class 06)",
+            "Introduction to AI in Design (WEEK 04 - Class 07)",
+            "Introduction to AI in Design (WEEK 04- Class 08)"
+          ]
+        },
+        {
+          "module_number": 2,
+          "module_name": "Wireframes, Visual Design & Intro to AI Tools",
+          "official_topic_count": 8,
+          "topics_exposed_on_public_page": []
+        },
+        {
+          "module_number": 3,
+          "module_name": "Prototyping, AI-Enhanced Testing & Personalization",
+          "official_topic_count": 8,
+          "topics_exposed_on_public_page": []
+        },
+        {
+          "module_number": 4,
+          "module_name": "Capstone Preparation & Career Readiness",
+          "official_topic_count": 8,
+          "topics_exposed_on_public_page": []
+        }
+      ]
+    }
+  ]
+}

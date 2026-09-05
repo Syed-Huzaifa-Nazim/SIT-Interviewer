@@ -959,6 +959,13 @@ const AdminUsersPage = () => {
                 <label htmlFor="course_category" className="text-xs font-semibold text-slate-700 dark:text-slate-300">Category</label>
                 <select id="course_category" value={editForm.course_category} onChange={handleEditChange} className={selectClass}>
                   <option value="">Not set</option>
+                  {/* A candidate can still carry a category retired from SIGNUP_CATEGORIES
+                      (e.g. the old "AI" before it split into today's tracks) — shown as its
+                      own option so the select actually displays it instead of looking blank,
+                      without offering it to anyone choosing a category from scratch. */}
+                  {editForm.course_category && !SIGNUP_CATEGORIES.includes(editForm.course_category) && (
+                    <option value={editForm.course_category}>{editForm.course_category} (legacy)</option>
+                  )}
                   {SIGNUP_CATEGORIES.map((cat) => (
                     <option key={cat} value={cat}>{cat}</option>
                   ))}

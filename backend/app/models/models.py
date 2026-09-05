@@ -1115,6 +1115,36 @@ class Company(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
     created_by = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
 
+    # Interview Access (curriculum feature): JSON list of interview-category names this
+    # company's admins/API keys may invite candidates under (e.g. "AI & Data Science").
+    # NULL means "no restriction ever set" — every interview type allowed, which is exactly
+    # what every company that existed before this column was added keeps, and what a super
+    # admin leaves unset for a new company that should start unrestricted too. Only a
+    # company a super admin has explicitly narrowed (an actual list, even an empty one) is
+    # ever refused a category. Mirrors User.permissions' own null-means-unrestricted rule.
+    allowed_interview_types = db.Column(db.Text, nullable=True)
+
+    def allowed_interview_types_list(self):
+        """The parsed column, or None meaning "no restriction ever set" — see the column's
+        own comment. A corrupted blob fails closed to zero allowed types, never to None."""
+        if self.allowed_interview_types is None:
+            return None
+        try:
+            value = json.loads(self.allowed_interview_types)
+        except (ValueError, TypeError):
+            return []
+        return value if isinstance(value, list) else []
+
+    def set_allowed_interview_types(self, categories):
+        """``categories=None`` clears any restriction back to every type allowed."""
+        self.allowed_interview_types = None if categories is None else json.dumps(sorted(set(categories)))
+
+    def allows_interview_type(self, category):
+        allowed = self.allowed_interview_types_list()
+        if allowed is None:
+            return True
+        return category in allowed
+
     def to_dict(self):
         return {
             'id': self.id,
@@ -1122,6 +1152,7 @@ class Company(db.Model):
             'slug': self.slug,
             'status': self.status or 'active',
             'is_default': bool(self.is_default),
+            'allowed_interview_types': self.allowed_interview_types_list(),
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'created_by': self.created_by,
         }
@@ -1267,4 +1298,131 @@ class ApiKey(db.Model):
             'expires_at': self.expires_at.isoformat() if self.expires_at else None,
             'revoked_at': self.revoked_at.isoformat() if self.revoked_at else None,
             'last_used_at': self.last_used_at.isoformat() if self.last_used_at else None,
+        }
+
+
+# =============================================================================================
+# Curriculum (curriculum-based interview questions)
+# =============================================================================================
+#
+# Imported ONCE from a verified JSON snapshot of SMIT's public course pages (see
+# scripts/import_curriculum.py) — never scraped live. Interview runtime only ever reads this
+# table; it never touches the source website. See app/utils/curriculum.py for the mapping
+# between an interview category (e.g. "AI & Data Science") and a course row's slug, and for
+# the helper that turns a course's modules/topics into the compact context handed to the AI
+# question generator.
+#
+# Three tables, not one denormalized blob, because a module can be published with only its
+# name and official topic COUNT (the source page never listed the individual topics) — see
+# CurriculumModule.official_topic_count vs. its actual CurriculumTopic rows, which may
+# legitimately be fewer. Storing that gap explicitly is what stops the importer (or a future
+# editor) from quietly inventing topic names to make the numbers match.
+
+class CurriculumCourse(db.Model):
+    """One SMIT course/track (e.g. "AI & Data Science"). Maps 1:1 to an interview category
+    via app/utils/curriculum.py's CATEGORY_TO_CURRICULUM_SLUG — never matched by free-text
+    name comparison, which is exactly how a category gets silently unmapped when someone
+    renames it in one place and not the other."""
+    __tablename__ = 'curriculum_courses'
+
+    id = db.Column(db.Integer, primary_key=True)
+    slug = db.Column(db.String(80), unique=True, nullable=False)
+    ui_label = db.Column(db.String(150), nullable=False)
+    official_name = db.Column(db.String(150), nullable=False)
+    source = db.Column(db.String(200), nullable=True)
+    source_url = db.Column(db.String(500), nullable=True)
+    official_module_count = db.Column(db.Integer, nullable=True)
+    official_topic_count = db.Column(db.Integer, nullable=True)
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    modules = db.relationship(
+        'CurriculumModule', backref='course', lazy=True,
+        cascade="all, delete-orphan", order_by='CurriculumModule.module_number',
+    )
+
+    def to_dict(self, include_modules=False):
+        data = {
+            'id': self.id,
+            'slug': self.slug,
+            'ui_label': self.ui_label,
+            'official_name': self.official_name,
+            'source': self.source,
+            'source_url': self.source_url,
+            'official_module_count': self.official_module_count,
+            'official_topic_count': self.official_topic_count,
+            'is_active': bool(self.is_active),
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }
+        if include_modules:
+            data['modules'] = [m.to_dict() for m in self.modules]
+        return data
+
+
+class CurriculumModule(db.Model):
+    """One module within a course. ``official_topic_count`` is the number the source page
+    published for this module even when no individual topic names were ever exposed for it
+    — the module still gets a row (and still narrows question generation to its scope) with
+    zero CurriculumTopic children in that case; see CurriculumTopic's own docstring."""
+    __tablename__ = 'curriculum_modules'
+    __table_args__ = (
+        # A re-run import upserting the same (course, module_number) pair must update the
+        # existing row, never create a second one — that is what "idempotent" means here.
+        db.UniqueConstraint('course_id', 'module_number', name='uq_curriculum_module_number'),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    course_id = db.Column(db.Integer, db.ForeignKey('curriculum_courses.id', ondelete='CASCADE'), nullable=False)
+    module_number = db.Column(db.Integer, nullable=False)
+    module_name = db.Column(db.String(200), nullable=False)
+    official_topic_count = db.Column(db.Integer, nullable=True)
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    topics = db.relationship(
+        'CurriculumTopic', backref='module', lazy=True,
+        cascade="all, delete-orphan", order_by='CurriculumTopic.topic_order',
+    )
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'course_id': self.course_id,
+            'module_number': self.module_number,
+            'module_name': self.module_name,
+            'official_topic_count': self.official_topic_count,
+            'is_active': bool(self.is_active),
+            'topics': [t.to_dict() for t in self.topics],
+        }
+
+
+class CurriculumTopic(db.Model):
+    """One EXACT topic name as it actually appeared on the public course page.
+    ``source_verified`` is always True by construction — this table only ever holds names
+    the importer read from the source JSON, never an invented one (see §11/§22 of the
+    curriculum feature spec: a module with no exposed topics simply has no rows here, and
+    the AI is told to work from the module NAME's scope instead — app/utils/curriculum.py)."""
+    __tablename__ = 'curriculum_topics'
+    __table_args__ = (
+        db.UniqueConstraint('module_id', 'topic_order', name='uq_curriculum_topic_order'),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    module_id = db.Column(db.Integer, db.ForeignKey('curriculum_modules.id', ondelete='CASCADE'), nullable=False)
+    topic_name = db.Column(db.String(300), nullable=False)
+    topic_order = db.Column(db.Integer, nullable=False)
+    source_verified = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'module_id': self.module_id,
+            'topic_name': self.topic_name,
+            'topic_order': self.topic_order,
+            'source_verified': bool(self.source_verified),
         }
