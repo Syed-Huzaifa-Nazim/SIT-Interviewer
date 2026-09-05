@@ -756,6 +756,14 @@ def list_api_scopes(user: User = Depends(super_admin_required)):
     return [{'scope': k, 'description': v} for k, v in sorted(SCOPES.items())]
 
 
+@superadmin_bp.get('/interview-categories')
+def list_interview_categories(user: User = Depends(super_admin_required)):
+    """Every interview category a company's "Interview Access" list can name — straight from
+    the same SIGNUP_CATEGORIES the Admin Hub itself validates against, so the Companies tab's
+    checklist can never offer (or silently drop) a category the backend doesn't recognize."""
+    return SIGNUP_CATEGORIES
+
+
 @superadmin_bp.get('/api-keys')
 def list_api_keys(user: User = Depends(super_admin_required)):
     """Every key, including revoked and expired ones.

@@ -303,8 +303,60 @@ const SuperAdminPortal = () => {
 
 /* ------------------------------------------------------------------ Companies */
 
+/** Every category "Interview Access" can restrict — same server list the Bulk Email Module
+ * validates against, fetched fresh so this checklist can never drift from what's enforced. */
+function useInterviewCategories() {
+  const [categories, setCategories] = useState([]);
+  useEffect(() => {
+    superAdminApi.get('/superadmin/interview-categories').then((res) => setCategories(res.data)).catch(() => {});
+  }, []);
+  return categories;
+}
+
+/** Full access vs. an explicit (possibly empty) list, in one line for a table cell. */
+function InterviewAccessSummary({ allowed }) {
+  if (allowed === null || allowed === undefined) {
+    return <span className="text-xs text-muted-foreground">Every interview type</span>;
+  }
+  if (allowed.length === 0) {
+    return <span className="text-xs text-muted-foreground">None — cannot invite anyone</span>;
+  }
+  return (
+    <div className="flex flex-wrap gap-1">
+      {allowed.map((c) => (
+        <span key={c} className="rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground">
+          {c}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 function CompaniesTab({ companies, busy, run }) {
   const [name, setName] = useState('');
+  const categories = useInterviewCategories();
+  const [editingAccessFor, setEditingAccessFor] = useState(null);
+  const [editAccess, setEditAccess] = useState([]);
+
+  const toggleEditAccess = (category) =>
+    setEditAccess((c) => (c.includes(category) ? c.filter((x) => x !== category) : [...c, category]));
+
+  const startEditingAccess = (company) => {
+    setEditingAccessFor(company.id);
+    setEditAccess(company.allowed_interview_types || []);
+  };
+
+  const saveAccess = (companyId) =>
+    run(
+      () => superAdminApi.put(`/superadmin/companies/${companyId}`, { allowed_interview_types: editAccess }),
+      'Interview access updated.'
+    ).then(() => setEditingAccessFor(null));
+
+  const clearAccess = (companyId) =>
+    run(
+      () => superAdminApi.put(`/superadmin/companies/${companyId}`, { allowed_interview_types: null }),
+      'Restored to every interview type.'
+    ).then(() => setEditingAccessFor(null));
 
   const create = (e) => {
     e.preventDefault();
@@ -374,6 +426,7 @@ function CompaniesTab({ companies, busy, run }) {
                 <TableHead>Admins</TableHead>
                 <TableHead>Candidates</TableHead>
                 <TableHead>Status</TableHead>
+                <TableHead>Interview Access</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
@@ -400,6 +453,67 @@ function CompaniesTab({ companies, busy, run }) {
                           </Badge>
                         )}
                       </div>
+                    </TableCell>
+                    <TableCell>
+                      {editingAccessFor === c.id ? (
+                        <div className="space-y-2">
+                          <div className="grid gap-1 sm:grid-cols-2">
+                            {categories.map((cat) => {
+                              const on = editAccess.includes(cat);
+                              return (
+                                <button
+                                  key={cat}
+                                  type="button"
+                                  onClick={() => toggleEditAccess(cat)}
+                                  className={
+                                    on
+                                      ? 'rounded-md border border-primary bg-primary/10 px-2 py-1 text-left text-[10px]'
+                                      : 'rounded-md border border-border px-2 py-1 text-left text-[10px] text-muted-foreground hover:border-ring/40'
+                                  }
+                                >
+                                  {cat}
+                                </button>
+                              );
+                            })}
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <Button size="sm" disabled={busy} onClick={() => saveAccess(c.id)}>
+                              Save
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              disabled={busy}
+                              onClick={() => setEditingAccessFor(null)}
+                            >
+                              Cancel
+                            </Button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="space-y-1.5">
+                          <InterviewAccessSummary allowed={c.allowed_interview_types} />
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => startEditingAccess(c)}
+                              className="text-[10px] font-semibold text-primary hover:underline"
+                            >
+                              Edit
+                            </button>
+                            {c.allowed_interview_types !== null && c.allowed_interview_types !== undefined && (
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => clearAccess(c.id)}
+                                className="text-[10px] font-semibold text-muted-foreground hover:text-foreground hover:underline"
+                              >
+                                Clear (allow every type)
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )}
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="inline-flex gap-1">

@@ -323,6 +323,17 @@ const BulkEmailModal = ({ open, onClose, onSent }) => {
 
   if (!open) return null;
 
+  // Interview Access (curriculum feature): when this admin holds exactly one company — the
+  // only case this modal actually supports today, since it never asks which company to send
+  // under — the Category options are narrowed to what that company is allowed to invite.
+  // Falls back to every category when there's no single company to resolve (0 or several),
+  // same as /send itself would; the real gate is server-side regardless (_validate_row).
+  const singleCompany = config?.companies?.length === 1 ? config.companies[0] : null;
+  const allowedCategories =
+    singleCompany && singleCompany.allowed_interview_types
+      ? singleCompany.allowed_interview_types
+      : (config?.categories || []);
+
   const validCount = validation?.valid_count ?? 0;
   const allValid = rows.length > 0 && validCount === rows.length;
   const canSend = allValid && subject.trim() && !sending && !validating;
@@ -544,7 +555,7 @@ const BulkEmailModal = ({ open, onClose, onSent }) => {
                     <select className="glass-input !text-[11px] !py-1 cursor-pointer" defaultValue=""
                       onChange={(e) => { applyToAll('category', e.target.value); e.target.value = ''; }}>
                       <option value="">Category…</option>
-                      {(config?.categories || []).map((c) => <option key={c} value={c}>{c}</option>)}
+                      {(allowedCategories).map((c) => <option key={c} value={c}>{c}</option>)}
                     </select>
                     <select className="glass-input !text-[11px] !py-1 cursor-pointer" defaultValue=""
                       onChange={(e) => { applyToAll('course_status', e.target.value); e.target.value = ''; }}>
@@ -609,7 +620,7 @@ const BulkEmailModal = ({ open, onClose, onSent }) => {
                                 <td className="py-1.5 px-1.5">
                                   <select className={`${inputCls} cursor-pointer`} value={r.category} onChange={(e) => updateCell(idx, 'category', e.target.value)}>
                                     <option value="">Select…</option>
-                                    {(config?.categories || []).map((c) => <option key={c} value={c}>{c}</option>)}
+                                    {(allowedCategories).map((c) => <option key={c} value={c}>{c}</option>)}
                                   </select>
                                 </td>
                                 <td className="py-1.5 px-1.5">
