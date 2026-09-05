@@ -333,7 +333,11 @@ def create_bulk_invite(
         )
     rows = _bulk_apply_batch_difficulty_default(rows, batch_difficulty_range)
 
-    results = _bulk_validate_rows(rows)
+    # A key never chooses its company (it's bound to exactly one for its whole life — see
+    # this route's own docstring), so there's no company_id to resolve here, only to check
+    # each row's category against; company_allows_category handles the check identically to
+    # the Admin Hub's own bulk-email path (this shares that same _bulk_validate_rows call).
+    results = _bulk_validate_rows(rows, company_id=principal.api_key.company_id)
     invalid = [r for r in results if not r['valid']]
     if invalid:
         # Refuses the WHOLE batch rather than sending the valid rows and reporting the

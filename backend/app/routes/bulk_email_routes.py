@@ -31,6 +31,7 @@ from app.utils.candidate import (
     is_instructor_category, is_resume_category, normalize_cnic, generate_otp,
 )
 from app.utils.difficulty import is_valid_range, range_choices
+from app.utils.curriculum import company_allows_category
 from app.config.config import Config
 from app.email import EmailService
 from app.email import templates as email_templates
@@ -60,12 +61,16 @@ SEND_CONCURRENCY = int(os.environ.get('BULK_SEND_CONCURRENCY', '4'))
 
 # --------------------------------------------------------------------------- validation
 
-def _validate_row(raw, seen_cnics, seen_emails):
+def _validate_row(raw, seen_cnics, seen_emails, company_id=None):
     """Validate one row against the SAME rules the public signup enforces.
 
     Returns ``(normalized_or_None, errors)``. Duplicate detection covers both the database
     and earlier rows in this same file, so a batch that repeats a CNIC is caught before any
     account is created rather than blowing up halfway through the send.
+
+    ``company_id`` (curriculum feature — Company.allowed_interview_types): when given, a
+    row's category must be one this company is actually allowed to invite under. Never
+    trusts the frontend dropdown having already filtered it out — this is the real gate.
     """
     import re
 
@@ -107,6 +112,8 @@ def _validate_row(raw, seen_cnics, seen_emails):
     instructor = is_instructor_category(category)
     if category not in SIGNUP_CATEGORIES:
         errors.append(f"Category must be one of: {', '.join(SIGNUP_CATEGORIES)}")
+    elif not company_allows_category(company_id, category):
+        errors.append("This interview type is not enabled for your company.")
     elif is_resume_category(category):
         # A Resume-Based interview is generated entirely from the candidate's CV, and a
         # spreadsheet row has no way to carry one. Inviting them in bulk would create an
@@ -174,12 +181,12 @@ def _apply_batch_difficulty_default(rows, batch_default):
     return filled
 
 
-def _validate_rows(rows):
+def _validate_rows(rows, company_id=None):
     """Validate the whole batch, preserving the client's row order/indices."""
     seen_cnics, seen_emails = set(), set()
     results = []
     for idx, raw in enumerate(rows):
-        normalized, errors = _validate_row(raw or {}, seen_cnics, seen_emails)
+        normalized, errors = _validate_row(raw or {}, seen_cnics, seen_emails, company_id=company_id)
         results.append({
             'index': idx,
             'valid': not errors,
@@ -248,7 +255,11 @@ def bulk_config(user: User = Depends(admin_required), scope: AdminScope = Depend
         'ongoing_enabled': bool(Config.ONGOING_CATEGORY_ENABLED),
         'difficulty_ranges': range_choices(),
         # Which companies this admin may invite into, so the modal can offer exactly those
-        # and never a company the send would then reject.
+        # and never a company the send would then reject. Each company's own to_dict()
+        # already carries allowed_interview_types (curriculum feature) — null meaning every
+        # category, else the exact list — which is what the modal filters the Category
+        # column to once a company is chosen; /validate and /send enforce the same thing
+        # server-side regardless of what the dropdown showed.
         'companies': [c.to_dict() for c in _selectable_companies(scope)],
     }
 
@@ -260,7 +271,7 @@ def download_template(user: User = Depends(admin_required)):
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow(REQUIRED_COLUMNS)
-    writer.writerow(['Ali Khan', 'ali.khan@example.com', '42101-1234567-1', 'AI', 'completed'])
+    writer.writerow(['Ali Khan', 'ali.khan@example.com', '42101-1234567-1', 'AI & Data Science', 'completed'])
     writer.writerow(['Sara Ahmed', 'sara.ahmed@example.com', '35202-9876543-2', 'Instructor', ''])
     buf.seek(0)
     return StreamingResponse(
@@ -288,14 +299,14 @@ def validate_batch(payload: dict = Body(default=None), user: User = Depends(admi
 
     # Resolved here as well as in /send so the preview refuses a batch the send would
     # refuse anyway, rather than letting the admin fill in a whole file first.
-    _resolve_batch_company(scope, data.get('company_id'))
+    company_id = _resolve_batch_company(scope, data.get('company_id'))
 
     batch_difficulty_range = (data.get('difficulty_range') or '').strip().upper() or None
     if batch_difficulty_range and not is_valid_range(batch_difficulty_range):
         raise HTTPException(status_code=400, detail="Invalid difficulty_range")
     rows = _apply_batch_difficulty_default(rows, batch_difficulty_range)
 
-    results = _validate_rows(rows)
+    results = _validate_rows(rows, company_id=company_id)
     valid_count = sum(1 for r in results if r['valid'])
     return {
         'total': len(results),
@@ -341,7 +352,7 @@ def send_batch(payload: dict = Body(default=None), user: User = Depends(admin_re
 
     # Re-validate server-side; refuse the whole batch if anything is wrong so the admin
     # fixes it in the preview rather than discovering a half-sent batch afterwards.
-    results = _validate_rows(rows)
+    results = _validate_rows(rows, company_id=company_id)
     invalid = [r for r in results if not r['valid']]
     if invalid:
         raise HTTPException(

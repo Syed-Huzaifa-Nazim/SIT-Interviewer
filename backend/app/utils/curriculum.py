@@ -96,6 +96,27 @@ def build_curriculum_context(category, max_modules=None):
     }
 
 
+def company_allows_category(company_id, category):
+    """Whether a company (by id) may invite a candidate under `category` at all — the Super
+    Admin's per-company "Interview Access" control (Company.allowed_interview_types).
+
+    Covers every SIGNUP_CATEGORIES value, not just the 5 curriculum tracks — a company can
+    also be restricted from Instructor or Resume-Based invites, which is why this lives as
+    its own function rather than folded into the curriculum-only helpers above.
+
+    True when company_id is missing/unknown — matching every other "no company yet" case in
+    this codebase (AdminScope, the default-company signup flow) that treats an absent
+    company as unrestricted rather than as a hard block nobody can get past.
+    """
+    if not company_id:
+        return True
+    from app.models import Company
+    company = Company.query.get(company_id)
+    if not company:
+        return True
+    return company.allows_interview_type(category)
+
+
 def curriculum_context_to_prompt_text(context):
     """Render build_curriculum_context's dict as the plain-text block the LLM prompt embeds.
     Kept separate from the dict shape above so a future non-text consumer (e.g. a debug

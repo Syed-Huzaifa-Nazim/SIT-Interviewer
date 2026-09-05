@@ -19,7 +19,7 @@ from app.database.db import db
 from app.models import User, Token, Company, AdminCompanyAssignment, AdminLog, ApiKey
 from app.email import EmailService
 from app.email import templates as email_templates
-from app.utils.candidate import generate_otp
+from app.utils.candidate import generate_otp, SIGNUP_CATEGORIES
 from app.utils.api_key import SCOPES, generate_key
 from app.utils.security import (
     create_access_token, super_admin_required,
@@ -296,10 +296,22 @@ def create_company(payload: dict = Body(default=None), user: User = Depends(supe
     if len(name) > 150:
         raise HTTPException(status_code=400, detail="Company name is too long (max 150 characters)")
 
+    # Optional. Omitted/null means every interview type — the same unrestricted default
+    # every company that existed before this feature keeps (confirmed decision).
+    allowed_interview_types = data.get('allowed_interview_types', None)
+    if allowed_interview_types is not None:
+        if not isinstance(allowed_interview_types, list):
+            raise HTTPException(status_code=400, detail="allowed_interview_types must be a list")
+        unknown = [c for c in allowed_interview_types if c not in SIGNUP_CATEGORIES]
+        if unknown:
+            raise HTTPException(status_code=400, detail=f"Unknown interview type(s): {', '.join(unknown)}")
+
     company = Company(name=name, slug=_unique_slug(name), status='active', created_by=user.id)
+    company.set_allowed_interview_types(allowed_interview_types)
     db.session.add(company)
     db.session.flush()
-    _audit(user, 'COMPANY_CREATED', f"Created company '{name}' (id {company.id}).")
+    access_note = 'every interview type' if allowed_interview_types is None else (', '.join(sorted(allowed_interview_types)) or 'none')
+    _audit(user, 'COMPANY_CREATED', f"Created company '{name}' (id {company.id}). Interview access: {access_note}.")
     db.session.commit()
     return company.to_dict()
 
@@ -359,6 +371,25 @@ def update_company(company_id: int, payload: dict = Body(default=None),
         if bool(company.is_default) != make_default:
             changes.append(f"default {bool(company.is_default)} -> {make_default}")
             company.is_default = make_default
+
+    if 'allowed_interview_types' in data:
+        # Present-but-null clears the restriction back to every type — an admin must say so
+        # explicitly (this is a PUT field, not silently omitted), same rule as the admin-
+        # permissions PUT endpoint's own 'permissions' field.
+        allowed = data['allowed_interview_types']
+        if allowed is not None:
+            if not isinstance(allowed, list):
+                raise HTTPException(status_code=400, detail="allowed_interview_types must be a list or null")
+            unknown = [c for c in allowed if c not in SIGNUP_CATEGORIES]
+            if unknown:
+                raise HTTPException(status_code=400, detail=f"Unknown interview type(s): {', '.join(unknown)}")
+        before = company.allowed_interview_types_list()
+        company.set_allowed_interview_types(allowed)
+        after = company.allowed_interview_types_list()
+        if before != after:
+            before_note = 'every type' if before is None else (', '.join(before) or 'none')
+            after_note = 'every type' if after is None else (', '.join(after) or 'none')
+            changes.append(f"interview access '{before_note}' -> '{after_note}'")
 
     if changes:
         _audit(user, 'COMPANY_UPDATED', f"Company {company.id}: " + ', '.join(changes))

@@ -14,6 +14,7 @@ from app.models import (
 from app.utils.security import admin_required, get_current_user_id, ADMIN_ROLES
 from app.utils.scope import AdminScope, admin_scope
 from app.utils.permissions import require_permissions
+from app.utils.curriculum import company_allows_category
 from app.utils.candidate import (
     COURSE_CATEGORIES, COURSE_STATUSES, SIGNUP_CATEGORIES, INSTRUCTOR_CATEGORY,
     is_instructor_category, requires_course_status, normalize_cnic, generate_otp
@@ -376,6 +377,11 @@ def update_user_profile(target_user_id: int, payload: dict = Body(default=None),
         # part of the payload. Only an actual CHANGE is held to the current, selectable list.
         if new_category != target.course_category and new_category not in SIGNUP_CATEGORIES:
             raise HTTPException(status_code=400, detail="Invalid category")
+        # Curriculum feature: an actual change must also be a type this candidate's own
+        # company is allowed to use — never trusts that the admin's category dropdown had
+        # already filtered it out client-side.
+        if new_category != target.course_category and not company_allows_category(target.company_id, new_category):
+            raise HTTPException(status_code=403, detail="This interview type is not enabled for your company.")
         if target.course_category != new_category:
             changes.append(f"category '{target.course_category}' → '{new_category}'")
         target.course_category = new_category
