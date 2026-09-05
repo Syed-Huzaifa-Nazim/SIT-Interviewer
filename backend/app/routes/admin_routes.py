@@ -371,10 +371,11 @@ def update_user_profile(target_user_id: int, payload: dict = Body(default=None),
     if data.get('course_category'):
         new_category = data['course_category']
         # Leaving a candidate's category exactly as it is must always be allowed, even for a
-        # LEGACY value no longer in SIGNUP_CATEGORIES (curriculum feature) — otherwise saving
-        # ANY unrelated field on that candidate's profile (name, remarks, anything) would be
-        # rejected outright, since the edit form always resubmits the current category as
-        # part of the payload. Only an actual CHANGE is held to the current, selectable list.
+        # value that is no longer in SIGNUP_CATEGORIES at all (a genuinely retired string from
+        # before either category system existed) — otherwise saving ANY unrelated field on
+        # that candidate's profile (name, remarks, anything) would be rejected outright, since
+        # the edit form always resubmits the current category as part of the payload. Only an
+        # actual CHANGE is held to the current, selectable list.
         if new_category != target.course_category and new_category not in SIGNUP_CATEGORIES:
             raise HTTPException(status_code=400, detail="Invalid category")
         # Curriculum feature: an actual change must also be a type this candidate's own

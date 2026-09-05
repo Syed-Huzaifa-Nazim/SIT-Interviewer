@@ -23,7 +23,7 @@ class TestCompanyAllowedInterviewTypes:
 
     def test_setting_none_clears_any_restriction(self):
         c = Company(name='Acme', slug='acme')
-        c.set_allowed_interview_types(['AI & Data Science'])
+        c.set_allowed_interview_types(['AI & Data Science — SMIT'])
         c.set_allowed_interview_types(None)
         assert c.allowed_interview_types_list() is None
 
@@ -34,25 +34,25 @@ class TestCompanyAllowedInterviewTypes:
 
     def test_allows_interview_type_true_when_unrestricted(self):
         c = Company(name='Acme', slug='acme')
-        assert c.allows_interview_type('AI & Data Science')
+        assert c.allows_interview_type('AI & Data Science — SMIT')
         assert c.allows_interview_type('anything at all')
 
     def test_allows_interview_type_checks_the_list_once_restricted(self):
         c = Company(name='Acme', slug='acme')
-        c.set_allowed_interview_types(['AI & Data Science', 'Cloud & Data Engineering'])
-        assert c.allows_interview_type('AI & Data Science')
-        assert not c.allows_interview_type('UI/UX Design With AI')
+        c.set_allowed_interview_types(['AI & Data Science — SMIT', 'Cloud & Data Engineering — SMIT'])
+        assert c.allows_interview_type('AI & Data Science — SMIT')
+        assert not c.allows_interview_type('UI/UX Design With AI — SMIT')
 
     def test_zero_allowed_types_means_zero(self):
         c = Company(name='Acme', slug='acme')
         c.set_allowed_interview_types([])
-        assert not c.allows_interview_type('AI & Data Science')
+        assert not c.allows_interview_type('AI & Data Science — SMIT')
 
     def test_a_corrupted_blob_fails_closed_to_zero_not_unrestricted(self):
         c = Company(name='Acme', slug='acme')
         c.allowed_interview_types = '{not valid json'
         assert c.allowed_interview_types_list() == []
-        assert not c.allows_interview_type('AI & Data Science')
+        assert not c.allows_interview_type('AI & Data Science — SMIT')
 
 
 # --------------------------------------------------------------------------- helper function
@@ -61,19 +61,56 @@ class TestCompanyAllowsCategory:
     def test_no_company_id_is_unrestricted(self):
         """A candidate/row with no company yet (legacy unassigned, or a batch that hasn't
         resolved one) must not be blocked by a restriction that cannot even apply to it."""
-        assert company_allows_category(None, 'AI & Data Science')
-        assert company_allows_category(0, 'AI & Data Science')
+        assert company_allows_category(None, 'AI & Data Science — SMIT')
+        assert company_allows_category(0, 'AI & Data Science — SMIT')
 
     def test_an_unknown_company_id_is_unrestricted(self, monkeypatch):
         monkeypatch.setattr(Company, 'query', type('Q', (), {'get': staticmethod(lambda _id: None)})())
-        assert company_allows_category(999999, 'AI & Data Science')
+        assert company_allows_category(999999, 'AI & Data Science — SMIT')
 
     def test_delegates_to_the_companys_own_check(self, monkeypatch):
         fake = Company(name='Acme', slug='acme')
-        fake.set_allowed_interview_types(['AI & Data Science'])
+        fake.set_allowed_interview_types(['AI & Data Science — SMIT'])
         monkeypatch.setattr(Company, 'query', type('Q', (), {'get': staticmethod(lambda _id: fake)})())
-        assert company_allows_category(1, 'AI & Data Science')
-        assert not company_allows_category(1, 'Cloud & Data Engineering')
+        assert company_allows_category(1, 'AI & Data Science — SMIT')
+        assert not company_allows_category(1, 'Cloud & Data Engineering — SMIT')
+
+
+# --------------------------------------------------------------------- old vs SMIT never mix
+
+class TestOldAndSmitNeverConfused:
+    """The one rule the September 2026 spec is strictest about: two SMIT category names
+    ("Cloud & Data Engineering", "Web and Mobile App Development") are textually identical to
+    two pre-existing category names apart from the " — SMIT" marker. Allowing (or blocking)
+    one must never leak into allowing (or blocking) the other."""
+
+    def test_allowing_the_old_category_does_not_allow_its_smit_namesake(self):
+        c = Company(name='Acme', slug='acme')
+        c.set_allowed_interview_types(['Cloud & Data Engineering'])
+        assert c.allows_interview_type('Cloud & Data Engineering')
+        assert not c.allows_interview_type('Cloud & Data Engineering — SMIT')
+
+    def test_allowing_the_smit_category_does_not_allow_its_old_namesake(self):
+        c = Company(name='Acme', slug='acme')
+        c.set_allowed_interview_types(['Cloud & Data Engineering — SMIT'])
+        assert c.allows_interview_type('Cloud & Data Engineering — SMIT')
+        assert not c.allows_interview_type('Cloud & Data Engineering')
+
+    def test_both_can_be_allowed_independently(self):
+        c = Company(name='Acme', slug='acme')
+        c.set_allowed_interview_types(['Cloud & Data Engineering', 'Cloud & Data Engineering — SMIT'])
+        assert c.allows_interview_type('Cloud & Data Engineering')
+        assert c.allows_interview_type('Cloud & Data Engineering — SMIT')
+
+    def test_old_category_row_never_gets_curriculum_grounding(self):
+        from app.utils.curriculum import is_curriculum_category
+        assert not is_curriculum_category('Cloud & Data Engineering')
+        assert not is_curriculum_category('Web and Mobile App Development')
+
+    def test_smit_category_gets_curriculum_grounding_its_namesake_does_not(self):
+        from app.utils.curriculum import is_curriculum_category
+        assert is_curriculum_category('Cloud & Data Engineering — SMIT')
+        assert is_curriculum_category('Web and Mobile App Development — SMIT')
 
 
 # --------------------------------------------------------------------------- bulk email row
@@ -97,11 +134,11 @@ class TestBulkRowRespectsCompanyAccess:
         monkeypatch.setattr(User, 'query', _NoExistingAccounts())
         raw = {
             'name': 'Ali Khan', 'email': 'access.none@example.com',
-            'cnic': '42101-1234567-1', 'category': 'AI & Data Science', 'course_status': 'completed',
+            'cnic': '42101-1234567-1', 'category': 'AI & Data Science — SMIT', 'course_status': 'completed',
         }
         normalized, errors = _validate_row(raw, set(), set())
         assert errors == []
-        assert normalized['category'] == 'AI & Data Science'
+        assert normalized['category'] == 'AI & Data Science — SMIT'
 
     def test_a_disallowed_category_is_rejected_with_company_id(self, monkeypatch):
         from app.models import User
@@ -109,12 +146,12 @@ class TestBulkRowRespectsCompanyAccess:
 
         monkeypatch.setattr(User, 'query', _NoExistingAccounts())
         restricted = Company(name='Acme', slug='acme')
-        restricted.set_allowed_interview_types(['Cloud & Data Engineering'])
+        restricted.set_allowed_interview_types(['Cloud & Data Engineering — SMIT'])
         monkeypatch.setattr(Company, 'query', type('Q', (), {'get': staticmethod(lambda _id: restricted)})())
 
         raw = {
             'name': 'Ali Khan', 'email': 'access.blocked@example.com',
-            'cnic': '42101-1234567-1', 'category': 'AI & Data Science', 'course_status': 'completed',
+            'cnic': '42101-1234567-1', 'category': 'AI & Data Science — SMIT', 'course_status': 'completed',
         }
         normalized, errors = _validate_row(raw, set(), set(), company_id=1)
         assert normalized is None
@@ -126,16 +163,16 @@ class TestBulkRowRespectsCompanyAccess:
 
         monkeypatch.setattr(User, 'query', _NoExistingAccounts())
         restricted = Company(name='Acme', slug='acme')
-        restricted.set_allowed_interview_types(['AI & Data Science'])
+        restricted.set_allowed_interview_types(['AI & Data Science — SMIT'])
         monkeypatch.setattr(Company, 'query', type('Q', (), {'get': staticmethod(lambda _id: restricted)})())
 
         raw = {
             'name': 'Ali Khan', 'email': 'access.allowed@example.com',
-            'cnic': '42101-1234567-1', 'category': 'AI & Data Science', 'course_status': 'completed',
+            'cnic': '42101-1234567-1', 'category': 'AI & Data Science — SMIT', 'course_status': 'completed',
         }
         normalized, errors = _validate_row(raw, set(), set(), company_id=1)
         assert errors == []
-        assert normalized['category'] == 'AI & Data Science'
+        assert normalized['category'] == 'AI & Data Science — SMIT'
 
     def test_instructor_can_still_be_individually_disallowed(self, monkeypatch):
         """Interview access covers the whole SIGNUP_CATEGORIES list, not just the 5
@@ -145,7 +182,7 @@ class TestBulkRowRespectsCompanyAccess:
 
         monkeypatch.setattr(User, 'query', _NoExistingAccounts())
         restricted = Company(name='Acme', slug='acme')
-        restricted.set_allowed_interview_types(['AI & Data Science'])
+        restricted.set_allowed_interview_types(['AI & Data Science — SMIT'])
         monkeypatch.setattr(Company, 'query', type('Q', (), {'get': staticmethod(lambda _id: restricted)})())
 
         raw = {

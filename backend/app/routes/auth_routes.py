@@ -20,6 +20,7 @@ from app.utils.candidate import (
     is_instructor_category, is_resume_category, requires_course_status,
     normalize_cnic, generate_otp
 )
+from app.utils.interview_types import EXISTING_TYPES, SMIT_TYPES
 from app.utils.resume_text import extract_resume_text, MAX_RESUME_BYTES
 from app.ai.mixtral.mixtral_service import MixtralService
 from app.config.config import Config
@@ -587,6 +588,10 @@ def signup_options():
     controls the 'Coming Soon' state everywhere without a frontend redeploy (Update §1)."""
     return {
         'categories': SIGNUP_CATEGORIES,
+        'category_groups': {
+            'existing': [t.category for t in EXISTING_TYPES],
+            'smit': [t.category for t in SMIT_TYPES],
+        },
         'course_categories': COURSE_CATEGORIES,
         'instructor_category': INSTRUCTOR_CATEGORY,
         'resume_category': RESUME_CATEGORY,

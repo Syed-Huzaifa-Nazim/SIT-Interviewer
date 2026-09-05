@@ -38,6 +38,7 @@ import {
 } from '@/components/shadcn/table';
 import { AdminPageHeader, AdminEmpty, AdminTableCard } from '@/components/shadcn/page';
 import SecretPanel from './SecretPanel';
+import { isSmitCategory, categoryDisplayLabel } from '../../utils/constants';
 import ConfirmAction from './ConfirmAction';
 import ApiKeysTab from './ApiKeysTab';
 import AuditTab from './AuditTab';
@@ -303,14 +304,32 @@ const SuperAdminPortal = () => {
 
 /* ------------------------------------------------------------------ Companies */
 
-/** Every category "Interview Access" can restrict — same server list the Bulk Email Module
- * validates against, fetched fresh so this checklist can never drift from what's enforced. */
+/** Every category "Interview Access" can restrict — the 6 pre-existing types and the 5
+ * additional SMIT curriculum types, grouped exactly as the backend registry
+ * (app/utils/interview_types.py) defines them, fetched fresh so this checklist can never
+ * drift from what's actually enforced. */
 function useInterviewCategories() {
-  const [categories, setCategories] = useState([]);
+  const [groups, setGroups] = useState({ existing: [], smit: [] });
   useEffect(() => {
-    superAdminApi.get('/superadmin/interview-categories').then((res) => setCategories(res.data)).catch(() => {});
+    superAdminApi.get('/superadmin/interview-categories')
+      .then((res) => setGroups({ existing: res.data.existing || [], smit: res.data.smit || [] }))
+      .catch(() => {});
   }, []);
-  return categories;
+  return groups;
+}
+
+/** A category label with a small "SMIT" badge for the 5 curriculum tracks — used everywhere
+ * a single category name is shown, so a SMIT type is never mistaken for its same-named
+ * pre-existing counterpart at a glance. */
+function CategoryLabel({ category }) {
+  return (
+    <span className="inline-flex items-center gap-1">
+      {categoryDisplayLabel(category)}
+      {isSmitCategory(category) && (
+        <Badge variant="info" className="px-1 py-0 text-[9px] leading-4">SMIT</Badge>
+      )}
+    </span>
+  );
 }
 
 /** Full access vs. an explicit (possibly empty) list, in one line for a table cell. */
@@ -325,7 +344,7 @@ function InterviewAccessSummary({ allowed }) {
     <div className="flex flex-wrap gap-1">
       {allowed.map((c) => (
         <span key={c} className="rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground">
-          {c}
+          <CategoryLabel category={c} />
         </span>
       ))}
     </div>
@@ -334,7 +353,7 @@ function InterviewAccessSummary({ allowed }) {
 
 function CompaniesTab({ companies, busy, run }) {
   const [name, setName] = useState('');
-  const categories = useInterviewCategories();
+  const categoryGroups = useInterviewCategories();
   const [editingAccessFor, setEditingAccessFor] = useState(null);
   const [editAccess, setEditAccess] = useState([]);
 
@@ -456,26 +475,39 @@ function CompaniesTab({ companies, busy, run }) {
                     </TableCell>
                     <TableCell>
                       {editingAccessFor === c.id ? (
-                        <div className="space-y-2">
-                          <div className="grid gap-1 sm:grid-cols-2">
-                            {categories.map((cat) => {
-                              const on = editAccess.includes(cat);
-                              return (
-                                <button
-                                  key={cat}
-                                  type="button"
-                                  onClick={() => toggleEditAccess(cat)}
-                                  className={
-                                    on
-                                      ? 'rounded-md border border-primary bg-primary/10 px-2 py-1 text-left text-[10px]'
-                                      : 'rounded-md border border-border px-2 py-1 text-left text-[10px] text-muted-foreground hover:border-ring/40'
-                                  }
-                                >
-                                  {cat}
-                                </button>
-                              );
-                            })}
-                          </div>
+                        <div className="space-y-2.5 w-64">
+                          {[
+                            { key: 'existing', label: 'Existing Interviews', list: categoryGroups.existing },
+                            { key: 'smit', label: 'SMIT Curriculum Interviews', list: categoryGroups.smit },
+                          ].map((group) => (
+                            <div key={group.key} className="space-y-1">
+                              <p className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground">
+                                {group.label}
+                              </p>
+                              <div className="grid gap-1 sm:grid-cols-2">
+                                {group.list.map((cat) => {
+                                  const on = editAccess.includes(cat);
+                                  return (
+                                    <button
+                                      key={cat}
+                                      type="button"
+                                      onClick={() => toggleEditAccess(cat)}
+                                      className={
+                                        on
+                                          ? 'rounded-md border border-primary bg-primary/10 px-2 py-1 text-left text-[10px] flex items-center gap-1'
+                                          : 'rounded-md border border-border px-2 py-1 text-left text-[10px] text-muted-foreground hover:border-ring/40 flex items-center gap-1'
+                                      }
+                                    >
+                                      {categoryDisplayLabel(cat)}
+                                      {isSmitCategory(cat) && (
+                                        <Badge variant="info" className="px-1 py-0 text-[8px] leading-4">SMIT</Badge>
+                                      )}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          ))}
                           <div className="flex items-center gap-1.5">
                             <Button size="sm" disabled={busy} onClick={() => saveAccess(c.id)}>
                               Save

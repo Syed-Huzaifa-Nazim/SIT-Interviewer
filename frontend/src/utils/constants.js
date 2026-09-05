@@ -1,11 +1,33 @@
-// Course categories offered at signup (§2.1) — must match the backend list
-// in backend/app/utils/candidate.py
-export const COURSE_CATEGORIES = [
+// Interview-type categories — must match the backend registry in
+// backend/app/utils/interview_types.py exactly (both the values and why they're split this
+// way). Two groups, permanently coexisting, never one replacing the other:
+//  - EXISTING: the categories this app has always had. Untouched.
+//  - SMIT: 5 additional, curriculum-grounded tracks added alongside them. Two of these
+//    would otherwise share an old category's exact display name ("Cloud & Data
+//    Engineering", "Web and Mobile App Development"), so every SMIT category carries a
+//    permanent " — SMIT" suffix that makes its string unique — never strip it to "match" an
+//    existing category, that recreates the exact collision this naming avoids.
+export const EXISTING_CATEGORIES = [
   'AI',
   'Cloud & Data Engineering',
   'Web and Mobile App Development',
   'Graphics and UI/UX Design',
 ];
+
+export const SMIT_SUFFIX = ' — SMIT';
+
+export const SMIT_CATEGORIES = [
+  'AI & Data Science' + SMIT_SUFFIX,
+  'Cloud & Data Engineering' + SMIT_SUFFIX,
+  'Web and Mobile App Development' + SMIT_SUFFIX,
+  'Graphic Designing With AI' + SMIT_SUFFIX,
+  'UI/UX Design With AI' + SMIT_SUFFIX,
+];
+
+export const isSmitCategory = (cat) => (cat || '').endsWith(SMIT_SUFFIX);
+
+// Course categories offered at signup (§2.1) — the 4 existing + 5 SMIT tracks, side by side.
+export const COURSE_CATEGORIES = [...EXISTING_CATEGORIES, ...SMIT_CATEGORIES];
 
 // Instructor (Update §2) — a distinct signup type with no course status; always the
 // one-time-OTP official-interview flow.
@@ -17,6 +39,22 @@ export const RESUME_CATEGORY = 'Resume-Based Interview';
 
 // Everything selectable in the category dropdown (signup + admin edit).
 export const SIGNUP_CATEGORIES = [...COURSE_CATEGORIES, INSTRUCTOR_CATEGORY, RESUME_CATEGORY];
+
+// Same 11 categories, grouped for any UI that wants to show "Existing Interviews" and "SMIT
+// Curriculum Interviews" as two clearly separated sections (Bulk Email dropdown, Super Admin
+// Interview Access checklist, the signup form) instead of one flat, hard-to-scan list.
+export const GROUPED_SIGNUP_CATEGORIES = [
+  { key: 'existing', label: 'Existing Interviews', categories: [...EXISTING_CATEGORIES, INSTRUCTOR_CATEGORY, RESUME_CATEGORY] },
+  { key: 'smit', label: 'SMIT Curriculum Interviews', categories: SMIT_CATEGORIES },
+];
+
+// A short, plain label for the badge shown next to a SMIT category everywhere it's listed.
+export const SMIT_BADGE_LABEL = 'SMIT';
+
+// The label to actually display for a category — strips the " — SMIT" marker so a SMIT
+// badge (rendered separately, next to this text) doesn't duplicate it as plain text too.
+export const categoryDisplayLabel = (cat) =>
+  isSmitCategory(cat) ? cat.slice(0, -SMIT_SUFFIX.length) : (cat || '');
 
 export const isInstructorCategory = (cat) =>
   (cat || '').trim().toLowerCase() === INSTRUCTOR_CATEGORY.toLowerCase();

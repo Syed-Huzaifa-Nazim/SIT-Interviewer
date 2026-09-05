@@ -3,36 +3,24 @@ import re
 import secrets
 import string
 
-# Course categories tied to the Ongoing/Completed course-status logic (§2.1).
-#
-# Curriculum feature: "AI" was renamed to "AI & Data Science", and "Graphics and UI/UX
-# Design" was split into two separate selectable tracks (never combined — a candidate is
-# either a graphic designer or a UI/UX designer, not both). These 5 names are exactly the
-# 5 curriculum courses imported by scripts/import_curriculum.py; see app/utils/curriculum.py
-# for the category -> curriculum-course mapping.
-#
-# LEGACY_COURSE_CATEGORIES below are deliberately NOT in this list — new signups/invites can
-# no longer choose them — but existing candidates already stored under one of those values
-# are left completely alone (see LEGACY_COURSE_CATEGORIES' own comment for why this matters).
-COURSE_CATEGORIES = [
-    'AI & Data Science',
-    'Cloud & Data Engineering',
-    'Web and Mobile App Development',
-    'Graphic Designing With AI',
-    'UI/UX Design With AI',
-]
+from app.utils.interview_types import EXISTING_TYPES, SMIT_TYPES, ALL_TYPES
 
-# Category values that used to be selectable and may still be sitting on real candidate
-# rows (course_category has no DB-level enum constraint, so nothing forces them to move).
-# Never offered again at signup/invite time, and — critically — never auto-migrated: "AI"
-# unambiguously became "AI & Data Science", but "Graphics and UI/UX Design" could mean
-# either of the two new tracks, and guessing which one a real person's account belongs to
-# would be writing fiction into someone's history. An admin may reassign one by hand via
-# the ordinary profile-edit category field; nothing does it automatically.
-LEGACY_COURSE_CATEGORIES = [
-    'AI',
-    'Graphics and UI/UX Design',
-]
+# Every category with an ongoing/completed course status — the 4 pre-existing course tracks
+# PLUS the 5 new SMIT curriculum tracks, running side by side (Instructor and Resume-Based
+# are excluded: see STATUSLESS_CATEGORIES). See app/utils/interview_types.py for the single
+# source of truth this list (and every other constant below) is derived from — the old and
+# new groups broken out separately as EXISTING_COURSE_CATEGORIES / SMIT_COURSE_CATEGORIES for
+# any call site that needs to treat them differently (e.g. the Super Admin / Bulk Email
+# grouped UI).
+COURSE_CATEGORIES = [t.category for t in ALL_TYPES if not t.statusless]
+EXISTING_COURSE_CATEGORIES = [t.category for t in EXISTING_TYPES if not t.statusless]
+SMIT_COURSE_CATEGORIES = [t.category for t in SMIT_TYPES]
+
+# No longer has any members: the 4 pre-existing course categories are first-class, permanent
+# interview types again (see interview_types.py's module docstring for why), not a retired
+# bucket. Kept only so an old `from app.utils.candidate import LEGACY_COURSE_CATEGORIES`
+# import doesn't start failing.
+LEGACY_COURSE_CATEGORIES = []
 
 # The Instructor category (Update §2) is NOT a course — it has no course-status and
 # always follows the one-time-OTP official-interview flow, mirroring Completed-course
@@ -50,33 +38,16 @@ RESUME_CATEGORY = 'Resume-Based Interview'
 # statusless category later doesn't mean hunting down the same `!= 'completed'` guard in
 # auth_routes, bulk_email_routes and admin_routes independently (which is exactly what
 # happened when Instructor was added).
-STATUSLESS_CATEGORIES = {INSTRUCTOR_CATEGORY, RESUME_CATEGORY}
+STATUSLESS_CATEGORIES = {t.category for t in ALL_TYPES if t.statusless}
 
-# Everything selectable at signup / editable by an admin.
-SIGNUP_CATEGORIES = COURSE_CATEGORIES + [INSTRUCTOR_CATEGORY, RESUME_CATEGORY]
+# Everything selectable at signup / editable by an admin — all 11 interview types (6
+# pre-existing + 5 SMIT), side by side.
+SIGNUP_CATEGORIES = [t.category for t in ALL_TYPES]
 
 # Canonical interview job role per category, used when auto-creating the official
 # interview for completed-course candidates (§3.3). Every value must be accepted
 # by the domain classifier's preset whitelist so the session can never be rejected.
-CATEGORY_JOB_ROLES = {
-    'AI & Data Science': 'AI Engineer',
-    'Cloud & Data Engineering': 'Cloud & Data Engineer',
-    'Web and Mobile App Development': 'Web & Mobile App Developer',
-    'Graphic Designing With AI': 'Graphic Designer',
-    'UI/UX Design With AI': 'UI/UX Designer',
-    # Legacy values (LEGACY_COURSE_CATEGORIES) — kept here, not removed, purely so a candidate
-    # still on one of these old category strings still gets a sensible job_role if something
-    # ever re-derives it. Every .get() call site already falls back to 'Software Engineer'
-    # regardless, so removing these would not break anything; keeping them is simply more
-    # accurate for accounts that still carry the old value.
-    'AI': 'AI Engineer',
-    'Graphics and UI/UX Design': 'UI/UX Designer',
-    INSTRUCTOR_CATEGORY: 'Instructor',
-    # A resume-based candidate has no declared domain. This is only the label the session is
-    # created under — the questions themselves come from the resume, not from this role — so
-    # it stays deliberately generic rather than guessing a specialism from the CV.
-    RESUME_CATEGORY: 'Software Engineer',
-}
+CATEGORY_JOB_ROLES = {t.category: t.job_role for t in ALL_TYPES}
 
 COURSE_STATUSES = ['ongoing', 'completed']
 

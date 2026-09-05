@@ -334,6 +334,28 @@ const BulkEmailModal = ({ open, onClose, onSent }) => {
       ? singleCompany.allowed_interview_types
       : (config?.categories || []);
 
+  // Same allow-list, split into the two permanently-coexisting groups (Existing Interviews /
+  // SMIT Curriculum Interviews) so both category dropdowns below can render an <optgroup>
+  // per group instead of one flat, hard-to-scan list — this is a display grouping only, the
+  // underlying values and validation are unchanged.
+  const allowedSet = new Set(allowedCategories);
+  const existingOptions = (config?.category_groups?.existing || []).filter((c) => allowedSet.has(c));
+  const smitOptions = (config?.category_groups?.smit || []).filter((c) => allowedSet.has(c));
+  const categoryOptionGroups = (
+    <>
+      {existingOptions.length > 0 && (
+        <optgroup label="Existing Interviews">
+          {existingOptions.map((c) => <option key={c} value={c}>{c}</option>)}
+        </optgroup>
+      )}
+      {smitOptions.length > 0 && (
+        <optgroup label="SMIT Curriculum Interviews">
+          {smitOptions.map((c) => <option key={c} value={c}>{c}</option>)}
+        </optgroup>
+      )}
+    </>
+  );
+
   const validCount = validation?.valid_count ?? 0;
   const allValid = rows.length > 0 && validCount === rows.length;
   const canSend = allValid && subject.trim() && !sending && !validating;
@@ -555,7 +577,7 @@ const BulkEmailModal = ({ open, onClose, onSent }) => {
                     <select className="glass-input !text-[11px] !py-1 cursor-pointer" defaultValue=""
                       onChange={(e) => { applyToAll('category', e.target.value); e.target.value = ''; }}>
                       <option value="">Category…</option>
-                      {(allowedCategories).map((c) => <option key={c} value={c}>{c}</option>)}
+                      {categoryOptionGroups}
                     </select>
                     <select className="glass-input !text-[11px] !py-1 cursor-pointer" defaultValue=""
                       onChange={(e) => { applyToAll('course_status', e.target.value); e.target.value = ''; }}>
@@ -620,7 +642,7 @@ const BulkEmailModal = ({ open, onClose, onSent }) => {
                                 <td className="py-1.5 px-1.5">
                                   <select className={`${inputCls} cursor-pointer`} value={r.category} onChange={(e) => updateCell(idx, 'category', e.target.value)}>
                                     <option value="">Select…</option>
-                                    {(allowedCategories).map((c) => <option key={c} value={c}>{c}</option>)}
+                                    {categoryOptionGroups}
                                   </select>
                                 </td>
                                 <td className="py-1.5 px-1.5">

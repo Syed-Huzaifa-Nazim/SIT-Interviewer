@@ -169,7 +169,7 @@ class TestBulkRowDifficultyRange:
         monkeypatch.setattr(User, 'query', _NoExistingAccounts())
         raw = {
             'name': 'Ali Khan', 'email': 'ali.difficulty.test@example.com',
-            'cnic': '42101-1234567-1', 'category': 'AI & Data Science', 'course_status': 'completed',
+            'cnic': '42101-1234567-1', 'category': 'AI', 'course_status': 'completed',
         }
         normalized, errors = _validate_row(raw, set(), set())
         assert errors == []
@@ -182,7 +182,7 @@ class TestBulkRowDifficultyRange:
         monkeypatch.setattr(User, 'query', _NoExistingAccounts())
         raw = {
             'name': 'Sara Ahmed', 'email': 'sara.difficulty.test@example.com',
-            'cnic': '35202-9876543-2', 'category': 'AI & Data Science', 'course_status': 'completed',
+            'cnic': '35202-9876543-2', 'category': 'AI', 'course_status': 'completed',
             'difficulty_range': 'easy_to_medium',
         }
         normalized, errors = _validate_row(raw, set(), set())
@@ -196,7 +196,7 @@ class TestBulkRowDifficultyRange:
         monkeypatch.setattr(User, 'query', _NoExistingAccounts())
         raw = {
             'name': 'Bad Row', 'email': 'bad.difficulty.test@example.com',
-            'cnic': '35202-1112223-3', 'category': 'AI & Data Science', 'course_status': 'completed',
+            'cnic': '35202-1112223-3', 'category': 'AI', 'course_status': 'completed',
             'difficulty_range': 'NOT_A_RANGE',
         }
         normalized, errors = _validate_row(raw, set(), set())

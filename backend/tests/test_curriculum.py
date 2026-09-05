@@ -15,7 +15,11 @@ import os
 
 import pytest
 
-from app.utils.candidate import COURSE_CATEGORIES, LEGACY_COURSE_CATEGORIES, INSTRUCTOR_CATEGORY, RESUME_CATEGORY
+from app.utils.candidate import (
+    COURSE_CATEGORIES, EXISTING_COURSE_CATEGORIES, SMIT_COURSE_CATEGORIES,
+    INSTRUCTOR_CATEGORY, RESUME_CATEGORY,
+)
+from app.utils.interview_types import SMIT_SUFFIX
 from app.utils.curriculum import (
     CATEGORY_TO_CURRICULUM_SLUG,
     is_curriculum_category,
@@ -30,22 +34,25 @@ DATA_FILE = os.path.join(
     'data', 'smit_curriculum_official_scrape.json',
 )
 
+GRAPHIC_DESIGN_SMIT = 'Graphic Designing With AI' + SMIT_SUFFIX
+UIUX_SMIT = 'UI/UX Design With AI' + SMIT_SUFFIX
+
 
 # --------------------------------------------------------------------------- category mapping
 
 class TestCategoryMapping:
-    def test_every_course_category_has_a_curriculum_slug(self):
-        """The 5 curriculum-based categories (not Instructor/Resume-Based, not a legacy
-        value) must all be mappable — a category with no mapping silently gets no
-        curriculum grounding at interview time, which is exactly the kind of gap that
-        passes review and is only noticed when a candidate gets generic questions."""
-        for category in COURSE_CATEGORIES:
+    def test_every_smit_category_has_a_curriculum_slug(self):
+        """The 5 SMIT curriculum tracks (not Instructor/Resume-Based, not any of the 6
+        pre-existing categories) must all be mappable — a category with no mapping silently
+        gets no curriculum grounding at interview time, which is exactly the kind of gap
+        that passes review and is only noticed when a candidate gets generic questions."""
+        for category in SMIT_COURSE_CATEGORIES:
             assert category in CATEGORY_TO_CURRICULUM_SLUG, (
-                f"'{category}' is in COURSE_CATEGORIES but has no curriculum slug mapping"
+                f"'{category}' is a SMIT course category but has no curriculum slug mapping"
             )
 
-    def test_no_extra_slugs_for_categories_that_no_longer_exist(self):
-        assert set(CATEGORY_TO_CURRICULUM_SLUG.keys()) == set(COURSE_CATEGORIES)
+    def test_no_extra_slugs_beyond_the_five_smit_tracks(self):
+        assert set(CATEGORY_TO_CURRICULUM_SLUG.keys()) == set(SMIT_COURSE_CATEGORIES)
 
     def test_slugs_are_unique(self):
         slugs = list(CATEGORY_TO_CURRICULUM_SLUG.values())
@@ -54,25 +61,32 @@ class TestCategoryMapping:
     def test_graphic_design_and_ui_ux_map_to_different_courses(self):
         """The one rule the spec is strictest about: these must never collapse into one."""
         assert (
-            CATEGORY_TO_CURRICULUM_SLUG['Graphic Designing With AI']
-            != CATEGORY_TO_CURRICULUM_SLUG['UI/UX Design With AI']
+            CATEGORY_TO_CURRICULUM_SLUG[GRAPHIC_DESIGN_SMIT]
+            != CATEGORY_TO_CURRICULUM_SLUG[UIUX_SMIT]
         )
 
-    def test_is_curriculum_category_true_for_the_five_tracks(self):
-        for category in COURSE_CATEGORIES:
+    def test_is_curriculum_category_true_for_the_five_smit_tracks(self):
+        for category in SMIT_COURSE_CATEGORIES:
             assert is_curriculum_category(category)
 
-    @pytest.mark.parametrize('category', [INSTRUCTOR_CATEGORY, RESUME_CATEGORY, *LEGACY_COURSE_CATEGORIES, '', None, 'Not A Real Category'])
-    def test_is_curriculum_category_false_for_everything_else(self, category):
-        """Instructor and Resume-Based interviews are NOT curriculum-driven by design, and a
-        legacy category must NOT be silently guessed into one of the new tracks."""
+    @pytest.mark.parametrize('category', [INSTRUCTOR_CATEGORY, RESUME_CATEGORY, '', None, 'Not A Real Category'])
+    def test_is_curriculum_category_false_for_non_course_categories(self, category):
+        """Instructor and Resume-Based interviews are NOT curriculum-driven by design."""
         assert not is_curriculum_category(category)
+
+    def test_is_curriculum_category_false_for_every_pre_existing_category(self):
+        """The old system continues exactly as before: none of the 6 pre-existing categories
+        (including the two that share a SMIT track's display name minus the suffix) are
+        curriculum-driven — a candidate on one of these falls through to the same
+        non-curriculum question generation that existed before this feature was built."""
+        for category in EXISTING_COURSE_CATEGORIES:
+            assert not is_curriculum_category(category)
 
     def test_curriculum_slug_for_category_returns_none_for_non_curriculum(self):
         assert curriculum_slug_for_category(INSTRUCTOR_CATEGORY) is None
         assert curriculum_slug_for_category(RESUME_CATEGORY) is None
-        for legacy in LEGACY_COURSE_CATEGORIES:
-            assert curriculum_slug_for_category(legacy) is None
+        for category in EXISTING_COURSE_CATEGORIES:
+            assert curriculum_slug_for_category(category) is None
 
 
 # --------------------------------------------------------------------------- prompt rendering
@@ -107,14 +121,20 @@ class TestCurriculumContextToPromptText:
 # --------------------------------------------------------------------------- coding sandbox
 
 class TestSandboxEligibleCategory:
-    def test_design_categories_are_excluded(self):
-        assert not sandbox_eligible_category('Graphic Designing With AI')
-        assert not sandbox_eligible_category('UI/UX Design With AI')
+    def test_smit_design_categories_are_excluded(self):
+        assert not sandbox_eligible_category(GRAPHIC_DESIGN_SMIT)
+        assert not sandbox_eligible_category(UIUX_SMIT)
 
-    def test_technical_categories_remain_eligible(self):
-        assert sandbox_eligible_category('AI & Data Science')
-        assert sandbox_eligible_category('Cloud & Data Engineering')
-        assert sandbox_eligible_category('Web and Mobile App Development')
+    def test_smit_technical_categories_remain_eligible(self):
+        assert sandbox_eligible_category('AI & Data Science' + SMIT_SUFFIX)
+        assert sandbox_eligible_category('Cloud & Data Engineering' + SMIT_SUFFIX)
+        assert sandbox_eligible_category('Web and Mobile App Development' + SMIT_SUFFIX)
+
+    def test_the_pre_existing_design_category_is_untouched(self):
+        """'Graphics and UI/UX Design' (the old, combined category) was never gated out of
+        the sandbox before this feature existed and must not start being gated now — only
+        its two NEW split-out SMIT counterparts are sandbox-ineligible."""
+        assert sandbox_eligible_category('Graphics and UI/UX Design')
 
     def test_no_category_or_unknown_category_is_eligible(self):
         """Instructor/Resume-Based were never gated by category to begin with — this set
@@ -124,8 +144,8 @@ class TestSandboxEligibleCategory:
         assert sandbox_eligible_category('Instructor')
         assert sandbox_eligible_category('Resume-Based Interview')
 
-    def test_the_exclusion_set_is_exactly_the_two_design_tracks(self):
-        assert NO_CODING_SANDBOX_CATEGORIES == {'Graphic Designing With AI', 'UI/UX Design With AI'}
+    def test_the_exclusion_set_is_exactly_the_two_smit_design_tracks(self):
+        assert NO_CODING_SANDBOX_CATEGORIES == {GRAPHIC_DESIGN_SMIT, UIUX_SMIT}
 
 
 # --------------------------------------------------------------------- AI prompt integration
@@ -201,8 +221,13 @@ class TestCurriculumSourceFile:
         assert len(data['courses']) == 5
 
     def test_every_course_maps_to_a_curriculum_slug(self, data):
+        """The JSON's own 'ui_label' is the SMIT course's base name (no " — SMIT" marker —
+        that suffix is an interview-category-level disambiguator, not part of the course
+        data itself). It must match exactly one SMIT interview type's category once that
+        marker is stripped back off."""
+        base_labels = {cat[: -len(SMIT_SUFFIX)]: slug for cat, slug in CATEGORY_TO_CURRICULUM_SLUG.items()}
         for course in data['courses']:
-            assert course['ui_label'] in CATEGORY_TO_CURRICULUM_SLUG
+            assert course['ui_label'] in base_labels
 
     def test_thirty_three_modules_total(self, data):
         total = sum(len(c['modules']) for c in data['courses'])

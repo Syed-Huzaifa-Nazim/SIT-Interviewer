@@ -12,23 +12,22 @@ hunt.
 
 WHICH CATEGORIES HAVE CURRICULUM AT ALL
 -----------------------------------------
-Only the 5 course-based categories (app/utils/candidate.py's COURSE_CATEGORIES). Instructor
-and Resume-Based interviews are NOT curriculum-driven — Instructor uses its own competency
-question set, Resume-Based is driven entirely by the candidate's own CV — and neither
-LEGACY_COURSE_CATEGORIES value maps to anything here on purpose: a candidate still on the old
-"AI" or "Graphics and UI/UX Design" string falls through to today's non-curriculum question
-generation exactly as they did before this feature existed, rather than being silently
-reassigned to a guessed course.
+Only the 5 SMIT curriculum tracks (app/utils/interview_types.py's SMIT_TYPES — their category
+strings all carry the " — SMIT" suffix). Instructor and Resume-Based interviews are NOT
+curriculum-driven — Instructor uses its own competency question set, Resume-Based is driven
+entirely by the candidate's own CV — and NONE of the 6 pre-existing categories map to
+anything here, on purpose: a candidate on "AI", "Cloud & Data Engineering", or any other
+pre-existing category falls through to exactly the same non-curriculum question generation
+that existed before the SMIT curriculum feature was ever built. This is what makes "the old
+system continues exactly as before" true by construction rather than by a separate branch
+that has to be kept in sync — is_curriculum_category() below is false for every pre-existing
+category, permanently.
 """
 
-# category display name (COURSE_CATEGORIES) -> curriculum_courses.slug
-CATEGORY_TO_CURRICULUM_SLUG = {
-    'AI & Data Science': 'ai-data-science',
-    'Cloud & Data Engineering': 'cloud-data-engineering',
-    'Web and Mobile App Development': 'web-mobile-development',
-    'Graphic Designing With AI': 'graphic-designing-ai',
-    'UI/UX Design With AI': 'ui-ux-design-ai',
-}
+from app.utils.interview_types import SMIT_TYPES
+
+# category display name (a SMIT_TYPES category, e.g. "AI & Data Science — SMIT") -> curriculum_courses.slug
+CATEGORY_TO_CURRICULUM_SLUG = {t.category: t.curriculum_slug for t in SMIT_TYPES}
 
 
 def is_curriculum_category(category):
@@ -100,10 +99,10 @@ def build_curriculum_context(category, max_modules=None):
 # graphic-design or UI/UX candidate has no reason to see a "Two Sum"-style coding exercise
 # (curriculum spec §26). Instructor/Resume-Based are handled separately at the call site
 # (they were never gated by category here in the first place) and are untouched by this set.
-NO_CODING_SANDBOX_CATEGORIES = {
-    'Graphic Designing With AI',
-    'UI/UX Design With AI',
-}
+# Deliberately only the two SMIT design tracks — the pre-existing "Graphics and UI/UX Design"
+# category was never gated out of the sandbox before this feature existed and must not start
+# being gated now, per "the old system continues exactly as before".
+NO_CODING_SANDBOX_CATEGORIES = {t.category for t in SMIT_TYPES if not t.sandbox_eligible}
 
 
 def sandbox_eligible_category(category):

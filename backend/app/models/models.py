@@ -1116,7 +1116,9 @@ class Company(db.Model):
     created_by = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
 
     # Interview Access (curriculum feature): JSON list of interview-category names this
-    # company's admins/API keys may invite candidates under (e.g. "AI & Data Science").
+    # company's admins/API keys may invite candidates under — any of the 11 values in
+    # app/utils/interview_types.py (6 pre-existing, e.g. "AI", plus 5 SMIT curriculum tracks,
+    # e.g. "AI & Data Science — SMIT"), toggled independently of each other.
     # NULL means "no restriction ever set" — every interview type allowed, which is exactly
     # what every company that existed before this column was added keeps, and what a super
     # admin leaves unset for a new company that should start unrestricted too. Only a

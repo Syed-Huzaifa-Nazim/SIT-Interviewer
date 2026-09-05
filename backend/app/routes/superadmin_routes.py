@@ -20,6 +20,7 @@ from app.models import User, Token, Company, AdminCompanyAssignment, AdminLog, A
 from app.email import EmailService
 from app.email import templates as email_templates
 from app.utils.candidate import generate_otp, SIGNUP_CATEGORIES
+from app.utils.interview_types import EXISTING_TYPES, SMIT_TYPES
 from app.utils.api_key import SCOPES, generate_key
 from app.utils.security import (
     create_access_token, super_admin_required,
@@ -758,10 +759,16 @@ def list_api_scopes(user: User = Depends(super_admin_required)):
 
 @superadmin_bp.get('/interview-categories')
 def list_interview_categories(user: User = Depends(super_admin_required)):
-    """Every interview category a company's "Interview Access" list can name — straight from
-    the same SIGNUP_CATEGORIES the Admin Hub itself validates against, so the Companies tab's
-    checklist can never offer (or silently drop) a category the backend doesn't recognize."""
-    return SIGNUP_CATEGORIES
+    """Every interview category a company's "Interview Access" list can name, grouped into
+    the 6 pre-existing types and the 5 additional SMIT curriculum types — straight from the
+    same registry (app/utils/interview_types.py) the Admin Hub itself validates against, so
+    the Companies tab's checklist can never offer (or silently drop) a category the backend
+    doesn't recognize. 'flat' is kept for any older consumer of the plain list shape."""
+    return {
+        'existing': [t.category for t in EXISTING_TYPES],
+        'smit': [t.category for t in SMIT_TYPES],
+        'flat': SIGNUP_CATEGORIES,
+    }
 
 
 @superadmin_bp.get('/api-keys')

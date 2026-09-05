@@ -12,7 +12,7 @@ import Spinner from '../components/ui/Spinner';
 import Input from '../components/ui/Input';
 import Pagination from '../components/ui/Pagination';
 import BulkEmailModal from '../components/admin/BulkEmailModal';
-import { SIGNUP_CATEGORIES, INTERVIEW_STATUS_LABELS, isInstructorCategory, isResumeCategory, formatCnic, hasPermission } from '../utils/constants';
+import { SIGNUP_CATEGORIES, GROUPED_SIGNUP_CATEGORIES, INTERVIEW_STATUS_LABELS, isInstructorCategory, isResumeCategory, isSmitCategory, categoryDisplayLabel, formatCnic, hasPermission } from '../utils/constants';
 import { Button as UiButton } from '@/components/shadcn/button';
 import { UnderlineTabs } from '@/components/shadcn/tabs';
 import {
@@ -750,8 +750,11 @@ const AdminUsersPage = () => {
                     </td>
 
                     <td className="py-4 pr-3">
-                      <div className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">
-                        {item.course_category || 'Not set'}
+                      <div className="text-[11px] font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1">
+                        {categoryDisplayLabel(item.course_category) || 'Not set'}
+                        {isSmitCategory(item.course_category) && (
+                          <Badge variant="info" className="!px-1.5 !py-0 !text-[8px]">SMIT</Badge>
+                        )}
                       </div>
                       {isInstructorCategory(item.course_category) ? (
                         <Badge variant="accent" className="mt-1">Instructor</Badge>
@@ -960,14 +963,20 @@ const AdminUsersPage = () => {
                 <select id="course_category" value={editForm.course_category} onChange={handleEditChange} className={selectClass}>
                   <option value="">Not set</option>
                   {/* A candidate can still carry a category retired from SIGNUP_CATEGORIES
-                      (e.g. the old "AI" before it split into today's tracks) — shown as its
-                      own option so the select actually displays it instead of looking blank,
-                      without offering it to anyone choosing a category from scratch. */}
+                      entirely — shown as its own option so the select actually displays it
+                      instead of looking blank, without offering it to anyone choosing a
+                      category from scratch. */}
                   {editForm.course_category && !SIGNUP_CATEGORIES.includes(editForm.course_category) && (
                     <option value={editForm.course_category}>{editForm.course_category} (legacy)</option>
                   )}
-                  {SIGNUP_CATEGORIES.map((cat) => (
-                    <option key={cat} value={cat}>{cat}</option>
+                  {GROUPED_SIGNUP_CATEGORIES.map((group) => (
+                    <optgroup key={group.key} label={group.label}>
+                      {group.categories.map((cat) => (
+                        <option key={cat} value={cat}>
+                          {isSmitCategory(cat) ? `${categoryDisplayLabel(cat)} (SMIT)` : cat}
+                        </option>
+                      ))}
+                    </optgroup>
                   ))}
                 </select>
               </div>

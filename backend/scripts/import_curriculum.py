@@ -40,16 +40,19 @@ from app import create_app
 from app.database.db import db
 from app.models import CurriculumCourse, CurriculumModule, CurriculumTopic
 from app.utils.curriculum import CATEGORY_TO_CURRICULUM_SLUG
+from app.utils.interview_types import SMIT_SUFFIX
 
 DATA_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                           'data', 'smit_curriculum_official_scrape.json')
 
-# course_name (the JSON file's own label) -> the curriculum slug it must land under. Built
-# from the same category mapping the rest of the app uses (via each course's ui_label),
-# rather than a second hand-typed table that could silently name a different slug.
+# course_name (the JSON file's own label, e.g. "AI & Data Science" — the JSON never carries
+# the " — SMIT" interview-category marker, only the plain SMIT course name) -> the curriculum
+# slug it must land under. Built from the same category mapping the rest of the app uses (via
+# each SMIT interview type's category, with the marker stripped back off), rather than a
+# second hand-typed table that could silently name a different slug.
 _UI_LABEL_TO_SLUG = {}
 for _category, _slug in CATEGORY_TO_CURRICULUM_SLUG.items():
-    _UI_LABEL_TO_SLUG[_category] = _slug
+    _UI_LABEL_TO_SLUG[_category[: -len(SMIT_SUFFIX)]] = _slug
 
 
 def _slug_for(ui_label):

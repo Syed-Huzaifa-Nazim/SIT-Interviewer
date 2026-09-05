@@ -8,8 +8,8 @@ import Input from '../components/ui/Input';
 import Button from '../components/ui/Button';
 import Alert from '../components/ui/Alert';
 import {
-  SIGNUP_CATEGORIES, COURSE_STATUS_OPTIONS, isInstructorCategory, isResumeCategory,
-  hasCourseStatus, formatCnic
+  SIGNUP_CATEGORIES, GROUPED_SIGNUP_CATEGORIES, COURSE_STATUS_OPTIONS, isInstructorCategory, isResumeCategory,
+  isSmitCategory, categoryDisplayLabel, hasCourseStatus, formatCnic
 } from '../utils/constants';
 import {
   User, Mail, Lock, UserPlus, ChevronLeft, CheckCircle2,
@@ -49,6 +49,7 @@ const RegisterPage = () => {
   // Backend-driven signup options (Update §1): a single flag controls the
   // "Ongoing → Coming Soon" state without a frontend redeploy.
   const [categories, setCategories] = useState(SIGNUP_CATEGORIES);
+  const [categoryGroups, setCategoryGroups] = useState(GROUPED_SIGNUP_CATEGORIES);
   const [ongoingEnabled, setOngoingEnabled] = useState(false);
   // Resume-Based enrolment: the CV is parsed before the account exists, so the form holds a
   // single-use token from /auth/signup-resume until it submits (Resume §1.1).
@@ -66,6 +67,12 @@ const RegisterPage = () => {
     api.get('/auth/signup-options')
       .then((res) => {
         if (Array.isArray(res.data.categories)) setCategories(res.data.categories);
+        if (res.data.category_groups) {
+          setCategoryGroups([
+            { key: 'existing', label: 'Existing Interviews', categories: res.data.category_groups.existing || [] },
+            { key: 'smit', label: 'SMIT Curriculum Interviews', categories: res.data.category_groups.smit || [] },
+          ]);
+        }
         setOngoingEnabled(!!res.data.ongoing_enabled);
       })
       .catch(() => { /* keep sensible defaults (Ongoing disabled) if the call fails */ });
@@ -319,8 +326,14 @@ const RegisterPage = () => {
               <label htmlFor="course_category" className="text-xs font-semibold text-slate-700 dark:text-slate-300">Category</label>
               <select id="course_category" value={formData.course_category} onChange={handleChange} className={selectClass} required>
                 <option value="" disabled>Select your category…</option>
-                {categories.map((cat) => (
-                  <option key={cat} value={cat}>{cat}</option>
+                {categoryGroups.map((group) => (
+                  <optgroup key={group.key} label={group.label}>
+                    {group.categories.filter((cat) => categories.includes(cat)).map((cat) => (
+                      <option key={cat} value={cat}>
+                        {isSmitCategory(cat) ? `${categoryDisplayLabel(cat)} (SMIT)` : cat}
+                      </option>
+                    ))}
+                  </optgroup>
                 ))}
               </select>
             </div>

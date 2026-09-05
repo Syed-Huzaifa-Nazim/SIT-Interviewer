@@ -32,6 +32,7 @@ from app.utils.candidate import (
 )
 from app.utils.difficulty import is_valid_range, range_choices
 from app.utils.curriculum import company_allows_category
+from app.utils.interview_types import EXISTING_TYPES, SMIT_TYPES
 from app.config.config import Config
 from app.email import EmailService
 from app.email import templates as email_templates
@@ -247,7 +248,15 @@ def bulk_config(user: User = Depends(admin_required), scope: AdminScope = Depend
     server's own constants so the two can never drift apart."""
     return {
         'required_columns': REQUIRED_COLUMNS,
+        # Flat list kept for anything still consuming the old shape; the modal itself now
+        # renders from the grouped 'category_groups' below so "Existing Interviews" and
+        # "SMIT Curriculum Interviews" can be shown as two clearly separated sections
+        # without the two ever being merged into one flat, hard-to-scan list.
         'categories': SIGNUP_CATEGORIES,
+        'category_groups': {
+            'existing': [t.category for t in EXISTING_TYPES],
+            'smit': [t.category for t in SMIT_TYPES],
+        },
         'course_statuses': COURSE_STATUSES,
         'deadline_choices': DEADLINE_CHOICES,
         'default_deadline_days': DEFAULT_DEADLINE_DAYS,
@@ -271,8 +280,8 @@ def download_template(user: User = Depends(admin_required)):
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow(REQUIRED_COLUMNS)
-    writer.writerow(['Ali Khan', 'ali.khan@example.com', '42101-1234567-1', 'AI & Data Science', 'completed'])
-    writer.writerow(['Sara Ahmed', 'sara.ahmed@example.com', '35202-9876543-2', 'Instructor', ''])
+    writer.writerow(['Ali Khan', 'ali.khan@example.com', '42101-1234567-1', 'AI', 'completed'])
+    writer.writerow(['Sara Ahmed', 'sara.ahmed@example.com', '35202-9876543-2', 'AI & Data Science — SMIT', 'completed'])
     buf.seek(0)
     return StreamingResponse(
         iter([buf.getvalue()]),
