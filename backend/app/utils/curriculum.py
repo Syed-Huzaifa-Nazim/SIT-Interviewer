@@ -96,6 +96,20 @@ def build_curriculum_context(category, max_modules=None):
     }
 
 
+# Curriculum-eligible for verbal questions but NOT for the coding-sandbox opener — a
+# graphic-design or UI/UX candidate has no reason to see a "Two Sum"-style coding exercise
+# (curriculum spec §26). Instructor/Resume-Based are handled separately at the call site
+# (they were never gated by category here in the first place) and are untouched by this set.
+NO_CODING_SANDBOX_CATEGORIES = {
+    'Graphic Designing With AI',
+    'UI/UX Design With AI',
+}
+
+
+def sandbox_eligible_category(category):
+    return (category or '') not in NO_CODING_SANDBOX_CATEGORIES
+
+
 def company_allows_category(company_id, category):
     """Whether a company (by id) may invite a candidate under `category` at all — the Super
     Admin's per-company "Interview Access" control (Company.allowed_interview_types).

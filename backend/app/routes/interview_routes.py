@@ -366,6 +366,15 @@ def start_interview(payload: dict = Body(default=None), user_id: int = Depends(g
     _requesting_user = User.query.get(user_id)
     is_instructor = bool(_requesting_user and is_instructor_category(_requesting_user.course_category))
 
+    # Curriculum feature: ground question generation in the candidate's own SMIT course
+    # content when their category maps to one (build_curriculum_context returns None for
+    # Instructor/Resume-Based/a legacy category/anything not yet imported — every one of
+    # those falls straight through to today's non-curriculum generation, unchanged).
+    from app.utils.curriculum import build_curriculum_context, curriculum_context_to_prompt_text
+    curriculum_context = curriculum_context_to_prompt_text(
+        build_curriculum_context(_requesting_user.course_category if _requesting_user else None)
+    ) or None
+
     # Question Difficulty Range: if the admin/API key that invited this candidate pinned a
     # range at invite time, it is authoritative here and overrides whatever the client sent
     # above — a candidate cannot pick around an admin's own choice. No range set (the
@@ -515,15 +524,22 @@ def start_interview(payload: dict = Body(default=None), user_id: int = Depends(g
             # LLM call fails and this falls back to the offline mock library, that fallback
             # must respect the invite's range too, not just the live path.
             allowed_difficulties=sandbox_difficulties,
+            # None for Instructor/Resume-Based/a legacy category/anything not yet imported —
+            # generate_questions falls back to today's non-curriculum prompt in that case.
+            curriculum_context=curriculum_context,
         )
 
         # Completed-course candidates open on a hands-on coding-sandbox exercise instead of
         # a verbal question. It REPLACES the generated first question rather than being added
         # on top, so the interview length and pacing are unchanged. Scoped deliberately to
         # completed-course candidates only — Instructor interviews keep their verbal opener,
-        # and Ongoing/mock candidates have no sandbox access at all.
+        # Ongoing/mock candidates have no sandbox access at all, and (curriculum feature §26)
+        # a Graphic Designing / UI-UX candidate has no reason to see a generic coding
+        # exercise, so they keep their generated verbal opener too.
+        from app.utils.curriculum import sandbox_eligible_category
         opening_problem = None
-        if requesting_user and requesting_user.must_use_otp and not is_instructor:
+        if (requesting_user and requesting_user.must_use_otp and not is_instructor
+                and sandbox_eligible_category(getattr(requesting_user, 'course_category', None))):
             try:
                 from app.coding.problem_bank import pick_opening_problem
                 opening_problem = pick_opening_problem(

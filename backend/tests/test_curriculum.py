@@ -21,6 +21,8 @@ from app.utils.curriculum import (
     is_curriculum_category,
     curriculum_slug_for_category,
     curriculum_context_to_prompt_text,
+    sandbox_eligible_category,
+    NO_CODING_SANDBOX_CATEGORIES,
 )
 
 DATA_FILE = os.path.join(
@@ -100,6 +102,86 @@ class TestCurriculumContextToPromptText:
         }
         text = curriculum_context_to_prompt_text(context)
         assert 'Machine Learning' in text
+
+
+# --------------------------------------------------------------------------- coding sandbox
+
+class TestSandboxEligibleCategory:
+    def test_design_categories_are_excluded(self):
+        assert not sandbox_eligible_category('Graphic Designing With AI')
+        assert not sandbox_eligible_category('UI/UX Design With AI')
+
+    def test_technical_categories_remain_eligible(self):
+        assert sandbox_eligible_category('AI & Data Science')
+        assert sandbox_eligible_category('Cloud & Data Engineering')
+        assert sandbox_eligible_category('Web and Mobile App Development')
+
+    def test_no_category_or_unknown_category_is_eligible(self):
+        """Instructor/Resume-Based were never gated by category to begin with — this set
+        must never accidentally start excluding something it wasn't meant to."""
+        assert sandbox_eligible_category(None)
+        assert sandbox_eligible_category('')
+        assert sandbox_eligible_category('Instructor')
+        assert sandbox_eligible_category('Resume-Based Interview')
+
+    def test_the_exclusion_set_is_exactly_the_two_design_tracks(self):
+        assert NO_CODING_SANDBOX_CATEGORIES == {'Graphic Designing With AI', 'UI/UX Design With AI'}
+
+
+# --------------------------------------------------------------------- AI prompt integration
+
+class TestGenerateQuestionsCurriculumPrompt:
+    """Proves the curriculum text actually reaches the LLM prompt, not just that
+    generate_questions accepts the parameter without crashing."""
+
+    def test_curriculum_context_is_embedded_in_the_user_prompt(self, monkeypatch):
+        from app.ai.mixtral.mixtral_service import MixtralService
+
+        captured = {}
+
+        def fake_call_llm(system_prompt, user_prompt, temperature=0.3, model=None, max_retries=None):
+            captured['system'] = system_prompt
+            captured['user'] = user_prompt
+            return {'questions': [
+                {'question_text': f'Q{i}', 'question_type': 'conceptual', 'code_snippet': ''}
+                for i in range(5)
+            ]}
+
+        monkeypatch.setattr(MixtralService, '_call_llm', staticmethod(fake_call_llm))
+
+        marker = 'Approved curriculum for AI & Data Science:\n- Python Foundations: Loops; Functions'
+        MixtralService.generate_questions(
+            interview_type='technical', job_role='AI Engineer', experience_level='Entry',
+            difficulty='Medium', num_questions=5, curriculum_context=marker,
+        )
+
+        assert marker in captured['user']
+        assert 'CURRICULUM LOCK' in captured['system']
+
+    def test_no_curriculum_context_leaves_the_prompt_unchanged(self, monkeypatch):
+        """A category with nothing imported yet (or Instructor/Resume-Based/a legacy value)
+        must generate exactly as it did before this feature existed."""
+        from app.ai.mixtral.mixtral_service import MixtralService
+
+        captured = {}
+
+        def fake_call_llm(system_prompt, user_prompt, temperature=0.3, model=None, max_retries=None):
+            captured['system'] = system_prompt
+            captured['user'] = user_prompt
+            return {'questions': [
+                {'question_text': f'Q{i}', 'question_type': 'conceptual', 'code_snippet': ''}
+                for i in range(5)
+            ]}
+
+        monkeypatch.setattr(MixtralService, '_call_llm', staticmethod(fake_call_llm))
+
+        MixtralService.generate_questions(
+            interview_type='technical', job_role='React Developer', experience_level='Entry',
+            difficulty='Medium', num_questions=5, curriculum_context=None,
+        )
+
+        assert 'CURRICULUM LOCK' not in captured['system']
+        assert 'Approved curriculum' not in captured['user']
 
 
 # --------------------------------------------------------------------------- source data file

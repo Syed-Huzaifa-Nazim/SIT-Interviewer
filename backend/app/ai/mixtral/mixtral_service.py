@@ -296,7 +296,7 @@ class MixtralService:
     @classmethod
     def generate_questions(cls, interview_type, job_role, experience_level, difficulty,
                            num_questions, custom_jd=None, custom_skills=None, resume_profile=None,
-                           allowed_difficulties=None):
+                           allowed_difficulties=None, curriculum_context=None):
         import uuid
         jd_mode = bool(custom_jd and len(custom_jd.strip()) >= 30)
         instructor_mode = (interview_type == 'instructor')
@@ -441,6 +441,18 @@ class MixtralService:
             "question_text is read aloud to the candidate. Leave 'code_snippet' as an empty string for every "
             "other question type."
         )
+        if curriculum_context:
+            # Curriculum feature: this candidate's category maps to an imported SMIT course
+            # (app/utils/curriculum.py). The curriculum text itself is appended to the user
+            # prompt below; this is the hard rule governing how the model must treat it.
+            system_prompt += (
+                " CURRICULUM LOCK: an approved curriculum is supplied below. Every question must "
+                "stay within the topics/modules it names — never ask about a technology, "
+                "framework, or concept outside that curriculum, and never claim something is part "
+                "of the curriculum unless it actually appears there. Spread questions across "
+                "DIFFERENT modules rather than clustering them in one, and never ask the same or a "
+                "near-duplicate question twice."
+            )
 
         if jd_mode:
             user_prompt = (
@@ -469,6 +481,8 @@ class MixtralService:
             if custom_skills:
                 user_prompt += f"Target these specific skills: {custom_skills}. "
             user_prompt += f"Make the set fresh and non-repetitive (variation id: {str(uuid.uuid4())[:8]})."
+            if curriculum_context:
+                user_prompt += f"\n\n{curriculum_context}"
 
         api_result = cls._call_llm(system_prompt, user_prompt, temperature=0.5)
         if api_result and isinstance(api_result.get('questions'), list) and api_result['questions']:
