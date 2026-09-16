@@ -239,7 +239,7 @@ export const LANDING_HTML = `
       <div class="hero-copy">
         <span class="badge"><b>NEW</b> Identity verified before every interview</span>
         <h1>The end-to-end <span class="u">proctored<svg viewBox="0 0 200 12" fill="none" preserveAspectRatio="none"><path d="M2 8 C50 2, 150 2, 198 7" stroke="currentColor" stroke-width="4" stroke-linecap="round"/></svg></span> interview platform, built on proof.</h1>
-        <p class="sub">Verify who is really sitting the exam, watch every second, and score every answer automatically, so each result comes with proof, not guesswork.</p>
+        <p class="sub">Verify who is really sitting the exam, watch every second, and score every answer automatically &mdash; so each result comes with proof, not guesswork.</p>
         <div class="hero-cta">
           <a data-route="/register" class="btn btn-p btn-lg">Get started free</a>
           <a data-route="/features" class="btn btn-s btn-lg">See how it works</a>
@@ -306,7 +306,7 @@ export const LANDING_HTML = `
     <div class="sec-h center rv">
       <span class="eyebrow">How it works</span>
       <h2>Four gates. Watch each one run.</h2>
-      <p class="lede" style="margin-inline:auto">Every gate has to pass before the next begins. Tap a step and the console on the right plays it back.</p>
+      <p class="lede" style="margin-inline:auto">Every gate has to pass before the next begins. Tap a step &mdash; the console on the right plays it back.</p>
     </div>
     <div class="work">
       <div class="wtabs rv" data-wtabs>
@@ -352,7 +352,7 @@ export const LANDING_HTML = `
   <div class="shell">
     <div class="sec-h center rv">
       <span class="eyebrow">Live capabilities</span>
-      <h2>Not a feature list, but a system you can see working.</h2>
+      <h2>Not a feature list &mdash; a system you can see working.</h2>
       <p class="lede" style="margin-inline:auto">Everything below is running as it would inside a real interview.</p>
     </div>
     <div class="bento2">
@@ -364,7 +364,7 @@ export const LANDING_HTML = `
 
       <div class="cell wide rv" data-d="1">
         <div class="ch"><span class="ci"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 12s3.8-6.5 10-6.5S22 12 22 12s-3.8 6.5-10 6.5S2 12 2 12Z"/><circle cx="12" cy="12" r="2.8"/></svg></span><h3>Live proctoring</h3></div>
-        <p class="cd">Gaze, second faces, phones and hands, all checked continuously. The fourth violation ends the session.</p>
+        <p class="cd">Gaze, second faces, phones and hands &mdash; checked continuously. The fourth violation ends the session.</p>
         <div class="viz">
           <div class="pchips" data-pchips>
             <span class="pchip"><s></s>Gaze</span><span class="pchip"><s></s>Faces</span><span class="pchip"><s></s>Phone</span><span class="pchip"><s></s>Hands</span>

@@ -10,9 +10,9 @@ import {
 
 const FEATURES = [
   { title: 'Voice-Driven Assessment', icon: Mic,
-    desc: 'Practice verbal delivery. Our integrated Whisper engine transcribes your voice replies in real time, and an LLM evaluates the substance of what you say, not keywords.' },
+    desc: 'Practice verbal delivery. Our integrated Whisper engine transcribes your voice replies in real time, and an LLM evaluates the substance of what you say — not keywords.' },
   { title: 'Four Coding Question Formats', icon: Code,
-    desc: 'Scenario-based problems, logic/approach explanations, direct conceptual questions, and debugging challenges, each routed to the evaluator that judges it correctly.' },
+    desc: 'Scenario-based problems, logic/approach explanations, direct conceptual questions, and debugging challenges — each routed to the evaluator that judges it correctly.' },
   { title: 'ATS Resume Parsing', icon: FileText,
     desc: 'Upload a PDF resume to extract skills, evaluate compatibility against target roles, and identify missing keywords.' },
   { title: 'Contextual Questioning', icon: UserCheck,
@@ -22,9 +22,9 @@ const FEATURES = [
   { title: 'Exam Integrity Module', icon: ShieldCheck,
     desc: 'Face-mesh gaze tracking, eye/gaze direction, hand-presence checks, and tab monitors detect distractions, building readiness for real proctored hiring tests.' },
   { title: 'Eye & Gaze Tracking', icon: Eye,
-    desc: 'Continuous, soft-warning monitoring of where you\'re looking, catching sustained reading from notes or a second screen without ever auto-failing you for a natural glance away.' },
+    desc: 'Continuous, soft-warning monitoring of where you\'re looking — catching sustained reading from notes or a second screen without ever auto-failing you for a natural glance away.' },
   { title: 'Instant Question Progression', icon: Zap,
-    desc: 'Answers are scored asynchronously in the background the moment you submit, so the next question appears immediately, with no waiting on the AI mid-interview.' },
+    desc: 'Answers are scored asynchronously in the background the moment you submit, so the next question appears immediately — no waiting on the AI mid-interview.' },
 ];
 
 const FeaturesPage = () => (

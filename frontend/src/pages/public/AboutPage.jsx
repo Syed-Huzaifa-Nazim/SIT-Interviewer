@@ -12,22 +12,22 @@ const PRINCIPLES = [
   {
     icon: Sparkles,
     title: 'Understanding over keyword matching',
-    body: 'A real interviewer doesn\'t grade you on whether you said "reconciliation"; they grade you on whether you understood React\'s rendering model. Our evaluator reads for that same substance, using an LLM that compares your actual answer against an ideal one, not a keyword list.',
+    body: 'A real interviewer doesn\'t grade you on whether you said "reconciliation" — they grade you on whether you understood React\'s rendering model. Our evaluator reads for that same substance, using an LLM that compares your actual answer against an ideal one, not a keyword list.',
   },
   {
     icon: Target,
     title: 'Relevant to you, specifically',
-    body: 'Generic question banks test whether you memorized a FAQ. We generate questions from your course category or a pasted job description, across scenario, logic, conceptual, and debugging formats, so what you practice actually resembles the role you\'re preparing for.',
+    body: 'Generic question banks test whether you memorized a FAQ. We generate questions from your course category or a pasted job description, across scenario, logic, conceptual, and debugging formats — so what you practice actually resembles the role you\'re preparing for.',
   },
   {
     icon: ShieldCheck,
     title: 'A result you can trust',
-    body: 'Face, hand, and eye/gaze monitoring run continuously and quietly in the background, with one-time secure sessions for official attempts. The goal isn\'t to police you but to make sure the scorecard actually reflects your own work.',
+    body: 'Face, hand, and eye/gaze monitoring run continuously and quietly in the background, with one-time secure sessions for official attempts. The goal isn\'t to police you — it\'s to make sure the scorecard actually reflects your own work.',
   },
   {
     icon: GraduationCap,
     title: 'Built for Saylani\'s students, end to end',
-    body: 'From CNIC-based signup through the live interview, coding assessment, and instructor review, this is one connected system built specifically for SMIT\'s programs, not a generic tool with our logo on it.',
+    body: 'From CNIC-based signup through the live interview, coding assessment, and instructor review, this is one connected system built specifically for SMIT\'s programs — not a generic tool with our logo on it.',
   },
 ];
 
@@ -45,7 +45,7 @@ const AboutPage = () => (
           <Quote className="text-primary-300 dark:text-primary-800 shrink-0 mt-1" size={32} />
           <p className="text-lg sm:text-xl text-slate-700 dark:text-slate-300 leading-relaxed font-medium">
             Most "AI interview" tools are a script reading questions off a list and a keyword
-            scanner pretending to be a grader. That gets you comfortable talking, but it doesn't
+            scanner pretending to be a grader. That gets you comfortable talking — it doesn't
             get you ready for a real technical panel that's actually listening.
           </p>
         </div>
@@ -55,7 +55,7 @@ const AboutPage = () => (
           Saylani built this platform to close that gap for its own students: an interviewer
           that genuinely evaluates what you say and code, asks questions relevant to the role
           you're actually preparing for, and proctors the session closely enough that the
-          scorecard means something, end to end, from signup to final report.
+          scorecard means something — end to end, from signup to final report.
         </p>
       </Reveal>
     </section>

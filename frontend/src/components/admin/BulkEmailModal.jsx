@@ -338,9 +338,18 @@ const BulkEmailModal = ({ open, onClose, onSent }) => {
   // SMIT Curriculum Interviews) so both category dropdowns below can render an <optgroup>
   // per group instead of one flat, hard-to-scan list — this is a display grouping only, the
   // underlying values and validation are unchanged.
+  //
+  // `allowedCategories` stays the source of truth for WHICH options exist, and the groups
+  // only decide how they are labelled and ordered. A category the server didn't place in
+  // either group therefore still renders rather than vanishing — which is what kept this
+  // dropdown completely empty in production the first time a frontend carrying
+  // `category_groups` went live against a backend that predates that field and only sends
+  // the flat `categories` list.
   const allowedSet = new Set(allowedCategories);
   const existingOptions = (config?.category_groups?.existing || []).filter((c) => allowedSet.has(c));
   const smitOptions = (config?.category_groups?.smit || []).filter((c) => allowedSet.has(c));
+  const groupedSet = new Set([...existingOptions, ...smitOptions]);
+  const ungroupedOptions = allowedCategories.filter((c) => !groupedSet.has(c));
   const categoryOptionGroups = (
     <>
       {existingOptions.length > 0 && (
@@ -353,6 +362,7 @@ const BulkEmailModal = ({ open, onClose, onSent }) => {
           {smitOptions.map((c) => <option key={c} value={c}>{c}</option>)}
         </optgroup>
       )}
+      {ungroupedOptions.map((c) => <option key={c} value={c}>{c}</option>)}
     </>
   );
 
