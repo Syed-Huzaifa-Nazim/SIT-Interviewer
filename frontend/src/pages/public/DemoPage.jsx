@@ -62,7 +62,7 @@ const DemoPage = () => {
       <PageHero
         eyebrow="Evaluation Demo"
         title="Experience the Live Evaluator"
-        subtitle="Try a self-contained simulation of our real-time technical evaluation engine — no account required."
+        subtitle="Try a self-contained simulation of our real-time technical evaluation engine, no account required."
       />
       <section className="max-w-2xl mx-auto px-6 py-20">
         <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/40 p-6 shadow-xl relative overflow-hidden">

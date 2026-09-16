@@ -103,7 +103,7 @@ const PublicLayout = ({ children }) => {
           </div>
         </div>
         <div className="max-w-7xl mx-auto px-6 pt-8 border-t border-slate-200 dark:border-slate-800 mt-8 text-[11px]">
-          <p>&copy; {new Date().getFullYear()} SMIT Interviewer AI — Designed for Professional Certification &amp; Readiness.</p>
+          <p>&copy; {new Date().getFullYear()} SMIT Interviewer AI · Designed for Professional Certification &amp; Readiness.</p>
         </div>
       </footer>
     </div>

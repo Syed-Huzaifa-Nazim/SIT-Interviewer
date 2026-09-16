@@ -54,7 +54,7 @@ const ContactPage = () => {
                   <Clock size={16} className="text-indigo-500 shrink-0 mt-0.5" />
                   <div>
                     <h5 className="font-bold text-slate-800 dark:text-slate-200">Hours of Operation</h5>
-                    <p className="mt-0.5">Monday to Saturday: 9:00 AM — 6:00 PM PST</p>
+                    <p className="mt-0.5">Monday to Saturday: 9:00 AM - 6:00 PM PST</p>
                   </div>
                 </div>
               </div>
