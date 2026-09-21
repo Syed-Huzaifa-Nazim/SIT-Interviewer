@@ -46,3 +46,5 @@ backend/reports/*
 
 # Vercel CLI link state — contains projectId/orgId, not for sharing.
 .vercel/
+.vercel
+.env*
