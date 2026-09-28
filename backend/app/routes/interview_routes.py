@@ -294,10 +294,23 @@ def _generate_and_save_mcqs(interview_id, job_role, experience_level, difficulty
     if already > 0:
         return
 
+    from app.utils.curriculum import build_curriculum_context, curriculum_context_to_prompt_text
+    from app.utils.interview_types import SMIT_SUFFIX
+    extra = {}
+    if job_role == 'Blockchain Developer':
+        interview = Interview.query.get(interview_id)
+        candidate = User.query.get(interview.user_id) if interview else None
+        if candidate and candidate.course_category == 'Blockchain' + SMIT_SUFFIX:
+            context = build_curriculum_context(candidate.course_category)
+            if not context:
+                raise ValueError('Blockchain curriculum must be imported before generating MCQs.')
+            extra['curriculum_context'] = curriculum_context_to_prompt_text(context)
+
     mcqs_list = MixtralService.generate_mcqs(
         job_role=job_role,
         experience_level=experience_level,
         difficulty=difficulty,
+        **extra,
     )
 
     num_main_questions = InterviewQuestion.query.filter_by(interview_id=interview_id).count()
@@ -374,6 +387,15 @@ def start_interview(payload: dict = Body(default=None), user_id: int = Depends(g
     curriculum_context = curriculum_context_to_prompt_text(
         build_curriculum_context(_requesting_user.course_category if _requesting_user else None)
     ) or None
+
+    from app.utils.interview_types import SMIT_SUFFIX
+    if _requesting_user and _requesting_user.course_category == 'Blockchain' + SMIT_SUFFIX:
+        if not curriculum_context:
+            raise HTTPException(status_code=503, detail='Blockchain curriculum is not configured. Ask an administrator to import it.')
+        job_role = 'Blockchain Developer'
+        # This category is syllabus-driven, including requests from custom clients.
+        custom_jd = None
+        custom_skills = None
 
     # Question Difficulty Range: if the admin/API key that invited this candidate pinned a
     # range at invite time, it is authoritative here and overrides whatever the client sent
