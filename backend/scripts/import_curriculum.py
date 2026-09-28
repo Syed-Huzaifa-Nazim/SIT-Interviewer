@@ -90,7 +90,7 @@ def _validate(data):
     }
 
 
-def import_curriculum(path=DATA_FILE, dry_run=False):
+def import_curriculum(path=DATA_FILE, dry_run=False, commit=True):
     with open(path, encoding='utf-8') as f:
         data = json.load(f)
 
@@ -150,7 +150,7 @@ def import_curriculum(path=DATA_FILE, dry_run=False):
                     topic = CurriculumTopic(module_id=module.id, topic_order=order)
                     db.session.add(topic)
                 topic.topic_name = topic_name
-                topic.source_verified = True
+                topic.source_verified = data.get('source_verified', True)
                 topics_written += 1
 
             # A topic removed FROM the source file must not linger in the DB — otherwise a
@@ -167,7 +167,10 @@ def import_curriculum(path=DATA_FILE, dry_run=False):
             if existing.module_number not in seen_module_numbers:
                 existing.is_active = False
 
-    db.session.commit()
+    if commit:
+        db.session.commit()
+    else:
+        db.session.flush()
     print(f"[curriculum-import] Wrote {courses_written} course(s), {modules_written} "
           f"module(s), {topics_written} topic row(s).")
     return summary
