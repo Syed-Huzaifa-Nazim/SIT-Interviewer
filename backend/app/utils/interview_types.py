@@ -65,6 +65,7 @@ SMIT_TYPES = [
     InterviewType('Web and Mobile App Development' + SMIT_SUFFIX, 'smit', 'Web & Mobile App Developer', 'web-mobile-development', True, False),
     InterviewType('Graphic Designing With AI' + SMIT_SUFFIX, 'smit', 'Graphic Designer', 'graphic-designing-ai', False, False),
     InterviewType('UI/UX Design With AI' + SMIT_SUFFIX, 'smit', 'UI/UX Designer', 'ui-ux-design-ai', False, False),
+    InterviewType('Blockchain' + SMIT_SUFFIX, 'smit', 'Blockchain Developer', 'blockchain', False, False),
 ]
 
 ALL_TYPES = EXISTING_TYPES + SMIT_TYPES
