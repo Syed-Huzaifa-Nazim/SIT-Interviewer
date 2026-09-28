@@ -1,0 +1,282 @@
+[
+  {
+    "topic": "What is blockchain?",
+    "question_text": "Explain how linked block hashes and network consensus make a blockchain tamper-evident. Why does hashing alone not prevent a rewrite?",
+    "mcq": {
+      "question_text": "Why is recalculating block hashes alone insufficient to rewrite an accepted public blockchain history?",
+      "options": [
+        "The replacement history must also satisfy the network consensus rules",
+        "Hashes cannot be recomputed",
+        "Every block is encrypted with one shared secret",
+        "Only the original author can calculate a hash"
+      ],
+      "correct_index": 0
+    }
+  },
+  {
+    "topic": "Digital and programmable currency",
+    "question_text": "How does programmable currency differ from a digital balance in a centrally managed database? Give a conditional-payment example.",
+    "mcq": {
+      "question_text": "Which feature makes a payment programmable?",
+      "options": [
+        "Code enforces specified conditions for transferring value",
+        "Its balance is displayed on a screen",
+        "Its price can fluctuate",
+        "Its owner uses an email address"
+      ],
+      "correct_index": 0
+    }
+  },
+  {
+    "topic": "History of blockchain",
+    "question_text": "Describe how Bitcoin combined earlier cryptographic ideas into a peer-to-peer payment system.",
+    "mcq": {
+      "question_text": "Which problem did Bitcoin address without a central payment intermediary?",
+      "options": [
+        "Agreement on transaction ordering to prevent double spending",
+        "Keeping all transactions secret from every node",
+        "Guaranteeing a fixed exchange rate",
+        "Removing the need for digital signatures"
+      ],
+      "correct_index": 0
+    }
+  },
+  {
+    "topic": "Evolution of blockchain",
+    "question_text": "Explain how blockchain applications expanded from payments to programmable applications. What tradeoffs came with that expansion?",
+    "mcq": {
+      "question_text": "What did general-purpose smart contract platforms add beyond simple value transfer?",
+      "options": [
+        "User-defined programs that update shared on-chain state",
+        "Guaranteed profit for token holders",
+        "Unlimited computation without fees",
+        "A requirement that all users trust one database owner"
+      ],
+      "correct_index": 0
+    }
+  },
+  {
+    "topic": "Bitcoin and ETH",
+    "question_text": "Compare Bitcoin and Ethereum, distinguishing each network from its native asset and explaining their current consensus approaches.",
+    "mcq": {
+      "question_text": "Which statement correctly distinguishes Ethereum from ETH?",
+      "options": [
+        "Ethereum is a network; ETH is its native asset used for gas",
+        "ETH is a separate blockchain unrelated to Ethereum",
+        "Ethereum is the private key for ETH",
+        "ETH is always an ERC-20 token"
+      ],
+      "correct_index": 0
+    }
+  },
+  {
+    "topic": "Bitcoin whitepaper",
+    "question_text": "In the Bitcoin whitepaper, how do proof of work and the chain with the most accumulated work help resolve competing histories?",
+    "mcq": {
+      "question_text": "Which chain-selection principle does the Bitcoin whitepaper describe?",
+      "options": [
+        "The valid chain representing the greatest accumulated proof of work",
+        "The chain with the most distinct wallet addresses",
+        "The chain selected by the oldest transaction sender",
+        "The chain containing the single largest payment"
+      ],
+      "correct_index": 0
+    }
+  },
+  {
+    "topic": "Ethereum whitepaper",
+    "question_text": "What capability did the Ethereum whitepaper propose for decentralized applications? Why should it be read as a historical design rather than a current protocol specification?",
+    "mcq": {
+      "question_text": "What is a central proposal of the Ethereum whitepaper?",
+      "options": [
+        "A blockchain platform for programmable smart contracts and applications",
+        "A fixed-purpose system limited to Bitcoin payments",
+        "An exchange guaranteeing token prices",
+        "A database writable only by one administrator"
+      ],
+      "correct_index": 0
+    }
+  },
+  {
+    "topic": "Hard forks",
+    "question_text": "Explain a hard fork versus a soft fork. Under what conditions can a hard fork result in two continuing chains?",
+    "mcq": {
+      "question_text": "What distinguishes a hard fork rule change?",
+      "options": [
+        "It can accept blocks that nodes enforcing the old rules reject",
+        "It only changes a wallet display theme",
+        "It necessarily deletes every old transaction",
+        "It is always compatible with every old validating node"
+      ],
+      "correct_index": 0
+    }
+  },
+  {
+    "topic": "Ethereum Virtual Machine (EVM)",
+    "question_text": "What does the EVM execute, and how does gas bound contract execution? What happens when a transaction runs out of gas?",
+    "mcq": {
+      "question_text": "An EVM transaction runs out of gas during execution. What happens?",
+      "options": [
+        "Its execution changes revert, while gas already consumed is charged",
+        "All earlier writes in the transaction remain permanently applied",
+        "The transaction automatically receives free additional gas",
+        "The sender receives all consumed gas back"
+      ],
+      "correct_index": 0
+    }
+  },
+  {
+    "topic": "Solana",
+    "question_text": "Describe the relationship between a Solana program and the accounts it reads or updates. How is Rust used in program development?",
+    "mcq": {
+      "question_text": "How do Solana programs typically maintain mutable application state?",
+      "options": [
+        "In separate data accounts passed to the program",
+        "By editing the executable bytecode for each user balance",
+        "Only in the client browser memory",
+        "Inside an Ethereum EVM storage slot"
+      ],
+      "correct_index": 0
+    }
+  },
+  {
+    "topic": "Initial Coin Offerings (ICOs)",
+    "question_text": "Explain an ICO and distinguish token distribution from an equity offering. What project and smart-contract risks would you assess?",
+    "mcq": {
+      "question_text": "Which claim about an ICO is correct?",
+      "options": [
+        "Token ownership does not automatically grant company equity",
+        "Every token guarantees a share of company profits",
+        "Every ICO uses Bitcoin mining to distribute tokens",
+        "An ICO guarantees that a token will be listed on an exchange"
+      ],
+      "correct_index": 0
+    }
+  },
+  {
+    "topic": "Exchanges",
+    "question_text": "Compare a custodial exchange and a decentralized exchange. Explain custody and smart-contract risks.",
+    "mcq": {
+      "question_text": "What is a key custody distinction when using a typical custodial exchange?",
+      "options": [
+        "The exchange controls the private keys for deposited assets",
+        "Every customer signs every exchange wallet transaction",
+        "Customer passwords are the on-chain private keys",
+        "Deposits eliminate counterparty risk"
+      ],
+      "correct_index": 0
+    }
+  },
+  {
+    "topic": "Non-Fungible Tokens (NFTs)",
+    "question_text": "What does an NFT record prove on-chain? Why does owning a token not automatically transfer copyright or guarantee permanent media availability?",
+    "mcq": {
+      "question_text": "An NFT points to media hosted on a website. What does token ownership alone guarantee?",
+      "options": [
+        "Ownership of the token according to the contract, not perpetual media hosting",
+        "Automatic ownership of all copyright in the artwork",
+        "Permanent availability of the linked website",
+        "Exclusive ability to view or copy the image"
+      ],
+      "correct_index": 0
+    }
+  },
+  {
+    "topic": "Decentralized Finance (DeFi)",
+    "question_text": "Explain a collateralized DeFi loan and how a falling collateral price can trigger liquidation.",
+    "mcq": {
+      "question_text": "Why can an overcollateralized DeFi borrowing position be liquidated?",
+      "options": [
+        "Collateral value falls below the protocol liquidation threshold",
+        "The borrower has never used a centralized exchange",
+        "The loan was recorded on a blockchain",
+        "The wallet address contains too many characters"
+      ],
+      "correct_index": 0
+    }
+  },
+  {
+    "topic": "Wallets",
+    "question_text": "What does a wallet manage, and what remains on-chain? Explain the consequences of exposing a recovery phrase.",
+    "mcq": {
+      "question_text": "What can an attacker usually do with a wallet recovery phrase?",
+      "options": [
+        "Derive its keys and authorize transfers from its accounts",
+        "Only view the public transaction history",
+        "Reverse all previously finalized transactions",
+        "Reset the blockchain consensus rules"
+      ],
+      "correct_index": 0
+    }
+  },
+  {
+    "topic": "Smart contracts",
+    "question_text": "Explain why a smart contract needs an oracle for off-chain information. What trust assumptions does the oracle introduce?",
+    "mcq": {
+      "question_text": "How can a smart contract act on an off-chain event?",
+      "options": [
+        "Through submitted data such as an oracle report, with associated trust assumptions",
+        "By independently browsing any website during deterministic execution",
+        "By reading all private databases automatically",
+        "By treating the block hash as proof of every real-world event"
+      ],
+      "correct_index": 0
+    }
+  },
+  {
+    "topic": "Introduction to Solidity",
+    "question_text": "In Solidity, compare persistent storage with temporary memory. Why do access controls matter on a function that changes ownership?",
+    "mcq": {
+      "question_text": "In Solidity, what is the effect of updating a state variable through a storage reference?",
+      "options": [
+        "It changes persistent contract state when the transaction succeeds",
+        "It only changes an independent temporary copy",
+        "It automatically creates a new contract",
+        "It only changes transaction calldata"
+      ],
+      "correct_index": 0
+    }
+  },
+  {
+    "topic": "Introduction to Rust",
+    "question_text": "Explain ownership and borrowing in Rust. How can these rules help when developing a Solana program?",
+    "mcq": {
+      "question_text": "Which Rust borrowing rule prevents conflicting access to a value?",
+      "options": [
+        "A mutable borrow must be exclusive while active",
+        "Any number of mutable references may coexist with shared references",
+        "Ownership disables compile-time checks",
+        "Every borrowed value is automatically copied"
+      ],
+      "correct_index": 0
+    }
+  },
+  {
+    "topic": "Governance",
+    "question_text": "Compare on-chain voting with off-chain governance. Explain how proposal approval and proposal execution can differ.",
+    "mcq": {
+      "question_text": "A governance proposal passes a vote. What determines whether it changes a protocol?",
+      "options": [
+        "The governance execution mechanism and permissions",
+        "The vote alone always rewrites every node implementation",
+        "The proposal title automatically becomes executable code",
+        "Every token holder must publish a private key"
+      ],
+      "correct_index": 0
+    }
+  },
+  {
+    "topic": "Decentralized Autonomous Organizations (DAOs)",
+    "question_text": "Describe how a DAO can manage proposals and treasury spending. What risks arise from concentrated voting power?",
+    "mcq": {
+      "question_text": "Why can concentrated voting power be a risk for a DAO?",
+      "options": [
+        "A small group may control proposals or treasury decisions",
+        "It makes all signatures mathematically invalid",
+        "It prevents the blockchain from storing transactions",
+        "It guarantees equal influence for every member"
+      ],
+      "correct_index": 0
+    }
+  }
+]
