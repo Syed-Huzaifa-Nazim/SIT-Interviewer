@@ -85,6 +85,11 @@ class Config:
     AI_PROVIDER = os.environ.get('AI_PROVIDER', 'groq')  # 'groq', 'together', 'openai', 'openrouter'
     MIXTRAL_API_KEY = os.environ.get('MIXTRAL_API_KEY', '')
     WHISPER_API_KEY = os.environ.get('WHISPER_API_KEY', '')
+    # Multiple speech-to-text keys (comma-separated) for automatic fail-over: when one
+    # Groq key is rate-limited (429) or rejected, the next one takes over, so a live
+    # interview never stalls on a single free-tier limit. An empty list falls back to
+    # the single WHISPER_API_KEY above, so existing deployments keep working unchanged.
+    GROQ_API_KEYS = [k.strip() for k in os.environ.get('GROQ_API_KEYS', '').split(',') if k.strip()]
     
     # API endpoints custom overrides based on provider selection
     default_mixtral_url = 'https://api.groq.com/openai/v1/chat/completions'
