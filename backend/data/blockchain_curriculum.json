@@ -1,0 +1,77 @@
+{
+  "source": "User-provided Blockchain curriculum (September 2026)",
+  "source_verified": false,
+  "courses": [
+    {
+      "ui_label": "Blockchain",
+      "course_name": "Blockchain Fundamentals and Web3",
+      "source_url": null,
+      "official_module_count": null,
+      "official_topic_count": null,
+      "modules": [
+        {
+          "module_number": 1,
+          "module_name": "Blockchain Foundations",
+          "official_topic_count": null,
+          "topics_exposed_on_public_page": [
+            "What is blockchain?",
+            "Digital and programmable currency",
+            "History of blockchain",
+            "Evolution of blockchain"
+          ]
+        },
+        {
+          "module_number": 2,
+          "module_name": "Bitcoin and Ethereum",
+          "official_topic_count": null,
+          "topics_exposed_on_public_page": [
+            "Bitcoin and ETH",
+            "Bitcoin whitepaper",
+            "Ethereum whitepaper",
+            "Hard forks"
+          ]
+        },
+        {
+          "module_number": 3,
+          "module_name": "Blockchain Platforms",
+          "official_topic_count": null,
+          "topics_exposed_on_public_page": [
+            "Ethereum Virtual Machine (EVM)",
+            "Solana"
+          ]
+        },
+        {
+          "module_number": 4,
+          "module_name": "Web3 Ecosystem",
+          "official_topic_count": null,
+          "topics_exposed_on_public_page": [
+            "Initial Coin Offerings (ICOs)",
+            "Exchanges",
+            "Non-Fungible Tokens (NFTs)",
+            "Decentralized Finance (DeFi)",
+            "Wallets"
+          ]
+        },
+        {
+          "module_number": 5,
+          "module_name": "Smart Contract Development",
+          "official_topic_count": null,
+          "topics_exposed_on_public_page": [
+            "Smart contracts",
+            "Introduction to Solidity",
+            "Introduction to Rust"
+          ]
+        },
+        {
+          "module_number": 6,
+          "module_name": "Governance and DAOs",
+          "official_topic_count": null,
+          "topics_exposed_on_public_page": [
+            "Governance",
+            "Decentralized Autonomous Organizations (DAOs)"
+          ]
+        }
+      ]
+    }
+  ]
+}
