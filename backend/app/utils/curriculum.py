@@ -47,8 +47,13 @@ def get_curriculum_course(category):
     slug = curriculum_slug_for_category(category)
     if not slug:
         return None
-    from app.models import CurriculumCourse
-    return CurriculumCourse.query.filter_by(slug=slug, is_active=True).first()
+    from app.models import CurriculumCourse, CurriculumModule
+    query = CurriculumCourse.query.filter_by(slug=slug, is_active=True)
+    if slug == 'blockchain':
+        # Load this small syllabus in one round trip, including its modules/topics.
+        from sqlalchemy.orm import joinedload
+        query = query.options(joinedload(CurriculumCourse.modules).joinedload(CurriculumModule.topics))
+    return query.first()
 
 
 def build_curriculum_context(category, max_modules=None):

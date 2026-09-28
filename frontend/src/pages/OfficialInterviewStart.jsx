@@ -14,6 +14,8 @@ import {
 } from 'lucide-react';
 import { setScreenStream, clearScreenStream } from '../services/proctorScreen';
 import { loadFaceApi, computeDescriptor, setBaseline, clearBaseline } from '../services/identityCheck';
+import AnswerLanguagePicker from '../components/interview/AnswerLanguagePicker';
+import { getAnswerLanguage, setAnswerLanguage } from '../services/answerLanguage';
 
 /**
  * Pre-interview gate for one-time (completed-course) candidates — §3.3 steps 1–5.
@@ -40,6 +42,14 @@ const OfficialInterviewStart = () => {
   const [identityPhoto, setIdentityPhoto] = useState(null);
   const [identityBusy, setIdentityBusy] = useState(false);
   const [identityStatus, setIdentityStatus] = useState('');
+  // Answer-language choice, made here and carried into the session (localStorage) so
+  // live captions and the server-side Whisper transcription both use the declared
+  // language instead of guessing.
+  const [answerLang, setAnswerLang] = useState(getAnswerLanguage());
+  const changeAnswerLang = (value) => {
+    setAnswerLanguage(value);
+    setAnswerLang(value);
+  };
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const screenStreamRef = useRef(null);
@@ -332,6 +342,10 @@ const OfficialInterviewStart = () => {
                   <Badge variant={micGranted ? 'success' : 'neutral'}>{micGranted ? 'Granted' : 'Pending'}</Badge>
                 </div>
               </div>
+
+              {/* Answer-language choice (premium picker): captured BEFORE the interview so
+                  live captions and AI transcription are tuned from the first answer. */}
+              <AnswerLanguagePicker value={answerLang} onChange={changeAnswerLang} disabled={starting} />
 
               {/* Screen monitoring grant — its own gesture (getDisplayMedia). Required before
                   the interview can begin so the proctoring audit can record the screen. */}

@@ -294,10 +294,23 @@ def _generate_and_save_mcqs(interview_id, job_role, experience_level, difficulty
     if already > 0:
         return
 
+    from app.utils.curriculum import build_curriculum_context, curriculum_context_to_prompt_text
+    from app.utils.interview_types import SMIT_SUFFIX
+    extra = {}
+    if job_role == 'Blockchain Developer':
+        interview = Interview.query.get(interview_id)
+        candidate = User.query.get(interview.user_id) if interview else None
+        if candidate and candidate.course_category == 'Blockchain' + SMIT_SUFFIX:
+            context = build_curriculum_context(candidate.course_category)
+            if not context:
+                raise ValueError('Blockchain curriculum must be imported before generating MCQs.')
+            extra['curriculum_context'] = curriculum_context_to_prompt_text(context)
+
     mcqs_list = MixtralService.generate_mcqs(
         job_role=job_role,
         experience_level=experience_level,
         difficulty=difficulty,
+        **extra,
     )
 
     num_main_questions = InterviewQuestion.query.filter_by(interview_id=interview_id).count()
@@ -374,6 +387,15 @@ def start_interview(payload: dict = Body(default=None), user_id: int = Depends(g
     curriculum_context = curriculum_context_to_prompt_text(
         build_curriculum_context(_requesting_user.course_category if _requesting_user else None)
     ) or None
+
+    from app.utils.interview_types import SMIT_SUFFIX
+    if _requesting_user and _requesting_user.course_category == 'Blockchain' + SMIT_SUFFIX:
+        if not curriculum_context:
+            raise HTTPException(status_code=503, detail='Blockchain curriculum is not configured. Ask an administrator to import it.')
+        job_role = 'Blockchain Developer'
+        # This category is syllabus-driven, including requests from custom clients.
+        custom_jd = None
+        custom_skills = None
 
     # Question Difficulty Range: if the admin/API key that invited this candidate pinned a
     # range at invite time, it is authoritative here and overrides whatever the client sent
@@ -902,11 +924,17 @@ def upload_session_video(
 
 
 @interview_bp.post('/transcribe')
-def transcribe_audio(audio: UploadFile = File(...), user_id: int = Depends(get_current_user_id)):
-    """API endpoint to receive raw audio and return transcription quickly."""
+def transcribe_audio(audio: UploadFile = File(...), language: str = Form(''), user_id: int = Depends(get_current_user_id)):
+    """API endpoint to receive raw audio and return transcription quickly.
+
+    ``language`` is the candidate's pre-interview choice ('ur' | 'en' | '' = auto) so
+    Whisper pins the language instead of guessing. An unknown value is treated as auto.
+    """
     filename = audio.filename
     if not filename or not allowed_file(filename):
         raise HTTPException(status_code=400, detail="Invalid audio file format")
+
+    language_hint = language if language in ('ur', 'en') else None
 
     os.makedirs(Config.UPLOAD_FOLDER, exist_ok=True)
     temp_filename = f"transcribe_user_{user_id}_{int(datetime.datetime.utcnow().timestamp())}.webm"
@@ -916,9 +944,9 @@ def transcribe_audio(audio: UploadFile = File(...), user_id: int = Depends(get_c
         contents = audio.file.read()
         with open(save_path, "wb") as f:
             f.write(contents)
-        print(f"[transcribe] Received {len(contents)} bytes of audio from user {user_id}.")
+        print(f"[transcribe] Received {len(contents)} bytes of audio from user {user_id} (language={language_hint or 'auto'}).")
 
-        transcribed = WhisperService.transcribe(save_path)
+        transcribed = WhisperService.transcribe(save_path, language_hint=language_hint)
 
         if os.path.exists(save_path):
             os.remove(save_path)
@@ -936,7 +964,8 @@ def transcribe_audio(audio: UploadFile = File(...), user_id: int = Depends(get_c
         raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
 
 def _run_answer_scoring(interview_id, question_id, response_id, user_id,
-                        local_audio_path, audio_content_type, fallback_text, timed_out):
+                        local_audio_path, audio_content_type, fallback_text, timed_out,
+                        language_hint=None):
     """Background worker (Perf §1.3): transcribe (if audio) + LLM-evaluate ONE answer, then
     finalize the report if this was the last outstanding answer. Runs on its own daemon
     thread with its own thread-local scoped session (mirrors EmailService) — the candidate's
@@ -966,7 +995,9 @@ def _run_answer_scoring(interview_id, question_id, response_id, user_id,
         if local_audio_path and os.path.exists(local_audio_path):
             if not answer_text.strip():
                 try:
-                    answer_text = WhisperService.transcribe(local_audio_path, question_text=question.question_text)
+                    answer_text = WhisperService.transcribe(
+                        local_audio_path, question_text=question.question_text,
+                        language_hint=language_hint)
                 except TranscriptionError as te:
                     answer_text = fallback_text if (fallback_text and fallback_text.strip()) else ''
                     print(f"[scoring] Whisper failed for response {response_id} ({te}); used live-transcript fallback.")
@@ -1245,6 +1276,10 @@ def submit_answer(
     # Base64 webcam frame captured by the client on the final submission, stored on the
     # report so an admin can see a completion snapshot (mirrors the auto-terminate one).
     snapshot_image: str = Form(""),
+    # Candidate's pre-interview answer-language choice ('ur' | 'en' | '' = auto). Passed
+    # through to Whisper so transcription is pinned to the declared language instead of
+    # being guessed from short noisy clips.
+    language: str = Form(""),
     audio: UploadFile = File(None),
     user_id: int = Depends(get_current_user_id)
 ):
@@ -1391,10 +1426,12 @@ def submit_answer(
             _score_mcq_response(resp_record, question)
         else:
             # Kick off async scoring — the candidate does NOT wait for this.
+            language_hint = language if language in ('ur', 'en') else None
             threading.Thread(
                 target=_run_answer_scoring,
                 args=(interview_id, question_id, response_id, user_id,
-                      local_audio_path, audio_content_type, fallback_text, bool(timed_out)),
+                      local_audio_path, audio_content_type, fallback_text, bool(timed_out),
+                      language_hint),
                 daemon=True
             ).start()
 

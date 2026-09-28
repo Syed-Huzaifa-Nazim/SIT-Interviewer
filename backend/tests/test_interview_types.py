@@ -14,8 +14,8 @@ from app.utils.candidate import SIGNUP_CATEGORIES, CATEGORY_JOB_ROLES, STATUSLES
 class TestRegistryShape:
     def test_six_existing_and_five_smit_types(self):
         assert len(EXISTING_TYPES) == 6
-        assert len(SMIT_TYPES) == 5
-        assert len(ALL_TYPES) == 11
+        assert len(SMIT_TYPES) == 6
+        assert len(ALL_TYPES) == 12
 
     def test_every_category_string_is_unique(self):
         categories = [t.category for t in ALL_TYPES]
@@ -23,7 +23,7 @@ class TestRegistryShape:
 
     def test_signup_categories_matches_the_registry_exactly(self):
         assert set(SIGNUP_CATEGORIES) == set(BY_CATEGORY.keys())
-        assert len(SIGNUP_CATEGORIES) == 11
+        assert len(SIGNUP_CATEGORIES) == 12
 
 
 class TestExistingTypesAreUnchanged:
@@ -60,7 +60,7 @@ class TestExistingTypesAreUnchanged:
 class TestSmitTypesAreAdditive:
     EXPECTED_BASE_LABELS = {
         'AI & Data Science', 'Cloud & Data Engineering', 'Web and Mobile App Development',
-        'Graphic Designing With AI', 'UI/UX Design With AI',
+        'Graphic Designing With AI', 'UI/UX Design With AI', 'Blockchain',
     }
 
     def test_every_smit_category_carries_the_suffix(self):
