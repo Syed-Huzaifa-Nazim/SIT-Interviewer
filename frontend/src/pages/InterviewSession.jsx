@@ -3,7 +3,7 @@ import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import axios from 'axios';
 import api from '../services/api';
 import { getScreenStream, hasScreenStream, clearScreenStream } from '../services/proctorScreen';
-import { getAnswerLanguage } from '../services/answerLanguage';
+import { getAnswerLanguage, captionLocaleFor } from '../services/answerLanguage';
 import {
   speakPhrase,
   createSoftWarningAccumulator,
