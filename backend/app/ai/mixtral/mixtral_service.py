@@ -112,7 +112,7 @@ class MixtralService:
         'cloud & data engineer', 'web & mobile app developer', 'ui/ux designer',
         # Added when "Graphics and UI/UX Design" split into two separate tracks — the UI/UX
         # half already had a preset above; this is the Graphic Design half's own.
-        'graphic designer'
+        'graphic designer', 'blockchain developer'
     ]
 
     # Safety-net keyword lists used when the LLM classification call is unavailable.
@@ -297,6 +297,10 @@ class MixtralService:
     def generate_questions(cls, interview_type, job_role, experience_level, difficulty,
                            num_questions, custom_jd=None, custom_skills=None, resume_profile=None,
                            allowed_difficulties=None, curriculum_context=None):
+        from app.utils.blockchain import is_blockchain_context, questions_for_context
+        if is_blockchain_context(curriculum_context):
+            return questions_for_context(curriculum_context, num_questions)
+
         import uuid
         jd_mode = bool(custom_jd and len(custom_jd.strip()) >= 30)
         instructor_mode = (interview_type == 'instructor')
@@ -519,13 +523,17 @@ class MixtralService:
         return cls._generate_mock_questions(interview_type, job_role, experience_level, difficulty, num_questions, custom_jd, allowed_difficulties)
 
     @classmethod
-    def generate_mcqs(cls, job_role, experience_level, difficulty, num_mcqs=10):
+    def generate_mcqs(cls, job_role, experience_level, difficulty, num_mcqs=10, curriculum_context=None):
         """Generate the MCQ round (§ MCQ round): single-select, 4 options each.
 
         Returns a list of {"question_text", "options": [4 strings], "correct_index"}.
         Same LLM-then-deterministic-fallback shape as generate_questions above, so a down
         API never blocks the interview — it just falls back to a small generic bank.
         """
+        from app.utils.blockchain import is_blockchain_context, questions_for_context
+        if is_blockchain_context(curriculum_context):
+            return questions_for_context(curriculum_context, num_mcqs, mcq=True)
+
         import uuid
         # MCQs are always generated at HARD difficulty, regardless of whatever difficulty the
         # main interview questions were created at (the `difficulty` argument is still accepted
