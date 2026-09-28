@@ -29,13 +29,85 @@ URDU_TRANSLATION_PROMPT = (
     "may be spoken in English and should be written in English letters."
 )
 
-# English interviews get a domain prompt too — it raises spelling accuracy for
-# technical vocabulary without forcing any language.
+# Pass-1 prompt: bilingual by design. Candidates mix Urdu and English (code-switching),
+# so the prompt conditions Whisper to write Urdu speech in proper Urdu script instead of
+# a Roman-English guess, while keeping English technical terms intact.
+BILINGUAL_PROMPT = (
+    "This is a job interview answer from a Pakistani candidate and may be in Urdu or "
+    "English. Transcribe exactly what is said in the language actually spoken: Urdu "
+    "speech must be written in proper Urdu (Arabic) script with correct punctuation, "
+    "NOT in Roman letters. English technical terms (HTML, CSS, React, Python, API, "
+    "database) are written in English letters."
+)
+
+# Used when the candidate explicitly chose Urdu on the pre-interview screen — the audio
+# is pinned to Urdu on the FIRST pass (no guessing needed) while still allowing English
+# technical terms to surface in Latin letters as spoken.
+URDU_PINNED_PROMPT = (
+    "This is a job interview answer spoken in Urdu by a Pakistani candidate about "
+    "software development. Transcribe exactly what is said in native Urdu script, "
+    "properly punctuated. Technical terms (HTML, CSS, React, Python, API, database) "
+    "may be spoken in English and should be written in English letters."
+)
+
+# Used when the candidate explicitly chose English on the pre-interview screen.
 ENGLISH_PROMPT = (
     "This is a job interview answer about software development. Transcribe exactly "
-    "what is said, properly punctuated. Technical terms (HTML, CSS, React, Python, "
-    "API, database) must be spelled correctly."
+    "what is said in English, properly punctuated. Technical terms (HTML, CSS, React, "
+    "Python, API, database) must be spelled correctly."
 )
+
+# Roman Urdu written out in Latin letters ("yeh ek library hai") is the most common
+# misfire for Urdu audio even after the bilingual prompt. These markers are words that
+# only occur in Urdu/Roman-Urdu speech (postpositions ka/ki/ke/ko/se, verbs like
+# karta/hota/hai, etc.), so two or more of them strongly indicate Urdu spoken in Latin
+# script — worth one explicit Urdu-pinned retry. English homographs that happen to also
+# be Urdu words ("main", "tab") are deliberately NOT counted so ordinary English
+# answers are never sent through an unnecessary retry.
+_ROMAN_URDU_MARKERS = frozenset(
+    'hai hain nahi nahin nai kya kyun kyu aur kar karna karta karti karte karo '
+    'hota hoti hote tha thi hoon hun mein mujhe aap tum yeh ye woh wo '
+    'kaise kaisa kaisi kitna kitni bohat bahut bahot zaroor bhi tou ka ki ke ko se '
+    'liya diya kiya chahiye sakta sakti sakte raha rahi rahe gaya gayi gaye '
+    'hoga hogi honge wala wali wale jaisa jaise sab hum abhi jab agar '
+    'lekin magar matlab zyada bana banaya banate chalta chal parta jata jati '
+    'lagta lagti milta milti saath sath kaam pehle baad wahan yahan kuch'
+    .split()
+)
+_MAX_ROMAN_URDU_MARKER_HITS = 2
+
+
+def _looks_like_roman_urdu(text):
+    """True when a Latin-script transcript is actually Roman Urdu.
+
+    Counts standalone Urdu-marker words; Urdu (Arabic) script anywhere in the text
+    immediately disqualifies it. Used only to decide whether the Urdu-pinned repair
+    pass is worth running — never to fabricate or discard an answer.
+    """
+    t = (text or '').strip()
+    if len(t) < 2:
+        return False
+    if re.search(r'[\u0600-\u06FF]', t):
+        return False  # already proper Urdu script
+    tokens = re.findall(r"[A-Za-z']+", t.lower())
+    hits = sum(1 for tok in tokens if tok in _ROMAN_URDU_MARKERS)
+    return hits >= _MAX_ROMAN_URDU_MARKER_HITS
+
+
+def _looks_like_hindi_script(text):
+    """True when the transcript came back in Devanagari (Hindi) script.
+
+    Spoken Urdu and Hindi are near-identical, so Whisper's auto-detect frequently
+    picks 'hi' and writes Devanagari — confirmed on live Groq tests — which Pakistani
+    candidates cannot read. Detected in the auto/English paths so the Urdu-pinned
+    repair pass can rewrite the same audio in proper Urdu script.
+    """
+    t = (text or '').strip()
+    if not t:
+        return False
+    has_devanagari = bool(re.search(r'[\u0900-\u097F]', t))
+    has_arabic = bool(re.search(r'[\u0600-\u06FF]', t))
+    return has_devanagari and not has_arabic
 
 # A transcript that is real words but carries no information the scorer can use.
 # Speaking Urdu is fine — but "...", "um okay" or "Foreign" is not an answer.
@@ -108,17 +180,19 @@ class WhisperService:
 
     # ------------------------------------------------------------- public API
     @staticmethod
-    def transcribe(audio_path, question_text=None):
+    def transcribe(audio_path, question_text=None, language_hint=None):
         """Transcribe the audio file at ``audio_path``.
 
         - In explicit dev mode (AI_MODE='mock' or no key), returns a clearly simulated
           transcript for offline development.
         - In API mode, performs a real STT call and RAISES ``TranscriptionError`` on
           failure — it never fabricates an answer.
-        - Interview answers are frequently spoken in Urdu; the request carries a
-          language hint + prompt so Urdu is transcribed as proper Urdu script, and an
-          unclear/garbled audio never gets published as invented English text (an
-          empty transcript is returned honestly instead).
+        - ``language_hint`` comes from the candidate's pre-interview language choice
+          ('ur' | 'en' | None=auto). A pinned language is used on the FIRST pass — no
+          guessing — so a candidate who declared Urdu gets Urdu script immediately.
+        - Even with a hint, an unusable first result still gets one repair retry, and
+          unclear/garbled audio is never published as invented text (an empty transcript
+          is returned honestly instead).
         """
         if Config.AI_MODE == 'mock' or not WhisperService._stt_keys():
             print("[Whisper] AI_MODE=mock or no key -> returning simulated dev transcript.")
@@ -127,7 +201,7 @@ class WhisperService:
         if not audio_path or not os.path.exists(audio_path):
             raise TranscriptionError("Audio file was not found for transcription.")
 
-        return WhisperService._transcribe_api(audio_path)
+        return WhisperService._transcribe_api(audio_path, language_hint=language_hint)
 
     # ------------------------------------------------------------ internals
     @staticmethod
@@ -193,14 +267,30 @@ class WhisperService:
         return None, f"HTTP {response.status_code}: {response.text[:150]}"
 
     @staticmethod
-    def _transcribe_api(audio_path):
-        """STT with key fail-over, language detection and an Urdu repair pass.
+    def _transcribe_api(audio_path, language_hint=None):
+        """STT with key fail-over, language handling and a repair pass.
 
-        Attempt order per network try: auto-detect first (works for both languages),
-        then — if the result looks like noise/garbage — an explicit Urdu pass, because
-        Urdu audio mis-detected as English is the dominant real-world failure here.
-        An honest empty result beats an invented transcript.
+        With ``language_hint`` ('ur'/'en') the first pass is PINNED to that language and
+        its prompt — the candidate already declared it, so no detection gamble. Without a
+        hint the provider auto-detects (works for both languages), then — if the result
+        looks like noise or Roman-Urdu — an explicit Urdu pass repairs it. An honest empty
+        result beats an invented transcript.
         """
+        if language_hint == 'ur':
+            first_language, first_prompt = URDU_LANGUAGES[0], URDU_PINNED_PROMPT
+        elif language_hint == 'en':
+            first_language, first_prompt = 'en', ENGLISH_PROMPT
+        else:
+            first_language, first_prompt = None, BILINGUAL_PROMPT
+        # Repair pass: an auto/unhinted or English-hinted misfire is most likely Urdu
+        # speech, so retry pinned to Urdu. A failed Urdu-PINNED pass, though, usually
+        # means the candidate actually spoke English — repair with the bilingual auto
+        # pass instead of pinning Urdu a second time.
+        if language_hint == 'ur':
+            second_language, second_prompt = None, BILINGUAL_PROMPT
+        else:
+            second_language, second_prompt = URDU_LANGUAGES[0], URDU_TRANSLATION_PROMPT
+
         converted_path, temp_created = WhisperService._maybe_convert(audio_path)
         keys = WhisperService._stt_keys()
         attempts_per_key = Config.LLM_MAX_RETRIES + 1
@@ -209,22 +299,27 @@ class WhisperService:
             for key_index, api_key in enumerate(keys):
                 for attempt in range(attempts_per_key):
                     try:
-                        # Pass 1: provider auto-detects the language.
+                        # Pass 1: hinted (pinned) or auto-detected language.
                         text, err = WhisperService._stt_request(
-                            api_key, converted_path, language=None, prompt=ENGLISH_PROMPT)
+                            api_key, converted_path, language=first_language, prompt=first_prompt)
 
                         if text is not None:
-                            if not _looks_like_noise(text):
+                            misfired = (
+                                _looks_like_noise(text)
+                                or (language_hint != 'ur' and _looks_like_roman_urdu(text))
+                                or _looks_like_hindi_script(text)
+                            )
+                            if not misfired:
                                 print(f"[Whisper] STT success: {len(text)} chars transcribed.")
                                 return text
 
-                            # Pass 2: the clip produced no usable answer. The dominant
-                            # cause with this user base is Urdu audio auto-detected as
-                            # English — retry once pinned to Urdu before giving up.
-                            print("[Whisper] First pass unusable -> retrying pinned to Urdu.")
+                            # Pass 2: the clip came back as noise/garbage or (auto mode)
+                            # as Roman-Urdu ("yeh ek library hai"). One repair retry with
+                            # the opposite language pin (see second_language above).
+                            print("[Whisper] First pass unusable -> running repair pass.")
                             text, err = WhisperService._stt_request(
                                 api_key, converted_path,
-                                language=URDU_LANGUAGES[0], prompt=URDU_TRANSLATION_PROMPT)
+                                language=second_language, prompt=second_prompt)
                             if text is not None:
                                 if not _looks_like_noise(text):
                                     print(f"[Whisper] Urdu retry success: {len(text)} chars.")

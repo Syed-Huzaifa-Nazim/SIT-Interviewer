@@ -3,6 +3,7 @@ import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import axios from 'axios';
 import api from '../services/api';
 import { getScreenStream, hasScreenStream, clearScreenStream } from '../services/proctorScreen';
+import { getAnswerLanguage } from '../services/answerLanguage';
 import {
   speakPhrase,
   createSoftWarningAccumulator,
@@ -177,6 +178,12 @@ const InterviewSession = () => {
   const liveTranscriptRef = useRef('');
   const [micActive, setMicActive] = useState(false);
   const [sttSupported, setSttSupported] = useState(true);
+  // Live-caption language: seeded from the candidate's pre-interview answer-language
+  // choice (made on the device-check screen). The UR/EN control beside the transcript
+  // switches it live for the rest of the session.
+  const [sttLang, setSttLang] = useState(() => captionLocaleFor(getAnswerLanguage()));
+  const sttLangRef = useRef(sttLang);
+  const [sttFailed, setSttFailed] = useState(false);
   // True once any audio has been captured for the current question (so the Submit
   // button enables even in browsers without live captions, where transcript stays empty).
   const [hasRecorded, setHasRecorded] = useState(false);
@@ -264,6 +271,8 @@ const InterviewSession = () => {
   const audioChunksRef = useRef([]);
   const recognitionRef = useRef(null);
   const micActiveRef = useRef(false);
+  const recognitionRestartTimerRef = useRef(null);
+  const recognitionFatalRef = useRef(false);
   const submittingRef = useRef(false);
   // Format actually negotiated for the answer recorder (see pickAnswerRecorderMimeType) — the
   // Blob type and the uploaded filename's extension must both match this exactly.
@@ -1647,13 +1656,22 @@ const InterviewSession = () => {
   }, [currentIdx, questions.length, sessionStage]);
 
   // ------------------------------------------------------------------ Voice capture (§3)
+  //
+  // Reliability notes (why this looks more defensive than a bare new SR()):
+  //  - Chrome's Web Speech silently stops after ~60s of silence or on audio route changes.
+  //    Restarting the SAME instance usually throws InvalidStateError ("already started")
+  //    which previously died in a catch{}, leaving the UI stuck on "Listening" with no
+  //    captions — the candidate had to toggle the mic off/on repeatedly. We now build a
+  //    FRESH recognition object for every (re)start, which is always legal.
+  //  - Captions default to Urdu (ur-PK): with en-US the engine guesses English for Urdu
+  //    audio and prints gibberish romanisations. The UR/EN control switches it live.
   const getSpeechRecognition = () => {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) return null;
     const recognition = new SR();
     recognition.continuous = true;
     recognition.interimResults = true;
-    recognition.lang = 'en-US';
+    recognition.lang = sttLangRef.current;
 
     recognition.onresult = (event) => {
       let interim = '';
@@ -1671,17 +1689,31 @@ const InterviewSession = () => {
     };
 
     recognition.onerror = (e) => {
-      // 'no-speech'/'aborted' are benign; log others.
-      if (e.error && !['no-speech', 'aborted'].includes(e.error)) {
-        console.warn('SpeechRecognition error:', e.error);
-      }
+      const err = e && e.error;
+      // 'no-speech'/'aborted' are benign (we restart on onend); the rest mean the
+      // captions engine is genuinely broken — surface it instead of pretending to listen.
+      if (err && ['no-speech', 'aborted'].includes(err)) return;
+      console.warn('SpeechRecognition error:', err);
+      recognitionFatalRef.current = true;
+      setSttFailed(true);
+      setInterimText('');
     };
 
     recognition.onend = () => {
-      // Chrome stops recognition periodically; restart while the mic is still active.
-      if (micActiveRef.current) {
-        try { recognition.start(); } catch { /* already started */ }
-      }
+      // Chrome stops recognition periodically. Restart with a FRESH instance (reusing the
+      // stopped one can throw and strand the UI in "Listening" forever) after a short
+      // backoff, and only while the mic is still active and nothing fatal happened.
+      if (!micActiveRef.current || recognitionFatalRef.current) return;
+      if (recognitionRestartTimerRef.current) clearTimeout(recognitionRestartTimerRef.current);
+      recognitionRestartTimerRef.current = setTimeout(async () => {
+        if (!micActiveRef.current || recognitionFatalRef.current) return;
+        try {
+          const fresh = getSpeechRecognition();
+          if (!fresh) return;
+          recognitionRef.current = fresh;
+          fresh.start();
+        } catch { /* raced with a manual stop — onend will retry */ }
+      }, 300);
     };
 
     return recognition;
@@ -1728,9 +1760,25 @@ const InterviewSession = () => {
     }
 
     // Live captions via the browser Web Speech API (best-effort; Whisper stays authoritative).
-    if (sttSupported) {
-      if (!recognitionRef.current) recognitionRef.current = getSpeechRecognition();
-      try { if (recognitionRef.current) recognitionRef.current.start(); } catch { /* already running */ }
+    // A FRESH recognition instance is built for every mic-on: a previously fatal/errored
+    // instance must never be revived, and stale timers from an old session are cleared.
+    if (recognitionRestartTimerRef.current) {
+      clearTimeout(recognitionRestartTimerRef.current);
+      recognitionRestartTimerRef.current = null;
+    }
+    recognitionFatalRef.current = false;
+    setSttFailed(false);
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SR) {
+      try {
+        const fresh = getSpeechRecognition();
+        if (fresh) {
+          recognitionRef.current = fresh;
+          fresh.start();
+        }
+      } catch { /* already running — fine */ }
+    } else if (!sttSupported) {
+      setSttSupported(false);
     }
 
     micActiveRef.current = true;
@@ -1743,6 +1791,10 @@ const InterviewSession = () => {
     micActiveRef.current = false;
     setMicActive(false);
     setIsRecording(false);
+    if (recognitionRestartTimerRef.current) {
+      clearTimeout(recognitionRestartTimerRef.current);
+      recognitionRestartTimerRef.current = null;
+    }
     // Pause (not stop) the recorder so we can resume into the same answer.
     try {
       if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
@@ -1756,6 +1808,30 @@ const InterviewSession = () => {
   const toggleMic = () => {
     if (micActive) stopMic();
     else startMic();
+  };
+
+  // Switch the live-caption language (Urdu <-> English) mid-answer. The engine cannot
+  // change lang while running, so it is stopped and restarted with a fresh instance that
+  // reads the new language; the accumulated finals (liveTranscriptRef) are untouched.
+  const toggleSttLang = () => {
+    const next = sttLangRef.current.startsWith('ur') ? 'en-US' : 'ur-PK';
+    sttLangRef.current = next;
+    setSttLang(next);
+    if (micActiveRef.current) {
+      try { if (recognitionRef.current) recognitionRef.current.stop(); } catch { /* ignore */ }
+      // onend would restart with the new lang anyway; do it immediately for snappiness.
+      if (recognitionRestartTimerRef.current) {
+        clearTimeout(recognitionRestartTimerRef.current);
+        recognitionRestartTimerRef.current = null;
+      }
+      try {
+        const fresh = getSpeechRecognition();
+        if (fresh) {
+          recognitionRef.current = fresh;
+          fresh.start();
+        }
+      } catch { /* onend retry covers it */ }
+    }
   };
 
   // Fully stop + release the audio pipeline (on submit / unmount).
@@ -1965,6 +2041,10 @@ const InterviewSession = () => {
       }
       // Live browser transcript travels as the fallback/authoritative-backup answer.
       formData.append('fallback_text', voiceText || '');
+      // Pre-interview language choice rides along so Whisper pins transcription to the
+      // declared language instead of guessing from short noisy clips.
+      const chosenLang = getAnswerLanguage();
+      if (chosenLang === 'ur' || chosenLang === 'en') formData.append('language', chosenLang);
       formData.append('duration', timeLimit && remaining !== null ? (timeLimit - remaining) : 0);
     } else {
       formData.append('response_text', asText ? overrideText : typedAnswer);
@@ -2757,10 +2837,24 @@ const InterviewSession = () => {
                   {/* Live transcript panel directly below the mic (§3) */}
                   <div className="w-full">
                     <div className="flex items-center justify-between mb-1.5">
-                      <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
-                        <Sparkles size={11} className={micActive ? 'text-primary-500 animate-pulse' : 'text-slate-400'} />
-                        Live Transcript
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
+                          <Sparkles size={11} className={micActive ? 'text-primary-500 animate-pulse' : 'text-slate-400'} />
+                          Live Transcript
+                        </span>
+                        <button
+                          type="button"
+                          onClick={toggleSttLang}
+                          title={sttLang.startsWith('ur') ? 'Live captions: Urdu — click to switch to English' : 'Live captions: English — click to switch to Urdu'}
+                          className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md border cursor-pointer transition-colors ${
+                            sttLang.startsWith('ur')
+                              ? 'bg-primary-500/10 text-primary-600 dark:text-primary-400 border-primary-500/30'
+                              : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-700'
+                          }`}
+                        >
+                          {sttLang.startsWith('ur') ? 'UR اردو' : 'EN'}
+                        </button>
+                      </div>
                       {micActive && <span className="text-[10px] font-semibold text-red-500 flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" /> Recording</span>}
                     </div>
                     <div className="w-full min-h-20 max-h-36 overflow-y-auto p-3 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl text-sm text-slate-700 dark:text-slate-200 leading-relaxed whitespace-pre-wrap">
@@ -2776,6 +2870,11 @@ const InterviewSession = () => {
                     {!sttSupported && (
                       <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-1.5">
                         Live captions aren't supported in this browser — your audio is still recorded and transcribed on submit.
+                      </p>
+                    )}
+                    {sttSupported && sttFailed && (
+                      <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-1.5">
+                        Live captions stopped unexpectedly — turn the mic off and on to retry. Your audio is still recorded and properly transcribed when you submit.
                       </p>
                     )}
                   </div>
