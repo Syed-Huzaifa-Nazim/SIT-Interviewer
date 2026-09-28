@@ -145,7 +145,7 @@ class TestSandboxEligibleCategory:
         assert sandbox_eligible_category('Resume-Based Interview')
 
     def test_the_exclusion_set_is_exactly_the_two_smit_design_tracks(self):
-        assert NO_CODING_SANDBOX_CATEGORIES == {GRAPHIC_DESIGN_SMIT, UIUX_SMIT}
+        assert NO_CODING_SANDBOX_CATEGORIES == {GRAPHIC_DESIGN_SMIT, UIUX_SMIT, 'Blockchain' + SMIT_SUFFIX}
 
 
 # --------------------------------------------------------------------- AI prompt integration
