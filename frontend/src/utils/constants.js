@@ -22,6 +22,7 @@ export const SMIT_CATEGORIES = [
   'Web and Mobile App Development' + SMIT_SUFFIX,
   'Graphic Designing With AI' + SMIT_SUFFIX,
   'UI/UX Design With AI' + SMIT_SUFFIX,
+  'Blockchain' + SMIT_SUFFIX,
 ];
 
 export const isSmitCategory = (cat) => (cat || '').endsWith(SMIT_SUFFIX);
