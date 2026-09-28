@@ -20,7 +20,7 @@ const OLD_CATEGORIES = [
   'AI', 'Cloud & Data Engineering', 'Web and Mobile App Development',
   'Graphics and UI/UX Design', 'Instructor', 'Resume-Based Interview',
 ];
-const SMIT_CATEGORIES = ['AI & Data Science — SMIT', 'UI/UX Design With AI — SMIT'];
+const SMIT_CATEGORIES = ['AI & Data Science — SMIT', 'UI/UX Design With AI — SMIT', 'Blockchain — SMIT'];
 
 // What a backend that predates the curriculum feature returns: the flat list, no groups.
 const OLD_BACKEND_CONFIG = {
@@ -102,5 +102,19 @@ describe('Category options survive a backend that sends no category_groups', () 
     };
     const select = await openWithOneRow();
     expect(optionValues(select)).toContain('Some New Track');
+  });
+});
+
+
+it('allows Blockchain to be selected in the curriculum group and applied to a row', async () => {
+  config = NEW_BACKEND_CONFIG;
+  const select = await openWithOneRow();
+  const blockchain = 'Blockchain \u2014 SMIT';
+  const group = select.querySelector('optgroup[label="SMIT Curriculum Interviews"]');
+  expect(Array.from(group.querySelectorAll('option')).map(o => o.value)).toContain(blockchain);
+  fireEvent.change(select, { target: { value: blockchain } });
+  await waitFor(() => {
+    const rowSelects = screen.getAllByRole('combobox').filter(el => el !== select && el.value === blockchain);
+    expect(rowSelects.length).toBeGreaterThan(0);
   });
 });
