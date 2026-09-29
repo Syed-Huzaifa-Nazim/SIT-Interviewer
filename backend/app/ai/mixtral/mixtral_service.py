@@ -56,10 +56,13 @@ class MixtralService:
         if Config.AI_MODE == 'mock' or not Config.MIXTRAL_API_KEY:
             return None
 
-        headers = {
-            "Authorization": f"Bearer {Config.MIXTRAL_API_KEY}",
-            "Content-Type": "application/json"
-        }
+        # Key fail-over (same pattern as WhisperService): on the Groq provider the
+        # comma-separated GROQ_API_KEYS pool rotates, so a live interview never stalls on
+        # one free-tier rate limit; every other provider keeps its single key unchanged.
+        if Config.AI_PROVIDER == 'groq' and Config.GROQ_API_KEYS:
+            keys = list(Config.GROQ_API_KEYS)
+        else:
+            keys = [Config.MIXTRAL_API_KEY]
 
         payload = {
             "model": model or Config.LLM_MODEL,
@@ -71,33 +74,41 @@ class MixtralService:
             "response_format": {"type": "json_object"}
         }
 
-        attempts = (Config.LLM_MAX_RETRIES if max_retries is None else max_retries) + 1
+        attempts_per_key = (Config.LLM_MAX_RETRIES if max_retries is None else max_retries) + 1
         last_err = None
-        for attempt in range(attempts):
-            try:
-                response = requests.post(
-                    Config.MIXTRAL_API_URL, headers=headers, json=payload, timeout=Config.LLM_TIMEOUT
-                )
-                if response.status_code == 200:
-                    content = response.json()['choices'][0]['message']['content']
-                    parsed = MixtralService._parse_json_content(content)
-                    if parsed is not None:
-                        return parsed
-                    last_err = "Response was not valid JSON"
-                elif response.status_code == 400 and 'response_format' in payload:
-                    # Some models/providers reject response_format; retry without it.
-                    payload.pop('response_format', None)
-                    last_err = f"HTTP 400 (retrying without response_format): {response.text[:150]}"
-                    continue
-                else:
-                    last_err = f"HTTP {response.status_code}: {response.text[:150]}"
-            except Exception as e:
-                last_err = str(e)
+        for key_index, api_key in enumerate(keys):
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            }
+            for attempt in range(attempts_per_key):
+                try:
+                    response = requests.post(
+                        Config.MIXTRAL_API_URL, headers=headers, json=payload, timeout=Config.LLM_TIMEOUT
+                    )
+                    if response.status_code == 200:
+                        content = response.json()['choices'][0]['message']['content']
+                        parsed = MixtralService._parse_json_content(content)
+                        if parsed is not None:
+                            return parsed
+                        last_err = "Response was not valid JSON"
+                    elif response.status_code == 400 and 'response_format' in payload:
+                        # Some models/providers reject response_format; retry without it.
+                        payload.pop('response_format', None)
+                        last_err = f"HTTP 400 (retrying without response_format): {response.text[:150]}"
+                        continue
+                    else:
+                        last_err = f"HTTP {response.status_code}: {response.text[:150]}"
+                except Exception as e:
+                    last_err = str(e)
 
-            if attempt < attempts - 1:
-                time.sleep(1.0 * (attempt + 1))
+                if attempt < attempts_per_key - 1:
+                    time.sleep(1.0 * (attempt + 1))
 
-        print(f"[MixtralService] LLM call failed after {attempts} attempt(s): {last_err}. Using fallback.")
+            if key_index < len(keys) - 1:
+                print(f"[MixtralService] Key #{key_index + 1} exhausted -> failing over to next key.")
+
+        print(f"[MixtralService] LLM call failed after all keys/attempts: {last_err}. Using fallback.")
         return None
 
     # Roles that are unambiguously technical/CS and never need a classification call.

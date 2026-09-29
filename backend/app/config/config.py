@@ -114,7 +114,9 @@ class Config:
     # Primary chat model used for question generation, answer evaluation, and domain
     # classification. Override with LLM_MODEL in .env. Defaults are chosen per provider
     # to favour stronger reasoning + reliable JSON output over the older mixtral-8x7b.
-    default_llm_model = 'llama-3.3-70b-versatile'  # groq default
+    # NOTE: Groq retired llama-3.3-70b-versatile (Sep 2026); gpt-oss-120b is the current
+    # flagship chat model on its free tier. Verified live via /openai/v1/models.
+    default_llm_model = 'openai/gpt-oss-120b'  # groq default
     if AI_PROVIDER == 'openrouter':
         default_llm_model = 'meta-llama/llama-3.3-70b-instruct'
     elif AI_PROVIDER == 'together':
