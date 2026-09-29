@@ -24,6 +24,7 @@ import smtplib
 import ssl
 import threading
 import requests
+from contextlib import contextmanager
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.image import MIMEImage
@@ -52,6 +53,33 @@ def _html_to_text(html):
 class EmailService:
     """Modular sender: routes rendered templates to SMTP (or the console) with
     retries, logging, and a persistent EmailLog audit row per message."""
+
+    _smtp_local = threading.local()
+
+    @classmethod
+    @contextmanager
+    def smtp_batch(cls):
+        """Reuse one SMTP connection per bulk worker, never across threads."""
+        cls._smtp_local.reuse = True
+        try:
+            yield
+        finally:
+            cls._close_smtp()
+            cls._smtp_local.reuse = False
+
+    @classmethod
+    def _close_smtp(cls):
+        server = getattr(cls._smtp_local, 'server', None)
+        cls._smtp_local.server = None
+        if server is not None:
+            try:
+                server.quit()
+            except Exception:
+                # DATA already succeeded: a failed QUIT must not resend the message.
+                try:
+                    server.close()
+                except Exception:
+                    pass
 
     @classmethod
     def send(cls, to_email, subject, html, email_type='general', user_id=None, background=True, attachments=None):
@@ -173,21 +201,28 @@ class EmailService:
         # hosts (e.g. Render's free tier) block outbound SMTP ports entirely — use
         # EMAIL_MODE=gmail_api there instead (see _deliver_via_gmail_api).
         msg = cls._build_mime_message(to_email, subject, html, attachments)
-        if Config.SMTP_USE_SSL:
-            with smtplib.SMTP_SSL(Config.SMTP_HOST, Config.SMTP_PORT,
-                                  context=ssl.create_default_context(), timeout=20) as server:
-                if Config.SMTP_USERNAME:
-                    server.login(Config.SMTP_USERNAME, Config.SMTP_PASSWORD)
-                server.sendmail(Config.EMAIL_FROM, [to_email], msg.as_string())
-        else:
-            with smtplib.SMTP(Config.SMTP_HOST, Config.SMTP_PORT, timeout=20) as server:
+        server = getattr(cls._smtp_local, 'server', None)
+        try:
+            if server is None:
+                if Config.SMTP_USE_SSL:
+                    server = smtplib.SMTP_SSL(Config.SMTP_HOST, Config.SMTP_PORT,
+                                              context=ssl.create_default_context(), timeout=20)
+                else:
+                    server = smtplib.SMTP(Config.SMTP_HOST, Config.SMTP_PORT, timeout=20)
+                cls._smtp_local.server = server
                 server.ehlo()
-                if Config.SMTP_USE_TLS:
+                if Config.SMTP_USE_TLS and not Config.SMTP_USE_SSL:
                     server.starttls(context=ssl.create_default_context())
                     server.ehlo()
                 if Config.SMTP_USERNAME:
                     server.login(Config.SMTP_USERNAME, Config.SMTP_PASSWORD)
-                server.sendmail(Config.EMAIL_FROM, [to_email], msg.as_string())
+            server.sendmail(Config.EMAIL_FROM, [to_email], msg.as_string())
+        except Exception:
+            cls._close_smtp()
+            raise
+        finally:
+            if not getattr(cls._smtp_local, 'reuse', False):
+                cls._close_smtp()
 
     @classmethod
     def _deliver_via_gmail_api(cls, to_email, subject, html, attachments=None):

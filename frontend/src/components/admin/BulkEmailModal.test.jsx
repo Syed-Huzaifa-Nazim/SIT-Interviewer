@@ -15,6 +15,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent, cleanup } from '@testing-library/react';
 
 import BulkEmailModal from './BulkEmailModal';
+import api from '../../services/api';
 
 const OLD_CATEGORIES = [
   'AI', 'Cloud & Data Engineering', 'Web and Mobile App Development',
@@ -117,4 +118,23 @@ it('allows Blockchain to be selected in the curriculum group and applied to a ro
     const rowSelects = screen.getAllByRole('combobox').filter(el => el !== select && el.value === blockchain);
     expect(rowSelects.length).toBeGreaterThan(0);
   });
+});
+
+
+it('validates against the selected company and filters its categories', async () => {
+  config = {
+    ...NEW_BACKEND_CONFIG,
+    companies: [
+      { id: 10, name: 'Company A', allowed_interview_types: ['AI'] },
+      { id: 20, name: 'Company B', allowed_interview_types: ['Instructor'] },
+    ],
+  };
+  await openWithOneRow();
+  fireEvent.change(screen.getByLabelText('Company'), { target: { value: '20' } });
+  await waitFor(() => expect(api.post).toHaveBeenCalledWith(
+    '/admin/bulk-email/validate', expect.objectContaining({ company_id: 20 }),
+  ));
+  const categorySelect = screen.getAllByRole('combobox').find((el) =>
+    Array.from(el.options).some((o) => o.textContent.startsWith('Category')));
+  expect(optionValues(categorySelect)).toEqual(['Instructor']);
 });

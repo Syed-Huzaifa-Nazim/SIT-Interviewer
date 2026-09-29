@@ -62,6 +62,7 @@ const toRow = (record, defaultDeadline) => {
 const BulkEmailModal = ({ open, onClose, onSent }) => {
   const [config, setConfig] = useState(null);
   const [subject, setSubject] = useState('');
+  const [companyId, setCompanyId] = useState('');
   // Optional cohort label for this batch — becomes its filter chip on the Bulk Invited tab.
   const [batchName, setBatchName] = useState('');
   const [personalize, setPersonalize] = useState(true);
@@ -86,7 +87,11 @@ const BulkEmailModal = ({ open, onClose, onSent }) => {
   useEffect(() => {
     if (!open) return;
     api.get('/admin/bulk-email/config')
-      .then((res) => setConfig(res.data))
+      .then((res) => {
+        setConfig(res.data);
+        setCompanyId((current) => res.data.companies?.some((c) => String(c.id) === current)
+          ? current : res.data.companies?.length === 1 ? String(res.data.companies[0].id) : '');
+      })
       .catch((err) => {
         // Say which failure this actually is. "Could not load configuration" on its own
         // sends you hunting through the UI when the real answer is almost always that the
@@ -233,17 +238,18 @@ const BulkEmailModal = ({ open, onClose, onSent }) => {
   useEffect(() => {
     if (!open || rows.length === 0) { setValidation(null); return; }
     let cancelled = false;
+    setValidation(null);
     setValidating(true);
     const t = setTimeout(() => {
-      api.post('/admin/bulk-email/validate', { rows })
-        .then((res) => { if (!cancelled) setValidation(res.data); })
+      api.post('/admin/bulk-email/validate', { rows, company_id: companyId ? Number(companyId) : null })
+        .then((res) => { if (!cancelled) { setValidation(res.data); setError(''); } })
         .catch((err) => {
           if (!cancelled) setError(err.response?.data?.detail || 'Validation failed.');
         })
         .finally(() => { if (!cancelled) setValidating(false); });
     }, 350); // debounce so typing in a cell isn't one request per keystroke
     return () => { cancelled = true; clearTimeout(t); };
-  }, [rows, open]);
+  }, [rows, open, companyId]);
 
   const rowErrors = (idx) => validation?.results?.find((r) => r.index === idx)?.errors || [];
   const rowValid = (idx) => validation?.results?.find((r) => r.index === idx)?.valid;
@@ -284,6 +290,7 @@ const BulkEmailModal = ({ open, onClose, onSent }) => {
     try {
       const res = await api.post('/admin/bulk-email/send', {
         rows, subject, personalize, file_name: fileName, batch_name: batchName,
+        company_id: companyId ? Number(companyId) : null,
       });
       const started = res.data.batch;
       setBatch(started);
@@ -323,12 +330,7 @@ const BulkEmailModal = ({ open, onClose, onSent }) => {
 
   if (!open) return null;
 
-  // Interview Access (curriculum feature): when this admin holds exactly one company — the
-  // only case this modal actually supports today, since it never asks which company to send
-  // under — the Category options are narrowed to what that company is allowed to invite.
-  // Falls back to every category when there's no single company to resolve (0 or several),
-  // same as /send itself would; the real gate is server-side regardless (_validate_row).
-  const singleCompany = config?.companies?.length === 1 ? config.companies[0] : null;
+  const singleCompany = config?.companies?.find((c) => String(c.id) === companyId);
   const allowedCategories =
     singleCompany && singleCompany.allowed_interview_types
       ? singleCompany.allowed_interview_types
@@ -368,7 +370,7 @@ const BulkEmailModal = ({ open, onClose, onSent }) => {
 
   const validCount = validation?.valid_count ?? 0;
   const allValid = rows.length > 0 && validCount === rows.length;
-  const canSend = allValid && subject.trim() && !sending && !validating;
+  const canSend = (!(config?.companies?.length) || companyId) && allValid && subject.trim() && !sending && !validating;
   // Cells are always-visible bordered boxes (not just on hover/focus) so a freshly added
   // BLANK manual row still reads as an editable form/grid instead of empty whitespace —
   // the transparent/borderless style this replaced only looked fine when a file upload
@@ -453,6 +455,20 @@ const BulkEmailModal = ({ open, onClose, onSent }) => {
                 {/* Configuration */}
                 <div className="space-y-3">
                   <StepTitle n={1} label="Configuration" />
+                  {config?.companies?.length > 0 && (
+                    <div>
+                      <label htmlFor="bulk-company" className="text-xs font-bold">Company</label>
+                      <select id="bulk-company" className="w-full glass-input text-sm mt-1.5"
+                        value={companyId} onChange={(e) => {
+                          setCompanyId(e.target.value); setValidation(null);
+                        }}>
+                        <option value="">Choose company</option>
+                        {config.companies.map((company) => (
+                          <option key={company.id} value={company.id}>{company.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
                   <div>
                     <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400">
                       Email subject / title
