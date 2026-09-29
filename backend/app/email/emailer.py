@@ -204,18 +204,8 @@ class EmailService:
         server = getattr(cls._smtp_local, 'server', None)
         try:
             if server is None:
-                if Config.SMTP_USE_SSL:
-                    server = smtplib.SMTP_SSL(Config.SMTP_HOST, Config.SMTP_PORT,
-                                              context=ssl.create_default_context(), timeout=20)
-                else:
-                    server = smtplib.SMTP(Config.SMTP_HOST, Config.SMTP_PORT, timeout=20)
+                server = cls._connect_smtp()
                 cls._smtp_local.server = server
-                server.ehlo()
-                if Config.SMTP_USE_TLS and not Config.SMTP_USE_SSL:
-                    server.starttls(context=ssl.create_default_context())
-                    server.ehlo()
-                if Config.SMTP_USERNAME:
-                    server.login(Config.SMTP_USERNAME, Config.SMTP_PASSWORD)
             server.sendmail(Config.EMAIL_FROM, [to_email], msg.as_string())
         except Exception:
             cls._close_smtp()
@@ -223,6 +213,50 @@ class EmailService:
         finally:
             if not getattr(cls._smtp_local, 'reuse', False):
                 cls._close_smtp()
+
+    @staticmethod
+    def _open_smtp(port, use_ssl):
+        server = None
+        try:
+            if use_ssl:
+                server = smtplib.SMTP_SSL(Config.SMTP_HOST, port,
+                                          context=ssl.create_default_context(), timeout=20)
+            else:
+                server = smtplib.SMTP(Config.SMTP_HOST, port, timeout=20)
+            server.ehlo()
+            if Config.SMTP_USE_TLS and not use_ssl:
+                server.starttls(context=ssl.create_default_context())
+                server.ehlo()
+            if Config.SMTP_USERNAME:
+                server.login(Config.SMTP_USERNAME, Config.SMTP_PASSWORD)
+            return server
+        except Exception:
+            if server is not None:
+                try:
+                    server.close()
+                except Exception:
+                    pass
+            raise
+
+    @classmethod
+    def _connect_smtp(cls):
+        try:
+            return cls._open_smtp(Config.SMTP_PORT, Config.SMTP_USE_SSL)
+        except smtplib.SMTPException:
+            # Authentication/protocol errors are not blocked-port failures.
+            raise
+        except OSError as exc:
+            transient = (isinstance(exc, (ConnectionError, TimeoutError))
+                         or exc.errno in (101, 111, 10051, 10060, 10061)
+                         or 'unreachable' in str(exc).lower()
+                         or 'timed out' in str(exc).lower())
+            if Config.SMTP_USE_SSL or not transient:
+                raise
+            logger.warning('SMTP port %s unavailable; trying implicit SSL on 465',
+                           Config.SMTP_PORT)
+            # Only connection setup falls back. Once DATA starts, a disconnect can
+            # mean the message was accepted; do not immediately send it again here.
+            return cls._open_smtp(465, True)
 
     @classmethod
     def _deliver_via_gmail_api(cls, to_email, subject, html, attachments=None):

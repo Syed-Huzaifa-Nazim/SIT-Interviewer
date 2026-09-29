@@ -97,3 +97,40 @@ def test_batch_records_each_result_even_when_worker_cleanup_raises(monkeypatch):
     assert batch.sent_count == 1
     assert batch.failed_count == 1
     assert json.loads(batch.failures)[0]['row'] == 2
+
+
+def test_blocked_starttls_port_falls_back_and_reuses_ssl(smtp, monkeypatch):
+    smtp.side_effect = OSError(101, 'Network is unreachable')
+    ssl_factory = MagicMock()
+    monkeypatch.setattr('app.email.emailer.smtplib.SMTP_SSL', ssl_factory)
+    with EmailService.smtp_batch():
+        assert send() is True
+        assert send() is True
+    assert smtp.call_count == 1
+    assert ssl_factory.call_args.args == (Config.SMTP_HOST, 465)
+    assert ssl_factory.return_value.sendmail.call_count == 2
+    ssl_factory.return_value.login.assert_called_once()
+    ssl_factory.return_value.starttls.assert_not_called()
+
+
+def test_authentication_failure_does_not_trigger_ssl_fallback(smtp, monkeypatch):
+    import smtplib
+    server = MagicMock()
+    server.login.side_effect = smtplib.SMTPAuthenticationError(535, b'Invalid credentials')
+    smtp.side_effect = lambda *args, **kwargs: server
+    ssl_factory = MagicMock()
+    monkeypatch.setattr('app.email.emailer.smtplib.SMTP_SSL', ssl_factory)
+    assert send() is False
+    ssl_factory.assert_not_called()
+    server.sendmail.assert_not_called()
+    assert server.close.call_count == 2
+
+
+def test_send_timeout_does_not_trigger_ssl_fallback(smtp, monkeypatch):
+    server = MagicMock()
+    server.sendmail.side_effect = TimeoutError('DATA response timeout')
+    smtp.side_effect = lambda *args, **kwargs: server
+    ssl_factory = MagicMock()
+    monkeypatch.setattr('app.email.emailer.smtplib.SMTP_SSL', ssl_factory)
+    assert send() is False
+    ssl_factory.assert_not_called()
