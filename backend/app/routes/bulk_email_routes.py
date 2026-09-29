@@ -16,7 +16,8 @@ import json
 import datetime
 import secrets
 import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
+from queue import Queue, Empty
 
 from fastapi import APIRouter, Body, HTTPException, Depends
 from fastapi.responses import StreamingResponse
@@ -501,10 +502,9 @@ def _create_and_invite(row, batch_id, subject, personalize, company_id=None):
     ))
     db.session.commit()
 
-    # Read every attribute we still need BEFORE sending. EmailService._log() ends with
-    # db.session.remove(), which detaches this instance — touching user.id afterwards would
-    # raise "not bound to a Session" and wrongly report a delivered email as a failure.
+    # Capture the ID then release the connection before waiting on email delivery.
     user_id = user.id
+    db.session.remove()
 
     subject_line, html = email_templates.bulk_invite(
         name=row['name'],
@@ -572,14 +572,30 @@ def _process_batch(batch_id, rows):
         # Send a few at a time rather than strictly one-by-one: each recipient costs a full
         # SMTP round trip (plus up to EMAIL_MAX_RETRIES retries with a delay between them),
         # so a serial loop spends almost all of its time waiting on the network.
+        pending, completed = Queue(), Queue()
+        for idx, row in enumerate(rows):
+            pending.put((idx, row))
+
+        def send_worker():
+            with EmailService.smtp_batch():
+                while True:
+                    try:
+                        idx, row = pending.get_nowait()
+                    except Empty:
+                        return
+                    try:
+                        error = _invite_one(row, batch_id, subject, personalize, company_id)
+                    except Exception as exc:
+                        # Even session cleanup failures must produce a result, otherwise
+                        # the coordinator would wait forever for this recipient.
+                        error = str(exc)[:300]
+                    completed.put((idx, error))
+
         with ThreadPoolExecutor(max_workers=max(1, SEND_CONCURRENCY)) as pool:
-            futures = {
-                pool.submit(_invite_one, row, batch_id, subject, personalize, company_id): idx
-                for idx, row in enumerate(rows)
-            }
-            for future in as_completed(futures):
-                idx = futures[future]
-                error = future.result()
+            for _ in range(min(len(rows), max(1, SEND_CONCURRENCY))):
+                pool.submit(send_worker)
+            for _ in rows:
+                idx, error = completed.get()
                 if error is None:
                     sent += 1
                 else:
