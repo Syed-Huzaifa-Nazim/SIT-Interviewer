@@ -174,13 +174,31 @@ class EmailService:
         # EMAIL_MODE=gmail_api there instead (see _deliver_via_gmail_api).
         msg = cls._build_mime_message(to_email, subject, html, attachments)
         if Config.SMTP_USE_SSL:
-            with smtplib.SMTP_SSL(Config.SMTP_HOST, Config.SMTP_PORT,
-                                  context=ssl.create_default_context(), timeout=20) as server:
+            cls._smtp_send(Config.SMTP_HOST, Config.SMTP_PORT, msg, to_email, use_ssl=True)
+            return
+        try:
+            cls._smtp_send(Config.SMTP_HOST, Config.SMTP_PORT, msg, to_email, use_ssl=False)
+        except OSError as exc:
+            # Several PaaS networks (Railway included) block outbound 587 while leaving
+            # 465 reachable, so a STARTTLS failure that looks like a connectivity problem
+            # (Errno 101/111, timeout) gets one automatic retry over implicit SSL —
+            # without this the whole bulk batch fails with "Network is unreachable".
+            transient = isinstance(exc, (ConnectionError, TimeoutError)) or 'Errno 101' in str(exc) \
+                or 'Errno 111' in str(exc) or 'unreachable' in str(exc).lower() or 'timed out' in str(exc).lower()
+            if not transient:
+                raise
+            print(f"[Email] SMTP:{Config.SMTP_PORT} unreachable ({exc}) -> retrying over implicit SSL port 465.")
+            cls._smtp_send(Config.SMTP_HOST, 465, msg, to_email, use_ssl=True)
+
+    @staticmethod
+    def _smtp_send(host, port, msg, to_email, use_ssl=False):
+        if use_ssl:
+            with smtplib.SMTP_SSL(host, port, context=ssl.create_default_context(), timeout=20) as server:
                 if Config.SMTP_USERNAME:
                     server.login(Config.SMTP_USERNAME, Config.SMTP_PASSWORD)
                 server.sendmail(Config.EMAIL_FROM, [to_email], msg.as_string())
         else:
-            with smtplib.SMTP(Config.SMTP_HOST, Config.SMTP_PORT, timeout=20) as server:
+            with smtplib.SMTP(host, port, timeout=20) as server:
                 server.ehlo()
                 if Config.SMTP_USE_TLS:
                     server.starttls(context=ssl.create_default_context())
