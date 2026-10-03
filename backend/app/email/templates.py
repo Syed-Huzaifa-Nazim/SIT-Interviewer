@@ -60,40 +60,43 @@ def _button(href, label):
 
 
 def _interview_rules():
-    """Candidate-facing rules shared by every official interview invitation."""
+    """Plain-language rules shared by all official interview invitations."""
     return """
-<div style="margin:20px 0;padding:16px 20px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:8px;">
-<h3 style="margin:0 0 10px;color:#0f172a;font-size:15px;">Interview rules and consequences</h3>
-<p style="margin:0 0 12px;">Before starting, prepare a working camera and microphone, share your entire screen,
-and sit alone in a well-lit place. Keep your camera on, your full face visible, and the interview window active.</p>
-<p style="margin:12px 0 6px;"><b>Hard violations &mdash; each counts as a strike:</b></p>
-<ul style="margin:0 0 12px;padding-left:20px;">
-<li>Another person appearing on camera (two or more faces detected).</li>
-<li>Looking away from the screen with your eyes for about one second or longer.</li>
-<li>Switching tabs, minimizing the window, or moving focus outside the interview window.</li>
-<li>Attempting to copy, paste, or cut.</li>
-<li>Using blocked shortcuts: Ctrl/Cmd+C, V, X, or A; F12; or Ctrl/Cmd+Shift+I.</li>
-<li>Attempting to turn off the camera.</li>
+<div style="margin:20px 0;padding:16px 18px;border:1px solid #e2e8f0;border-radius:8px;">
+<h3 style="margin:0 0 8px;color:#0f172a;font-size:16px;">Before you start</h3>
+<p style="margin:0 0 16px;">Sit alone in a well-lit room. Check your camera and microphone.
+Share your <b>entire screen</b> when asked. Keep your face clearly visible.</p>
+
+<h3 style="margin:0 0 8px;color:#0f172a;font-size:16px;">During the interview</h3>
+<p style="margin:0 0 8px;">Each of the following counts as <b>1 violation</b>:</p>
+<ul style="margin:0 0 16px;padding-left:20px;">
+<li style="margin-bottom:6px;">Another person appears on camera with you.</li>
+<li style="margin-bottom:6px;">You look away from the screen for about 1 second or longer.</li>
+<li style="margin-bottom:6px;">You switch tabs, minimize the interview, or click another window.</li>
+<li style="margin-bottom:6px;">You try to copy, paste, cut, or use a blocked shortcut
+(Ctrl/Cmd+C, V, X, A; F12; Ctrl/Cmd+Shift+I).</li>
+<li>You try to turn off your camera.</li>
 </ul>
-<p style="margin:12px 0 6px;"><b>Soft warnings &mdash; correct your position when prompted:</b></p>
-<ul style="margin:0 0 12px;padding-left:20px;">
-<li>No face detected, turning your head away, or a hand appearing in the camera view:
-every fourth registered warning across these three types, in any combination, becomes one hard strike.</li>
-<li>Your face being too far away or partly outside the frame for about two seconds:
-a warning only, with no strike.</li>
-<li>Your eyes appearing closed or not clearly visible for about four seconds:
-a warning only, with no strike.</li>
-</ul>
-<p style="margin:12px 0;padding:10px 12px;background:#fef2f2;border-left:3px solid #dc2626;color:#991b1b;">
-<b>The fifth hard strike automatically terminates your interview.</b>
-The attempt is recorded with a zero score, and your account is blocked for 30 days.</p>
-<p style="margin:12px 0;"><b>Identity verification:</b> the person on camera must remain the candidate verified
-at the start. Two consecutive identity mismatches terminate the session separately, without waiting for five
-strikes. This gives a zero score and uses your attempt, but does not itself trigger the 30-day account block.</p>
-<p style="margin:12px 0;">Camera or recording failures are logged for administrator review and do not count
-as misconduct strikes. Follow any recovery prompts.</p>
-<p style="margin:0;color:#64748b;font-size:12px;">If you believe a detection was incorrect, contact the
-SMIT administration office for review. A new attempt requires administrative approval.</p>
+
+<h3 style="margin:0 0 8px;color:#0f172a;font-size:16px;">Warnings: correct your position</h3>
+<p style="margin:0 0 10px;">You will get a warning if your face is missing, you turn your head away,
+or your hand appears on camera. <b>Every 4 of these warnings count as 1 violation</b>,
+even if they are for different reasons.</p>
+<p style="margin:0 0 16px;">If your face is too far away or partly outside the picture, or your eyes
+stay closed or unclear, you will get a reminder. <b>These reminders do not add a violation.</b></p>
+
+<div style="margin:0 0 16px;padding:12px 14px;background:#fef2f2;border-left:3px solid #dc2626;color:#991b1b;">
+<b>At 5 violations, your interview ends automatically.</b><br>
+Your score will be <b>0</b> and your account will be blocked for <b>30 days</b>.
+</div>
+
+<p style="margin:0 0 12px;"><b>Only you may take your interview.</b> If the camera detects a different person
+in 2 checks in a row, the interview ends with a score of 0 and the attempt is used.
+This does not add violations or automatically block your account for 30 days.</p>
+<p style="margin:0 0 12px;"><b>Camera or recording problem?</b> Follow the on-screen instructions.
+Technical problems are recorded for review; they do not add violations.</p>
+<p style="margin:0;color:#475569;">If you think there was a mistake, contact the SMIT administration office.
+You need their approval to take the interview again.</p>
 </div>
 """
 
@@ -116,20 +119,19 @@ the administration will upgrade your account for the official interview. Keep th
 
 def completed_signup(name, cnic, otp):
     """2. Completed-course candidate signup confirmation (CNIC + one-time password) — §3.2."""
-    subject = 'Your SMIT Interview Invitation — One-Time Login Credentials'
+    subject = 'Your SMIT Interview Invitation and Login Details'
     body = f"""
 <p>Dear {name},</p>
-<p>You have completed your course and are invited to take your <b>official
-AI-proctored interview</b>. Use the credentials below to sign in:</p>
+<p>You are invited to your <b>official SMIT interview</b>.
+Use your CNIC and the password below to log in:</p>
 {_credentials_box([('Username (CNIC)', cnic), ('One-Time Password', otp)])}
 <div style="margin:16px 0;padding:12px 16px;background:#fef9ec;border:1px solid #f5d67b;border-radius:8px;color:#8a6d1a;font-size:12px;">
-<b>Important:</b> this password works exactly <b>once</b>. Only log in when you are ready to
-take the interview — a working camera and microphone are required, and the session runs in
-full-screen under AI proctoring.
+<b>Log in only when you are ready.</b> This password can be used <b>once</b>.
+Your interview will run in full screen. Your camera and screen will be monitored.
 </div>
 {_interview_rules()}
-{_button(Config.APP_BASE_URL + '/login', 'Log in & Start Interview')}
-<p style="color:#64748b;font-size:12px;">After the interview, you will be signed out automatically and these credentials will no longer work.</p>
+{_button(Config.APP_BASE_URL + '/login', 'Log in &amp; Start Interview')}
+<p style="color:#64748b;font-size:12px;">You will be logged out when the interview ends. This password cannot be used again.</p>
 """
     return subject, _base('You are invited to your official interview', body)
 
@@ -137,20 +139,19 @@ full-screen under AI proctoring.
 def instructor_invite(name, cnic, otp):
     """Instructor signup / invite confirmation (CNIC + one-time password) — Update §3.
     Mirrors the completed-course invite but with instructor-appropriate wording."""
-    subject = 'Your SMIT Instructor Interview Invitation — One-Time Login Credentials'
+    subject = 'Your SMIT Instructor Interview and Login Details'
     body = f"""
 <p>Dear {name},</p>
 <p>You have been invited to take your <b>instructor assessment interview</b> on the
-SMIT Assessment Portal. Use the credentials below to sign in:</p>
+SMIT Assessment Portal. Use your CNIC and the password below to log in:</p>
 {_credentials_box([('Username (CNIC)', cnic), ('One-Time Password', otp)])}
 <div style="margin:16px 0;padding:12px 16px;background:#fef9ec;border:1px solid #f5d67b;border-radius:8px;color:#8a6d1a;font-size:12px;">
-<b>Important:</b> this password works exactly <b>once</b>. Only log in when you are ready to
-take the interview — a working camera and microphone are required, and the session runs in
-full-screen under AI proctoring.
+<b>Log in only when you are ready.</b> This password can be used <b>once</b>.
+Your interview will run in full screen. Your camera and screen will be monitored.
 </div>
 {_interview_rules()}
-{_button(Config.APP_BASE_URL + '/login', 'Log in & Start Interview')}
-<p style="color:#64748b;font-size:12px;">After the interview, you will be signed out automatically and these credentials will no longer work.</p>
+{_button(Config.APP_BASE_URL + '/login', 'Log in &amp; Start Interview')}
+<p style="color:#64748b;font-size:12px;">You will be logged out when the interview ends. This password cannot be used again.</p>
 """
     return subject, _base('You are invited to your instructor interview', body)
 
@@ -166,13 +167,13 @@ def bulk_invite(name, cnic, otp, subject_override, instructor=False,
     """
     role_line = (
         'your <b>instructor assessment interview</b>' if instructor
-        else 'your <b>official AI-proctored interview</b>'
+        else 'your <b>official interview</b>'
     )
     greeting = f'Dear {name},' if personalize else 'Dear Candidate,'
 
     category_line = ''
     if personalize and category and not instructor:
-        category_line = f'<p>This assessment covers your <b>{category}</b> track.</p>'
+        category_line = f'<p>Your interview subject is <b>{category}</b>.</p>'
 
     deadline_html = ''
     if personalize and deadline_days:
@@ -180,27 +181,26 @@ def bulk_invite(name, cnic, otp, subject_override, instructor=False,
         deadline_html = (
             f'<div style="margin:16px 0;padding:12px 16px;background:#fdecec;border:1px solid #f5b7b7;'
             f'border-radius:8px;color:#9b2c2c;font-size:12px;">'
-            f'<b>Deadline:</b> these credentials expire in <b>{deadline_days} {day_word}</b>. '
-            f'Please complete your interview before then — after that they will stop working '
-            f'and you will need to be re-invited.'
+            f'<b>Deadline:</b> complete your interview within <b>{deadline_days} {day_word}</b>. '
+            f'After this time, your login details will expire '
+            f'and you will need a new invitation.'
             f'</div>'
         )
 
     body = f"""
 <p>{greeting}</p>
 <p>You have been invited to take {role_line} on the SMIT Assessment Portal.
-Use the credentials below to sign in:</p>
+Use your CNIC and the password below to log in:</p>
 {category_line}
 {_credentials_box([('Username (CNIC)', cnic), ('One-Time Password', otp)])}
 <div style="margin:16px 0;padding:12px 16px;background:#fef9ec;border:1px solid #f5d67b;border-radius:8px;color:#8a6d1a;font-size:12px;">
-<b>Important:</b> this password works exactly <b>once</b>. Only log in when you are ready to
-take the interview — a working camera and microphone are required, and the session runs in
-full-screen under AI proctoring.
+<b>Log in only when you are ready.</b> This password can be used <b>once</b>.
+Your interview will run in full screen. Your camera and screen will be monitored.
 </div>
 {deadline_html}
 {_interview_rules()}
 {_button(Config.APP_BASE_URL + '/login', 'Log in &amp; Start Interview')}
-<p style="color:#64748b;font-size:12px;">After the interview, you will be signed out automatically and these credentials will no longer work.</p>
+<p style="color:#64748b;font-size:12px;">You will be logged out when the interview ends. This password cannot be used again.</p>
 """
     title = ('You are invited to your instructor interview' if instructor
              else 'You are invited to your official interview')
@@ -259,17 +259,18 @@ to this email for your reference.</p>
 
 def reinterview_approved(name, cnic, otp):
     """3. Second-interview approval email (fresh one-time password) — §3.4."""
-    subject = 'Second Interview Approved — Your One-Time Login Credentials'
+    subject = 'Second Interview Approved - Your Login Details'
     body = f"""
 <p>Dear {name},</p>
 <p>Good news — the administration has <b style="color:{BRAND_GREEN};">approved</b> your request
-for a second interview attempt. Use the fresh credentials below to sign in:</p>
+for a second interview. Use your CNIC and the new password below to log in:</p>
 {_credentials_box([('Username (CNIC)', cnic), ('One-Time Password', otp)])}
 <div style="margin:16px 0;padding:12px 16px;background:#fef9ec;border:1px solid #f5d67b;border-radius:8px;color:#8a6d1a;font-size:12px;">
-<b>Important:</b> as before, this password works exactly <b>once</b>. Only log in when you are ready to take the interview.
+<b>Log in only when you are ready.</b> This password can be used <b>once</b>.
+Your interview will run in full screen. Your camera and screen will be monitored.
 </div>
 {_interview_rules()}
-{_button(Config.APP_BASE_URL + '/login', 'Log in & Start Interview')}
+{_button(Config.APP_BASE_URL + '/login', 'Log in &amp; Start Interview')}
 """
     return subject, _base('Your second interview attempt has been approved', body)
 
