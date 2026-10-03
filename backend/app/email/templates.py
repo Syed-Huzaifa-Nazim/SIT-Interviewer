@@ -58,6 +58,46 @@ def _button(href, label):
     )
 
 
+
+def _interview_rules():
+    """Candidate-facing rules shared by every official interview invitation."""
+    return """
+<div style="margin:20px 0;padding:16px 20px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:8px;">
+<h3 style="margin:0 0 10px;color:#0f172a;font-size:15px;">Interview rules and consequences</h3>
+<p style="margin:0 0 12px;">Before starting, prepare a working camera and microphone, share your entire screen,
+and sit alone in a well-lit place. Keep your camera on, your full face visible, and the interview window active.</p>
+<p style="margin:12px 0 6px;"><b>Hard violations &mdash; each counts as a strike:</b></p>
+<ul style="margin:0 0 12px;padding-left:20px;">
+<li>Another person appearing on camera (two or more faces detected).</li>
+<li>Looking away from the screen with your eyes for about one second or longer.</li>
+<li>Switching tabs, minimizing the window, or moving focus outside the interview window.</li>
+<li>Attempting to copy, paste, or cut.</li>
+<li>Using blocked shortcuts: Ctrl/Cmd+C, V, X, or A; F12; or Ctrl/Cmd+Shift+I.</li>
+<li>Attempting to turn off the camera.</li>
+</ul>
+<p style="margin:12px 0 6px;"><b>Soft warnings &mdash; correct your position when prompted:</b></p>
+<ul style="margin:0 0 12px;padding-left:20px;">
+<li>No face detected, turning your head away, or a hand appearing in the camera view:
+every fourth registered warning across these three types, in any combination, becomes one hard strike.</li>
+<li>Your face being too far away or partly outside the frame for about two seconds:
+a warning only, with no strike.</li>
+<li>Your eyes appearing closed or not clearly visible for about four seconds:
+a warning only, with no strike.</li>
+</ul>
+<p style="margin:12px 0;padding:10px 12px;background:#fef2f2;border-left:3px solid #dc2626;color:#991b1b;">
+<b>The fifth hard strike automatically terminates your interview.</b>
+The attempt is recorded with a zero score, and your account is blocked for 30 days.</p>
+<p style="margin:12px 0;"><b>Identity verification:</b> the person on camera must remain the candidate verified
+at the start. Two consecutive identity mismatches terminate the session separately, without waiting for five
+strikes. This gives a zero score and uses your attempt, but does not itself trigger the 30-day account block.</p>
+<p style="margin:12px 0;">Camera or recording failures are logged for administrator review and do not count
+as misconduct strikes. Follow any recovery prompts.</p>
+<p style="margin:0;color:#64748b;font-size:12px;">If you believe a detection was incorrect, contact the
+SMIT administration office for review. A new attempt requires administrative approval.</p>
+</div>
+"""
+
+
 def ongoing_signup(name, cnic, password):
     """1. Ongoing-course candidate signup confirmation (CNIC + password) — §3.1."""
     subject = 'Welcome to SMIT Assessment Portal — Your Login Credentials'
@@ -87,6 +127,7 @@ AI-proctored interview</b>. Use the credentials below to sign in:</p>
 take the interview — a working camera and microphone are required, and the session runs in
 full-screen under AI proctoring.
 </div>
+{_interview_rules()}
 {_button(Config.APP_BASE_URL + '/login', 'Log in & Start Interview')}
 <p style="color:#64748b;font-size:12px;">After the interview, you will be signed out automatically and these credentials will no longer work.</p>
 """
@@ -107,6 +148,7 @@ SMIT Assessment Portal. Use the credentials below to sign in:</p>
 take the interview — a working camera and microphone are required, and the session runs in
 full-screen under AI proctoring.
 </div>
+{_interview_rules()}
 {_button(Config.APP_BASE_URL + '/login', 'Log in & Start Interview')}
 <p style="color:#64748b;font-size:12px;">After the interview, you will be signed out automatically and these credentials will no longer work.</p>
 """
@@ -156,6 +198,7 @@ take the interview — a working camera and microphone are required, and the ses
 full-screen under AI proctoring.
 </div>
 {deadline_html}
+{_interview_rules()}
 {_button(Config.APP_BASE_URL + '/login', 'Log in &amp; Start Interview')}
 <p style="color:#64748b;font-size:12px;">After the interview, you will be signed out automatically and these credentials will no longer work.</p>
 """
@@ -202,7 +245,7 @@ def proctoring_termination_notice(name):
 <p>Dear {name},</p>
 <p>Your recent SMIT interview was <b style="color:#dc2626;">terminated</b> because our
 automated proctoring system detected a violation of the interview integrity rules
-(for example, a mobile phone, another person, or leaving the camera view).</p>
+(such as repeated tab switching, another person appearing on camera, or accumulated warnings).</p>
 <div style="margin:16px 0;padding:12px 16px;background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;color:#991b1b;font-size:13px;">
 <b>Your account has been blocked for 30 days.</b> It will automatically reopen after the
 block period ends, after which you may be eligible to attempt the interview again.
@@ -225,6 +268,7 @@ for a second interview attempt. Use the fresh credentials below to sign in:</p>
 <div style="margin:16px 0;padding:12px 16px;background:#fef9ec;border:1px solid #f5d67b;border-radius:8px;color:#8a6d1a;font-size:12px;">
 <b>Important:</b> as before, this password works exactly <b>once</b>. Only log in when you are ready to take the interview.
 </div>
+{_interview_rules()}
 {_button(Config.APP_BASE_URL + '/login', 'Log in & Start Interview')}
 """
     return subject, _base('Your second interview attempt has been approved', body)
