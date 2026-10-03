@@ -13,17 +13,17 @@ BRAND_GREEN = '#8dc63f'
 def _base(title, body_html):
     """Shared shell: brand header, white card body, footer."""
     return f"""
-<div style="margin:0;padding:24px 12px;background-color:#f1f5f9;font-family:Segoe UI,Arial,Helvetica,sans-serif;">
-  <div style="max-width:560px;margin:0 auto;background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e2e8f0;">
-    <div style="background:{BRAND_BLUE};padding:22px 32px;">
+<div style="margin:0;padding:16px 8px;background-color:#f1f5f9;font-family:Segoe UI,Arial,Helvetica,sans-serif;">
+  <div style="width:100%;max-width:900px;box-sizing:border-box;margin:0 auto;background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e2e8f0;">
+    <div style="background:{BRAND_BLUE};padding:22px 24px;">
       <span style="color:#ffffff;font-size:18px;font-weight:bold;letter-spacing:0.5px;">SMIT Assessment Portal</span>
       <span style="display:block;color:#bfdcf2;font-size:11px;margin-top:2px;text-transform:uppercase;letter-spacing:2px;">SIT Interviewer</span>
     </div>
-    <div style="padding:28px 32px;color:#334155;font-size:14px;line-height:1.7;">
+    <div style="padding:24px;color:#334155;font-size:14px;line-height:1.7;">
       <h2 style="margin:0 0 14px 0;color:#0f172a;font-size:18px;">{title}</h2>
       {body_html}
     </div>
-    <div style="padding:16px 32px;background:#f8fafc;border-top:1px solid #e2e8f0;color:#94a3b8;font-size:11px;line-height:1.6;">
+    <div style="padding:16px 24px;background:#f8fafc;border-top:1px solid #e2e8f0;color:#94a3b8;font-size:11px;line-height:1.6;">
       This is an automated message from the SMIT Assessment Portal — please do not reply to this email.<br>
       If you did not expect this email, you can safely ignore it.
     </div>
